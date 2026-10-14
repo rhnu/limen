@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::{
     Gateway,
     error::{ErrorCode, Failure},
-    json_response,
+    json, json_response,
     lifecycle::Lifecycle,
     logic,
     response::Delivery,
@@ -53,14 +53,17 @@ impl Gateway {
         lifecycle.input_bytes = bytes.len();
         if models {
             let body = logic::models_json(&self.business);
-            lifecycle.output_bytes = body.to_string().len();
-            if lifecycle.output_bytes > self.server.limits.max_output_bytes {
-                return Err(Failure::new(ErrorCode::PayloadTooLarge, "models_response"));
-            }
+            let bytes = json::encode(
+                &body,
+                self.server.limits.max_output_bytes,
+                ErrorCode::PayloadTooLarge,
+                "models_response",
+            )?;
+            lifecycle.output_bytes = bytes.len();
             return Ok(Some(json_response(
                 200,
                 http::HeaderMap::new(),
-                &body,
+                bytes,
                 &lifecycle.request_id,
             )));
         }
@@ -78,14 +81,14 @@ impl Gateway {
         if let Some(hook) = self.business.on_request {
             let mut context = lifecycle.context("onRequest");
             context["body"] = body;
-            let output = self
+            let mut output = self
                 .hook(hook, "onRequest", None, context, lifecycle)
                 .await?;
-            body = require_body(&output)?;
-            logic::validate_body(&body, &self.server.limits).map_err(|source| {
-                Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source)
-            })?;
-            commit_state(lifecycle, &output)?;
+            logic::validate_body(require_body(&output)?, &self.server.limits).map_err(
+                |source| Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source),
+            )?;
+            commit_state(lifecycle, &mut output)?;
+            body = output["body"].take();
         }
         lifecycle.phase = "routing";
         let alias = body
@@ -105,18 +108,22 @@ impl Gateway {
         lifecycle.alias = Some(alias.to_owned());
         lifecycle.provider = Some(model.provider.clone());
         lifecycle.configured_model = Some(model.upstream.clone());
-        let body = logic::merge_body(provider, model, &body);
+        let body = logic::merge_body(provider, model, body)?;
         let (body, url, mut headers) = self.before_send(provider, model, body, lifecycle).await?;
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
         logic::validate_body(&body, &self.server.limits)?;
         logic::validate_url(&url)?;
-        lifecycle.outbound_bytes = body.to_string().len();
-        if lifecycle.outbound_bytes > self.server.limits.max_output_bytes {
-            return Err(Failure::new(ErrorCode::PayloadTooLarge, "upstream_body"));
-        }
+        let bytes = json::encode(
+            &body,
+            self.server.limits.max_output_bytes,
+            ErrorCode::PayloadTooLarge,
+            "upstream_body",
+        )?;
+        lifecycle.outbound_bytes = bytes.len();
         lifecycle.final_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         lifecycle.target = Some(logic::safe_target(&url));
+        drop(body);
         lifecycle.phase = "upstream_send";
         headers.insert(
             header::CONTENT_TYPE,
@@ -126,7 +133,7 @@ impl Gateway {
             .client_for(&url)?
             .post(url)
             .headers(headers)
-            .json(&body)
+            .body(bytes)
             .send()
             .await
             .map_err(|source| Failure::upstream(source, "upstream_send"))?;
@@ -146,14 +153,13 @@ impl Gateway {
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             if let Some(hook) = step.before_send {
                 let mut context = lifecycle.context("beforeSend");
-                context["body"] = body.clone();
+                context["body"] = body;
                 context["url"] = json!(url);
                 context["headers"] = logic::headers_to_json(&headers)?;
-                let output = self
+                let mut output = self
                     .hook(hook, "beforeSend", Some(&step.name), context, lifecycle)
                     .await?;
-                let next_body = require_body(&output)?;
-                logic::validate_body(&next_body, &self.server.limits)
+                logic::validate_body(require_body(&output)?, &self.server.limits)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_url = output
                     .get("url")
@@ -163,9 +169,12 @@ impl Gateway {
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_headers = logic::headers_from_json(&output["headers"])
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                commit_state(lifecycle, &output)?;
-                body = next_body;
-                url = next_url.to_owned();
+                commit_state(lifecycle, &mut output)?;
+                body = output["body"].take();
+                let Value::String(next_url) = output["url"].take() else {
+                    return Err(hook_invalid("beforeSend", &step.name));
+                };
+                url = next_url;
                 headers = next_headers;
             }
         }
@@ -196,12 +205,12 @@ impl Gateway {
     }
 }
 
-pub(super) fn commit_state(lifecycle: &mut Lifecycle, output: &Value) -> Result<(), Failure> {
+pub(super) fn commit_state(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), Failure> {
     let state = output
-        .get("state")
+        .get_mut("state")
         .filter(|v| v.is_object())
         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, lifecycle.phase))?;
-    lifecycle.state = state.clone();
+    lifecycle.state = state.take();
     Ok(())
 }
 
@@ -209,11 +218,10 @@ pub(super) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-pub(super) fn require_body(output: &Value) -> Result<Value, Failure> {
+pub(super) fn require_body(output: &Value) -> Result<&Value, Failure> {
     output
         .get("body")
         .filter(|v| v.is_object())
-        .cloned()
         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "hook_output"))
 }
 

@@ -6,7 +6,7 @@ use crate::{
     Error,
     aggregate::{conversion_root, validate_complete_tool},
     chunk::{index, known_keys, object},
-    encode_chunk,
+    sse::chunk_size,
 };
 
 struct Task {
@@ -109,7 +109,7 @@ impl JsonChunks {
                 }
                 chunk.insert("choices".into(), json!([choice]));
                 let chunk = Value::Object(chunk);
-                match encode_chunk(&chunk, self.limit) {
+                match chunk_size(&chunk, self.limit) {
                     Ok(_) => return Ok(Some(chunk)),
                     Err(Error::EventLimit) => {
                         let Some((first, second)) = split_delta(&mut task.delta) else {
@@ -135,7 +135,7 @@ impl JsonChunks {
                 chunk.insert("choices".into(), json!([]));
                 chunk.insert("usage".into(), usage);
                 let chunk = Value::Object(chunk);
-                encode_chunk(&chunk, self.limit)?;
+                chunk_size(&chunk, self.limit)?;
                 return Ok(Some(chunk));
             } else {
                 return Ok(None);

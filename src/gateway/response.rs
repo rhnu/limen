@@ -136,11 +136,10 @@ impl Delivery {
     /// Error delivery and observations share the caller's finite cleanup deadline.
     pub async fn fail(&mut self, failure: &Failure, lifecycle: &Lifecycle) {
         if self.reply.is_some() {
-            self.send_json(super::json_response(
-                failure.http_status(),
-                lifecycle.response_headers.clone(),
-                &failure.error_json(&lifecycle.request_id),
+            self.send_json(super::error_response_with_headers(
+                failure,
                 &lifecycle.request_id,
+                lifecycle.response_headers.clone(),
             ));
         } else if self.sender.is_some()
             && !self.done_sent
@@ -209,16 +208,13 @@ impl Gateway {
             if let Some(hook) = step.on_response {
                 let mut context = lifecycle.context("onResponse");
                 context["body"] = body;
-                let output = self
+                let mut output = self
                     .hook(hook, "onResponse", Some(&step.name), context, lifecycle)
                     .await?;
-                let next_body = require_body(&output)?;
-                commit_state(lifecycle, &output)?;
-                body = next_body;
+                require_body(&output)?;
+                commit_state(lifecycle, &mut output)?;
+                body = output["body"].take();
             }
-        }
-        if body.to_string().len() > self.server.limits.max_output_bytes {
-            return Err(Failure::new(ErrorCode::HookFailed, "response"));
         }
         Ok(body)
     }

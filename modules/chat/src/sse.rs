@@ -114,8 +114,14 @@ impl Decoder {
 /// # Errors
 /// Rejects malformed chunks or encoded output exceeding the event limit.
 pub fn encode_chunk(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Error> {
+    let size = chunk_size(value, max_event_bytes)?;
+    encode(value, b"data: ", size)
+}
+
+/// Checks framing and JSON size without allocating a frame for conversion trials.
+pub(crate) fn chunk_size(value: &Value, max_event_bytes: usize) -> Result<usize, Error> {
     validate_chunk(value)?;
-    encode(value, b"data: ", max_event_bytes)
+    encoded_size(value, b"data: ", max_event_bytes)
 }
 
 /// Encodes the caller's sanitized error envelope without a success terminator.
@@ -123,18 +129,23 @@ pub fn encode_chunk(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Er
 /// # Errors
 /// Rejects encoded output exceeding the event limit or JSON serialization failures.
 pub fn encode_error(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Error> {
-    encode(value, b"event: error\ndata: ", max_event_bytes)
+    let prefix = b"event: error\ndata: ";
+    let size = encoded_size(value, prefix, max_event_bytes)?;
+    encode(value, prefix, size)
 }
 
-fn encode(value: &Value, prefix: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
+fn encoded_size(value: &Value, prefix: &[u8], limit: usize) -> Result<usize, Error> {
     let json_limit = limit
         .checked_sub(prefix.len() + 2)
         .ok_or(Error::EventLimit)?;
-    crate::bounded::json_size(value, json_limit)?.ok_or(Error::EventLimit)?;
-    let json = serde_json::to_vec(value).map_err(Error::Json)?;
-    let mut bytes = Vec::with_capacity(prefix.len() + json.len() + 2);
+    let json_size = crate::bounded::json_size(value, json_limit)?.ok_or(Error::EventLimit)?;
+    Ok(prefix.len() + json_size + 2)
+}
+
+fn encode(value: &Value, prefix: &[u8], size: usize) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::with_capacity(size);
     bytes.extend_from_slice(prefix);
-    bytes.extend_from_slice(&json);
+    serde_json::to_writer(&mut bytes, value).map_err(Error::Json)?;
     bytes.extend_from_slice(b"\n\n");
     Ok(bytes)
 }

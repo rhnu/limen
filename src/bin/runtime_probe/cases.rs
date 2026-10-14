@@ -15,11 +15,9 @@ mod context;
 
 type ProbeResult = Result<(), Box<dyn Error>>;
 
-/// The external parent owns the root; this guard removes only files it created.
+/// The external timeout driver owns and removes the temporary root.
 struct Fixture {
     root: PathBuf,
-    files: Vec<PathBuf>,
-    directories: Vec<PathBuf>,
 }
 
 impl Fixture {
@@ -27,61 +25,42 @@ impl Fixture {
         if !root.is_dir() || fs::read_dir(&root)?.next().is_some() {
             return Err("fixture directory must exist and be empty".into());
         }
-        Ok(Self {
-            root,
-            files: Vec::new(),
-            directories: Vec::new(),
-        })
+        Ok(Self { root })
     }
 
-    fn write(&mut self, relative: &str, source: &str) -> Result<PathBuf, Box<dyn Error>> {
+    fn write(&self, relative: &str, source: &str) -> Result<PathBuf, Box<dyn Error>> {
         let path = self.root.join(relative);
-        if let Some(parent) = path.parent().filter(|parent| !parent.exists()) {
-            fs::create_dir(parent)?;
-            self.directories.push(parent.to_path_buf());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
         }
         fs::write(&path, source)?;
-        if !self.files.contains(&path) {
-            self.files.push(path.clone());
-        }
         Ok(path)
     }
 
-    async fn start(&mut self, source: &str) -> Result<(ScriptRuntime, Value), Box<dyn Error>> {
+    async fn start(&self, source: &str) -> Result<(ScriptRuntime, Value), Box<dyn Error>> {
         let path = self.write("config.js", source)?;
         Ok(ScriptRuntime::start(path, RuntimeOptions::default()).await?)
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        for path in self.files.iter().rev() {
-            drop(fs::remove_file(path));
-        }
-        for path in self.directories.iter().rev() {
-            drop(fs::remove_dir(path));
-        }
-    }
-}
-
 pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
-    let mut fixture = Fixture::new(root)?;
+    let fixture = Fixture::new(root)?;
     match case {
-        "void" => void(&mut fixture).await,
-        "pending-fairness" => pending_fairness(&mut fixture).await,
-        "late-completion" => late_completion(&mut fixture).await,
-        "invalid-return" => invalid_return(&mut fixture).await,
-        "rejection" => rejection(&mut fixture).await,
-        "top-level-await" => top_level_await(&mut fixture).await,
-        "strict-json" => strict_json(&mut fixture).await,
-        "modules" => modules(&mut fixture).await,
-        "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&mut fixture, case).await,
-        "shutdown-pending" => shutdown_pending(&mut fixture).await,
-        "startup-loop" => startup_loop(&mut fixture).await,
-        "context-headers" => context::headers(&mut fixture).await,
-        "context-readonly" => context::readonly(&mut fixture).await,
-        "context-isolation" => context::isolation(&mut fixture).await,
-        "context-stream" => context::stream(&mut fixture).await,
+        "void" => void(&fixture).await,
+        "pending-fairness" => pending_fairness(&fixture).await,
+        "late-completion" => late_completion(&fixture).await,
+        "invalid-return" => invalid_return(&fixture).await,
+        "rejection" => rejection(&fixture).await,
+        "top-level-await" => top_level_await(&fixture).await,
+        "strict-json" => strict_json(&fixture).await,
+        "modules" => modules(&fixture).await,
+        "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&fixture, case).await,
+        "shutdown-pending" => shutdown_pending(&fixture).await,
+        "startup-loop" => startup_loop(&fixture).await,
+        "context-headers" => context::headers(&fixture).await,
+        "context-readonly" => context::readonly(&fixture).await,
+        "context-isolation" => context::isolation(&fixture).await,
+        "context-stream" => context::stream(&fixture).await,
         _ => Err("unknown experiment".into()),
     }
 }
@@ -118,7 +97,7 @@ async fn stop(runtime: &ScriptRuntime) -> ProbeResult {
     )
 }
 
-async fn void(fixture: &mut Fixture) -> ProbeResult {
+async fn void(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "export default { onRequest(ctx) { ctx.sync = true; }, async onFinish(ctx) { await Promise.resolve(); ctx.async = true; }, providers: { p: { pipeline: [{ name: 'provider', beforeSend(ctx) { ctx.order.push('provider'); } }] } }, models: { m: { pipeline: [{ name: 'model', async beforeSend(ctx) { await Promise.resolve(); ctx.order.push('model'); } }] } } };",
     ).await?;
@@ -153,7 +132,7 @@ async fn void(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn pending_fairness(fixture: &mut Fixture) -> ProbeResult {
+async fn pending_fairness(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "export default { onRequest(ctx) { if (ctx.pending) return new Promise(() => {}); ctx.done = true; } };",
     ).await?;
@@ -194,7 +173,7 @@ async fn pending_fairness(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn late_completion(fixture: &mut Fixture) -> ProbeResult {
+async fn late_completion(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "let release; let changes = 0; let started = 0; export default { async onRequest(ctx) { started++; ctx.draft = 'uncommitted'; await new Promise(resolve => { release = resolve; }); changes++; ctx.draft = 'late'; }, onFinish() { release(); }, onError(ctx) { ctx.changes = changes; ctx.started = started; } };",
     ).await?;
@@ -257,7 +236,7 @@ async fn late_completion(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn invalid_return(fixture: &mut Fixture) -> ProbeResult {
+async fn invalid_return(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "export default { onRequest(ctx) { const values = [null, {}, [], 1, 'value', true]; if (ctx.kind === 12) return { then(resolve) { resolve(); } }; const value = values[ctx.kind % 6]; return ctx.kind < 6 ? value : Promise.resolve(value); } };",
     ).await?;
@@ -272,7 +251,7 @@ async fn invalid_return(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn rejection(fixture: &mut Fixture) -> ProbeResult {
+async fn rejection(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "export default { onRequest(ctx) { if (ctx.async) return Promise.reject(new Error('synthetic')); throw new Error('synthetic'); }, onFinish(ctx) { ctx.ok = true; } };",
     ).await?;
@@ -299,7 +278,7 @@ async fn rejection(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn top_level_await(fixture: &mut Fixture) -> ProbeResult {
+async fn top_level_await(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "const answer = await Promise.resolve(7); export default { answer, onRequest(ctx) { ctx.answer = answer; ctx.hostApis = [typeof fetch, typeof process, typeof setTimeout]; } };",
     ).await?;
@@ -317,7 +296,7 @@ async fn top_level_await(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn strict_json(fixture: &mut Fixture) -> ProbeResult {
+async fn strict_json(fixture: &Fixture) -> ProbeResult {
     let invalid = [
         "({value: undefined})",
         "[undefined]",
@@ -390,7 +369,7 @@ async fn strict_json(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-async fn modules(fixture: &mut Fixture) -> ProbeResult {
+async fn modules(fixture: &Fixture) -> ProbeResult {
     fixture.write("shared/state.mjs", "globalThis.loads = (globalThis.loads ?? 0) + 1; export const token = {}; export const loads = globalThis.loads;")?;
     fixture.write(
         "app/first.js",
@@ -428,7 +407,7 @@ async fn modules(fixture: &mut Fixture) -> ProbeResult {
     Ok(())
 }
 
-async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
+async fn retirement(fixture: &Fixture, case: &str) -> ProbeResult {
     let (body, expected) = match case {
         "sync-loop" => ("while (true) {}", ScriptErrorKind::ExecutionBudget),
         "microtask-loop" => (
@@ -480,7 +459,7 @@ async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
     ensure(later.is_err(), "retired VM accepted a new call")
 }
 
-async fn shutdown_pending(fixture: &mut Fixture) -> ProbeResult {
+async fn shutdown_pending(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(
         "export default { onRequest(ctx) { return new Promise(() => { ctx.pending = true; }); }, onFinish(ctx) { ctx.done = true; } };",
     ).await?;
@@ -495,7 +474,7 @@ async fn shutdown_pending(fixture: &mut Fixture) -> ProbeResult {
     )
 }
 
-async fn startup_loop(fixture: &mut Fixture) -> ProbeResult {
+async fn startup_loop(fixture: &Fixture) -> ProbeResult {
     for source in [
         "while (true) {} export default {};",
         "await new Promise(() => {}); export default {};",

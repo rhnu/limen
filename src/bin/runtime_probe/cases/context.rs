@@ -19,7 +19,7 @@ fn draft(phase: &str) -> Value {
     })
 }
 
-pub(super) async fn headers(fixture: &mut Fixture) -> ProbeResult {
+pub(super) async fn headers(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(r"
         export default { onRequest(ctx) {
             const mode = ctx.meta.mode;
@@ -98,7 +98,7 @@ pub(super) async fn headers(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-pub(super) async fn readonly(fixture: &mut Fixture) -> ProbeResult {
+pub(super) async fn readonly(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(r"
         export default { onRequest(ctx) {
             switch (ctx.meta.operation) {
@@ -198,7 +198,7 @@ pub(super) async fn readonly(fixture: &mut Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-pub(super) async fn isolation(fixture: &mut Fixture) -> ProbeResult {
+pub(super) async fn isolation(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(r"
         let release;
         export default {
@@ -320,7 +320,7 @@ const STREAM_CONTEXT_CONFIG: &str = r"
     ";
 
 /// Opt-in VM evidence stays outside pure unit tests and requires the timeout driver.
-pub(super) async fn stream(fixture: &mut Fixture) -> ProbeResult {
+pub(super) async fn stream(fixture: &Fixture) -> ProbeResult {
     let (runtime, config) = fixture.start(STREAM_CONTEXT_CONFIG).await?;
     let id = hook(&config, "onRequest")?;
     for phase in ["onUpstreamEvent", "onStreamEvent"] {

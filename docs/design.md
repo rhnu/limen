@@ -540,6 +540,7 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
 - 流的 choice 完成状态最多跟踪 `max_json_nodes` 个不同 index；一个事件可包含多个 choice，
   不把聚合事件数限制误当成每事件的 choice 数限制。
 - 聚合有最大字节数与事件数，不能因为客户端选择 JSON 就无限缓存上游流。
+- SSE→JSON 聚合形成的完整对象也须满足 JSON 深度、节点与安全整数限制；逐事件校验不能替代累计结果校验。
 - 下游断开时取消上游读取、待执行 hook
   和相关任务，尽快释放本地资源并向上游中止连接；这不能保证 provider
   已开始的生成或计费立即停止。
@@ -612,6 +613,7 @@ executor，并拥有一个 rquickjs `AsyncRuntime`、`AsyncContext` 及持久化
 侧只传 hook ID、请求/调用 ID 和 owned 数据，不跨线程传 JS 句柄。
 当前命令包含 owned JSON context、绝对 `Instant` deadline 与取消句柄；一次性结果通道关联原调用，
 只交付通过校验的 owned JSON。取消调用 future 会关闭结果通道并唤醒 actor，从而撤销提交资格。
+VM draft 建立后释放原始输入 JSON；pending 仅保留 deadline、取消信号、结果通道和 VM 内的 draft/Promise 引用。
 
 一个共享 VM 保留“每次进程启动求值一次配置”的语义。首版不建立多 VM
 池，也不为每个请求重新执行模块。不同请求可以在等待 Promise 时交错推进，但 JS
@@ -908,6 +910,7 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 - `server`：监听和 HTTP/1 连接驱动、头部与连接预算、断开通知、信号及 VM 退役后的有界关闭。
 - `gateway`：请求许可、ID、任务追踪、请求 deadline 与终态；`gateway/lifecycle` 保存单请求状态和统计。
 - `gateway/logic`：认证、请求校验、显式模型表、浅层 defaults 和单次路由；规则增长后再按认证、路由、头部拆分。
+- `gateway/json`：最终 JSON 有界编码与无需输出缓冲的字节计数；编码结果复用于发送和统计。
 - `gateway/pipeline`：全局与 provider → model 的阶段调度、成功 draft/state 提交、四种传输路径选择。
 - `gateway/upstream`：原始 status/media、响应阶段、四路径收取与转换；客户端、连接池与单次发送由 gateway/pipeline 组合。
 - `gateway/response`：JSON/SSE 下游表示、别名默认、完整响应 hook、有界流 body 与流开始前后的错误输出。

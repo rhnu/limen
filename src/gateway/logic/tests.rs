@@ -60,14 +60,29 @@ fn rejects_missing_malformed_and_wrong_authentication() {
 }
 
 #[test]
+fn outbound_headers_preserve_explicit_static_auth_and_accept() {
+    let config = BusinessConfig::from_value(
+        json!({
+            "providers":{"p":{"endpoint":"https://fictional.invalid/chat",
+                "headers":{"aUtHoRiZaTiOn":"Custom credential", "Accept":"text/event-stream",
+                    "X-Item":"one,two"}}},
+            "models":{"chat":{"provider":"p","upstream":"real"}}
+        }),
+        &ResourceLimits::default(),
+    )
+    .unwrap();
+    let headers = outbound_headers(&config.providers["p"]).unwrap();
+    assert_eq!(headers[header::AUTHORIZATION], "Custom credential");
+    assert_eq!(headers[header::ACCEPT], "text/event-stream");
+    assert_eq!(headers["x-item"], "one,two");
+    assert!(!headers.contains_key(header::COOKIE));
+}
+
+#[test]
 fn shallow_defaults_preserve_null_and_unknown_client_fields() {
     let config = config();
     let client = json!({"model": "chat", "messages": [{"role": "user", "content": "hi"}], "temperature": null, "nested": {"client": true}, "extension": {"unknown": 1}});
-    let merged = merge_body(
-        &config.providers["primary"],
-        &config.models["chat"],
-        &client,
-    );
+    let merged = merge_body(&config.providers["primary"], &config.models["chat"], client).unwrap();
     assert_eq!(merged["model"], "real-model");
     assert!(merged["temperature"].is_null());
     assert_eq!(merged["nested"], json!({"client": true}));
@@ -79,8 +94,9 @@ fn shallow_defaults_preserve_null_and_unknown_client_fields() {
         merge_body(
             &config.providers["primary"],
             &config.models["chat"],
-            &omitted
-        )["temperature"],
+            omitted
+        )
+        .unwrap()["temperature"],
         0.4
     );
 }

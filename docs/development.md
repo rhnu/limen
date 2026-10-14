@@ -73,8 +73,9 @@ python tools/runtime-probes.py
 使用 `python tools/runtime-probes.py --help` 查看单项实验、超时和列表选项。
 不要直接运行失控脚本实验二进制而省略外部超时保护。
 实验只使用临时合成配置；不会连接真实 provider，不属于 Linux、Docker 或 HTTP 端到端验收。
+临时目录由 Python 父进程统一持有和清理，覆盖正常完成、失败与外部超时终止；Rust 实验入口只负责写入合成配置。
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
-该实验需单独调用，本次仅增加入口，未执行。
+该实验需单独调用，运行证据仍待补齐。
 
 检查示例配置：
 
@@ -97,7 +98,7 @@ python tools/http-probes.py
 
 `--list` 查看实验，位置参数选择单项，`--executable PATH` 复用已构建二进制，`--timeout` 设置单项外部上限。
 实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
-`transport-contracts` 已更新为四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，本次未运行。
+`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，运行证据仍待补齐。
 Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；当前执行证据只覆盖 Windows。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动均显式调用，不混入普通单元测试或自动 CI。
 日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
@@ -107,26 +108,26 @@ Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；�
 引入时已查询 crates.io 元数据、上游发布或标签及实际 feature/source；锁文件记录真实解析结果。
 以下版本不构成自动升级策略，升级时重新核对注册表、发布记录、features、MSRV 和平台要求。
 
-| 依赖                | 解析版本 | MSRV | 启用能力与依据                                                               |
-| ------------------- | -------- | ---- | ---------------------------------------------------------------------------- |
-| axum                | 0.8.9    | 1.80 | 禁用默认 features；body/response 类型与有界正文读取                          |
-| hyper               | 1.12.0   | 1.63 | http1、server；连接由应用持有，断开与关闭可传播到请求                        |
-| hyper-util          | 0.1.21   | 1.85 | tokio；TokioIo、TokioTimer                                                   |
-| http-body-util      | 0.1.5    | 1.61 | 有类型的正文长度限制错误                                                     |
-| reqwest             | 0.13.5   | 1.85 | rustls、json；禁用默认 features，不启用自动解压、HTTP/2 或环境代理           |
-| clap                | 4.6.7    | 1.85 | std、derive、help、usage；禁用默认 features，避免参数错误上下文回显输入      |
-| rquickjs            | 0.14.0   | 1.87 | std、futures、loader；不启用 parallel、rust-alloc；保留 QuickJS 内建分配统计 |
-| Tokio               | 1.53.3   | 1.71 | rt、sync、time、macros、net、signal、io-util；单线程 executor、HTTP 与取消   |
-| serde               | 1.0.229  | 1.56 | derive，强类型配置                                                           |
-| serde_json          | 1.0.154  | 1.71 | 默认 std，不启用无限深度或任意精度来掩盖 JS 数字边界                         |
-| serde-saphyr        | 2.0.0    | 1.89 | 禁用默认 features，仅 deserialize；配置解析预算和位置                        |
-| serde_path_to_error | 0.1.20   | 1.61 | 保留字段路径，输出前隐藏任意用户键名                                         |
-| url                 | 2.5.8    | 1.63 | URL 结构校验；额外禁止 userinfo、fragment、反斜杠与空白                      |
-| http                | 1.5.0    | 1.57 | 成熟的 header 名称和值解析                                                   |
-| tracing             | 0.1.44   | 1.65 | std，无属性宏；应用元数据日志                                                |
-| tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                         |
-| thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                |
-| sse-parse           | 0.1.0    | 1.65 | 默认 std；sans-IO 增量解析，项目逐字节推进并将 overflow 转为明确失败         |
+| 依赖                | 解析版本 | MSRV | 启用能力与依据                                                                 |
+| ------------------- | -------- | ---- | ------------------------------------------------------------------------------ |
+| axum                | 0.8.9    | 1.80 | 禁用默认 features；body/response 类型与有界正文读取                            |
+| hyper               | 1.12.0   | 1.63 | http1、server；连接由应用持有，断开与关闭可传播到请求                          |
+| hyper-util          | 0.1.21   | 1.85 | tokio；TokioIo、TokioTimer                                                     |
+| http-body-util      | 0.1.5    | 1.61 | 有类型的正文长度限制错误                                                       |
+| reqwest             | 0.13.5   | 1.85 | rustls；应用负责有界 JSON 编码，禁用默认 features、自动解压、HTTP/2 和环境代理 |
+| clap                | 4.6.7    | 1.85 | std、derive、help、usage；禁用默认 features，避免参数错误上下文回显输入        |
+| rquickjs            | 0.14.0   | 1.87 | std、futures、loader；不启用 parallel、rust-alloc；保留 QuickJS 内建分配统计   |
+| Tokio               | 1.53.3   | 1.71 | rt、sync、time、macros、net、signal、io-util；单线程 executor、HTTP 与取消     |
+| serde               | 1.0.229  | 1.56 | derive，强类型配置                                                             |
+| serde_json          | 1.0.154  | 1.71 | 默认 std，不启用无限深度或任意精度来掩盖 JS 数字边界                           |
+| serde-saphyr        | 2.0.0    | 1.89 | 禁用默认 features，仅 deserialize；配置解析预算和位置                          |
+| serde_path_to_error | 0.1.20   | 1.61 | 保留字段路径，输出前隐藏任意用户键名                                           |
+| url                 | 2.5.8    | 1.63 | URL 结构校验；额外禁止 userinfo、fragment、反斜杠与空白                        |
+| http                | 1.5.0    | 1.57 | 成熟的 header 名称和值解析                                                     |
+| tracing             | 0.1.44   | 1.65 | std，无属性宏；应用元数据日志                                                  |
+| tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                           |
+| thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                  |
+| sse-parse           | 0.1.0    | 1.65 | 默认 std；sans-IO 增量解析，项目逐字节推进并将 overflow 转为明确失败           |
 
 上游依据：[clap 发布](https://github.com/clap-rs/clap/releases/tag/v4.6.7)与
 [feature 文档](https://docs.rs/crate/clap/4.6.7/features)、[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、

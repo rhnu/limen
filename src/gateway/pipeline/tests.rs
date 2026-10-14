@@ -8,10 +8,10 @@ fn committed_state_is_owned_and_failed_state_leaves_previous_value() {
     let mut lifecycle = Lifecycle::new("request-1".into(), Cancellation::new(), 1000);
     lifecycle.phase = "beforeSend";
     let mut output = json!({"state":{"count":1}});
-    commit_state(&mut lifecycle, &output).unwrap();
+    commit_state(&mut lifecycle, &mut output).unwrap();
     output["state"]["count"] = json!(2);
     assert_eq!(lifecycle.state["count"], 1);
-    assert!(commit_state(&mut lifecycle, &json!({"state":[]})).is_err());
+    assert!(commit_state(&mut lifecycle, &mut json!({"state":[]})).is_err());
     assert_eq!(lifecycle.state["count"], 1);
 }
 

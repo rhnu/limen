@@ -1,5 +1,6 @@
 mod error;
 mod events;
+mod json;
 mod lifecycle;
 mod logic;
 mod observe;
@@ -226,10 +227,20 @@ fn report_task(result: Result<(), tokio::task::JoinError>) {
 }
 
 fn error_response(failure: &Failure, request_id: &str) -> Response {
+    error_response_with_headers(failure, request_id, http::HeaderMap::new())
+}
+
+fn error_response_with_headers(
+    failure: &Failure,
+    request_id: &str,
+    headers: http::HeaderMap,
+) -> Response {
+    // The Rust-owned envelope has fixed messages and a gateway-assigned ID. Its
+    // small encoding remains independent of user-configured model output limits.
     json_response(
         failure.http_status(),
-        http::HeaderMap::new(),
-        &failure.error_json(request_id),
+        headers,
+        failure.error_json(request_id).to_string().into_bytes(),
         request_id,
     )
 }
@@ -237,7 +248,7 @@ fn error_response(failure: &Failure, request_id: &str) -> Response {
 fn json_response(
     status: u16,
     mut headers: http::HeaderMap,
-    body: &serde_json::Value,
+    body: Vec<u8>,
     request_id: &str,
 ) -> Response {
     headers.insert(
@@ -247,7 +258,7 @@ fn json_response(
     if let Ok(id) = HeaderValue::from_str(request_id) {
         headers.insert("x-limen-request-id", id);
     }
-    let mut response = Response::new(Body::from(body.to_string()));
+    let mut response = Response::new(Body::from(body));
     *response.status_mut() =
         http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR);
     *response.headers_mut() = headers;

@@ -7,7 +7,7 @@ use clap::{Args, Parser, Subcommand};
 #[command(
     name = "limen",
     version,
-    about = "Chat Completions gateway configuration",
+    about = "Chat Completions gateway",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -20,7 +20,7 @@ pub enum Command {
     /// Validate configuration, executing local top-level JavaScript.
     #[command(after_help = "Does not invoke request hooks, listen on a port, or call a provider.")]
     Check(ConfigArgs),
-    /// Validate configuration, then report that HTTP serving is not implemented.
+    /// Validate configuration and start the HTTP gateway.
     Serve(ConfigArgs),
 }
 

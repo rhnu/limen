@@ -4,6 +4,7 @@ use serde_json::Value;
 use super::{
     Gateway,
     error::{ErrorCode, Failure},
+    json,
     lifecycle::Lifecycle,
     pipeline::{commit_state, hook_invalid},
 };
@@ -28,12 +29,11 @@ impl EventBudget {
         limits: &ResourceLimits,
         phase: &'static str,
     ) -> Result<(), Failure> {
-        let bytes = events
-            .iter()
-            .try_fold(0_usize, |sum, event| {
-                sum.checked_add(event.to_string().len())
-            })
-            .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))?;
+        let bytes = events.iter().try_fold(0_usize, |sum, event| {
+            let size = json::size(event, limits.max_output_bytes, ErrorCode::HookFailed, phase)?;
+            sum.checked_add(size)
+                .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
+        })?;
         if events.len() > limits.max_output_events.saturating_sub(self.events)
             || bytes > limits.max_output_bytes.saturating_sub(self.bytes)
         {
@@ -70,7 +70,7 @@ impl Gateway {
             for event in events {
                 let mut context = lifecycle.context(phase);
                 context["event"] = event;
-                let output = self
+                let mut output = self
                     .hook(hook, phase, Some(&step.name), context, lifecycle)
                     .await?;
                 let produced = output
@@ -81,8 +81,11 @@ impl Gateway {
                     self.validate_event(event, ErrorCode::HookFailed, phase)?;
                 }
                 budget.charge(produced, &self.server.limits, phase)?;
-                commit_state(lifecycle, &output)?;
-                next.extend(produced.iter().cloned());
+                commit_state(lifecycle, &mut output)?;
+                let Value::Array(produced) = output["events"].take() else {
+                    return Err(hook_invalid(phase, &step.name));
+                };
+                next.extend(produced);
             }
             events = next;
         }
@@ -103,9 +106,7 @@ impl Gateway {
         .map_err(|source| Failure::new(code, phase).with_source(source))?;
         limen_chat::validate_chunk(event)
             .map_err(|source| Failure::new(code, phase).with_source(source))?;
-        if event.to_string().len() > self.server.limits.max_event_bytes {
-            return Err(Failure::new(code, phase));
-        }
+        json::size(event, self.server.limits.max_event_bytes, code, phase)?;
         Ok(())
     }
 }

@@ -279,7 +279,6 @@ impl ScriptRuntime {
                 let error = ScriptError::with_source(kind, error);
                 if kind == ScriptErrorKind::Retired { self.retirement_or(error) } else { error }
             })?;
-        self.wake.notify_one();
         let result = tokio::select! {
             biased;
             () = cancellation.cancelled() => Err(ScriptError::new(ScriptErrorKind::Cancelled)),
@@ -287,7 +286,6 @@ impl ScriptRuntime {
             result = &mut receive => result.unwrap_or_else(|error| Err(self.retirement_or(ScriptError::with_source(ScriptErrorKind::Retired, error)))),
         };
         receive.close();
-        self.wake.notify_one();
         if cancellation.is_cancelled() {
             return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }

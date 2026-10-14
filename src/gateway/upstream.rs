@@ -1,12 +1,13 @@
 use axum::{http::header, response::Response};
 use limen_chat::{Aggregator, ChunkTracker, Decoder, Event, JsonChunks};
-use limen_config::{Model, Provider, validate_json};
+use limen_config::{Model, Provider, ResourceLimits, validate_json};
 use serde_json::{Value, json};
 
 use super::{
     Gateway,
     error::{ErrorCode, Failure, validate_response_status},
     events::EventBudget,
+    json,
     lifecycle::Lifecycle,
     logic,
     pipeline::{commit_state, elapsed_ms, hook_invalid},
@@ -64,6 +65,12 @@ impl Gateway {
         if let Some(body) = body {
             let body = self.response_body(provider, model, body, lifecycle).await?;
             if client_stream {
+                json::size(
+                    &body,
+                    self.server.limits.max_output_bytes,
+                    ErrorCode::HookFailed,
+                    "response",
+                )?;
                 let chunks = JsonChunks::new(body, self.server.limits.max_event_bytes)
                     .map_err(|source| protocol(source, "json_to_sse"))?;
                 let mut tracker = ChunkTracker::new(self.server.limits.max_json_nodes);
@@ -92,11 +99,17 @@ impl Gateway {
             }
             lifecycle.phase = "response";
             lifecycle.step = None;
-            lifecycle.output_bytes = body.to_string().len();
+            let bytes = json::encode(
+                &body,
+                self.server.limits.max_output_bytes,
+                ErrorCode::HookFailed,
+                "response",
+            )?;
+            lifecycle.output_bytes = bytes.len();
             return Ok(Some(super::json_response(
                 status,
                 headers,
-                &body,
+                bytes,
                 &lifecycle.request_id,
             )));
         }
@@ -229,10 +242,7 @@ impl Gateway {
             .finish()
             .map_err(|source| protocol(source, "upstream_sse"))?;
         if let Some(aggregate) = aggregate {
-            return aggregate
-                .finish()
-                .map(Some)
-                .map_err(|source| protocol(source, "sse_to_json"));
+            return finish_aggregate(aggregate, limits).map(Some);
         }
         downstream_tracker
             .finish()
@@ -297,7 +307,7 @@ impl Gateway {
                 let mut context = lifecycle.context("afterReceive");
                 context["status"] = json!(status);
                 context["headers"] = logic::headers_to_json(&headers)?;
-                let output = self
+                let mut output = self
                     .hook(hook, "afterReceive", Some(&step.name), context, lifecycle)
                     .await?;
                 let next_status = output
@@ -312,13 +322,25 @@ impl Gateway {
                     logic::headers_from_json(&output["headers"]).map_err(|source| {
                         hook_invalid("afterReceive", &step.name).with_source(source)
                     })?;
-                commit_state(lifecycle, &output)?;
+                commit_state(lifecycle, &mut output)?;
                 status = next_status;
                 headers = next_headers;
             }
         }
         Ok((status, headers))
     }
+}
+
+/// Individual SSE events can fit the JSON limits while their combined choices or
+/// tools exceed them. Establish the complete-response guarantee at aggregation.
+fn finish_aggregate(aggregate: Aggregator, limits: &ResourceLimits) -> Result<Value, Failure> {
+    let body = aggregate
+        .finish()
+        .map_err(|source| protocol(source, "sse_to_json"))?;
+    validate_json(&body, limits.max_json_depth, limits.max_json_nodes).map_err(|source| {
+        Failure::new(ErrorCode::UpstreamProtocol, "sse_to_json").with_source(source)
+    })?;
+    Ok(body)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -353,3 +375,6 @@ fn protocol(source: limen_chat::Error, phase: &'static str) -> Failure {
 fn hook_protocol(source: limen_chat::Error, phase: &'static str) -> Failure {
     Failure::new(ErrorCode::HookFailed, phase).with_source(source)
 }
+
+#[cfg(test)]
+mod tests;

@@ -81,6 +81,24 @@ fn external_representation_applies_alias_once_and_keeps_absent_model_absent() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn json_response_delivers_encoded_bytes_with_rust_owned_media_and_request_id() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-draft", HeaderValue::from_static("kept"));
+    let bytes = br#"{"message":"hello"}"#.to_vec();
+    let response = super::super::json_response(201, headers, bytes.clone(), "request-1");
+    assert_eq!(response.status(), 201);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    assert_eq!(response.headers()["x-draft"], "kept");
+    assert_eq!(response.headers()["x-limen-request-id"], "request-1");
+    assert_eq!(
+        &axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()[..],
+        &bytes
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn errors_before_first_frame_use_json_and_after_first_frame_use_error_event() {
     let lifecycle = Lifecycle::new("test".into(), Cancellation::new(), 1000);
     let failure = Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse");

@@ -20,23 +20,11 @@ pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> 
     let (scheme, token) = value.split_once(' ').ok_or_else(invalid)?;
     let token = token.trim_start_matches(' ');
     if !scheme.eq_ignore_ascii_case("bearer")
-        || !valid_bearer(token)
         || !secret_equal(token.as_bytes(), expected.as_bytes())
     {
         return Err(invalid());
     }
     Ok(())
-}
-
-fn valid_bearer(token: &str) -> bool {
-    if token.len() > 8192 {
-        return false;
-    }
-    let token = token.trim_end_matches('=');
-    !token.is_empty()
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/".contains(&byte))
 }
 
 // Compare every byte once lengths match; authentication never exits at the first difference.
@@ -88,34 +76,37 @@ pub fn validate_body(body: &Value, limits: &ResourceLimits) -> Result<(), Failur
     Ok(())
 }
 
-pub fn merge_body(provider: &Provider, model: &Model, client: &Value) -> Value {
-    let mut body = provider.defaults.clone();
-    body.extend(model.defaults.clone());
-    if let Some(client) = client.as_object() {
-        body.extend(client.clone());
+pub fn merge_body(provider: &Provider, model: &Model, client: Value) -> Result<Value, Failure> {
+    let Value::Object(mut body) = client else {
+        return Err(Failure::new(ErrorCode::InvalidRequest, "request_body"));
+    };
+    for defaults in [&model.defaults, &provider.defaults] {
+        for (key, value) in defaults {
+            if !body.contains_key(key) {
+                body.insert(key.clone(), value.clone());
+            }
+        }
     }
     body.insert("model".to_owned(), Value::String(model.upstream.clone()));
-    Value::Object(body)
+    Ok(Value::Object(body))
 }
 
 pub fn outbound_headers(provider: &Provider) -> Result<HeaderMap, Failure> {
-    let mut entries: Vec<Value> = provider
-        .headers
-        .iter()
-        .map(|(name, value)| json!({"name": name, "value": value}))
-        .collect();
-    if let Some(auth) = &provider.auth {
-        if provider
-            .headers
-            .keys()
-            .any(|name| name.eq_ignore_ascii_case("authorization"))
-            || !valid_bearer(&auth.bearer)
-        {
-            return Err(Failure::new(ErrorCode::Internal, "upstream_headers"));
-        }
-        entries.push(json!({"name": "authorization", "value": format!("Bearer {}", auth.bearer)}));
+    let invalid = || Failure::new(ErrorCode::Internal, "upstream_headers");
+    let mut headers = HeaderMap::new();
+    // Static names, transport policy and authentication conflicts were validated
+    // at startup. HTTP types still own the actual header-byte conversion here.
+    for (name, value) in &provider.headers {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|source| invalid().with_source(source))?;
+        let value = HeaderValue::from_str(value).map_err(|source| invalid().with_source(source))?;
+        headers.insert(name, value);
     }
-    let mut headers = headers_from_json(&Value::Array(entries))?;
+    if let Some(auth) = &provider.auth {
+        let value = HeaderValue::from_str(&format!("Bearer {}", auth.bearer))
+            .map_err(|source| invalid().with_source(source))?;
+        headers.insert(header::AUTHORIZATION, value);
+    }
     if !headers.contains_key(header::ACCEPT) {
         headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
     }

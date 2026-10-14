@@ -8,13 +8,39 @@ use std::{
 
 use rquickjs::{AsyncContext, Ctx, Object, Persistent, Promise, Value};
 use serde_json::Value as Json;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
-use crate::{Command, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge};
+use crate::{
+    Cancellation, Command, HookCall, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
+};
+
+/// Only settlement authority survives after the input becomes a private VM draft.
+struct Completion {
+    cancellation: Cancellation,
+    deadline: Instant,
+    response: oneshot::Sender<Result<Json, ScriptError>>,
+}
+
+impl Completion {
+    fn invalid(&self) -> Option<ScriptError> {
+        if self.cancellation.is_cancelled() || self.response.is_closed() {
+            Some(ScriptError::new(ScriptErrorKind::Cancelled))
+        } else if Instant::now() >= self.deadline {
+            Some(ScriptError::new(ScriptErrorKind::Deadline))
+        } else {
+            None
+        }
+    }
+
+    fn send(self, result: Result<Json, ScriptError>) {
+        let result = self.invalid().map_or(result, Err);
+        let _sent = self.response.send(result);
+    }
+}
 
 struct Pending {
-    command: Command,
+    completion: Completion,
     draft: Persistent<Value<'static>>,
     promise: Persistent<Promise<'static>>,
 }
@@ -34,7 +60,7 @@ pub(super) async fn serve(
         .cloned()
         .unwrap_or_else(|| ScriptError::new(ScriptErrorKind::Stopped));
     for waiting in pending {
-        let _sent = waiting.command.response.send(Err(failure.clone()));
+        let _sent = waiting.completion.response.send(Err(failure.clone()));
     }
     outcome
 }
@@ -74,7 +100,7 @@ async fn run_loop(
         continuous_start = None;
         // Inspect completion before sleeping; no native jobs means no polling.
         poll_pending(context, bridge, budget, options, pending).await?;
-        let deadline = pending.iter().map(|p| p.command.call.deadline).min();
+        let deadline = pending.iter().map(|p| p.completion.deadline).min();
         match wait(commands, wake, deadline).await {
             Wake::Command(command) => admit(vm, hooks, command, pending).await?,
             Wake::Notified => {},
@@ -167,16 +193,6 @@ async fn wait(
     }
 }
 
-fn invalid(command: &Command) -> Option<ScriptError> {
-    if command.call.cancellation.is_cancelled() || command.response.is_closed() {
-        Some(ScriptError::new(ScriptErrorKind::Cancelled))
-    } else if Instant::now() >= command.call.deadline {
-        Some(ScriptError::new(ScriptErrorKind::Deadline))
-    } else {
-        None
-    }
-}
-
 async fn begin(
     context: &AsyncContext,
     bridge: &Bridge,
@@ -185,12 +201,25 @@ async fn begin(
     command: Command,
     options: &RuntimeOptions,
 ) -> Result<Option<Pending>, ScriptError> {
-    if let Some(error) = invalid(&command) {
-        let _sent = command.response.send(Err(error));
+    let Command { call, response } = command;
+    let HookCall {
+        hook_id,
+        context: input,
+        deadline,
+        cancellation,
+        ..
+    } = call;
+    let completion = Completion {
+        cancellation,
+        deadline,
+        response,
+    };
+    if let Some(error) = completion.invalid() {
+        let _sent = completion.response.send(Err(error));
         return Ok(None);
     }
-    let Some(hook) = hooks.get(&command.call.hook_id) else {
-        let _sent = command
+    let Some(hook) = hooks.get(&hook_id) else {
+        let _sent = completion
             .response
             .send(Err(ScriptError::new(ScriptErrorKind::UnknownHook)));
         return Ok(None);
@@ -201,9 +230,10 @@ async fn begin(
                 .clone()
                 .restore(&ctx)
                 .map_err(|e| bridge.failure(&ctx, e))?;
-            let bytes = serde_json::to_vec(&command.call.context)
+            let bytes = serde_json::to_vec(&input)
                 .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
             let draft = ctx.json_parse(bytes).map_err(|e| bridge.failure(&ctx, e))?;
+            drop(input);
             let prepare = bridge
                 .prepare
                 .clone()
@@ -231,24 +261,19 @@ async fn begin(
     let result = budget.check_result(result);
     match result {
         Ok(Ok(value)) => {
-            send(command, Ok(value));
+            completion.send(Ok(value));
             Ok(None)
         },
         Ok(Err((draft, promise))) => Ok(Some(Pending {
-            command,
+            completion,
             draft,
             promise,
         })),
         Err(error) => {
-            let _sent = command.response.send(Err(error.clone()));
+            let _sent = completion.response.send(Err(error.clone()));
             if fatal(&error) { Err(error) } else { Ok(None) }
         },
     }
-}
-
-fn send(command: Command, result: Result<Json, ScriptError>) {
-    let result = invalid(&command).map_or(result, Err);
-    let _sent = command.response.send(result);
 }
 
 fn output<'js>(
@@ -288,9 +313,9 @@ async fn poll_pending(
 ) -> Result<(), ScriptError> {
     let mut index = 0;
     while index < pending.len() {
-        if let Some(error) = invalid(&pending[index].command) {
+        if let Some(error) = pending[index].completion.invalid() {
             let waiting = pending.swap_remove(index);
-            let _sent = waiting.command.response.send(Err(error));
+            let _sent = waiting.completion.response.send(Err(error));
             continue;
         }
         budget.arm(Instant::now() + options.execution_timeout);
@@ -319,9 +344,12 @@ async fn poll_pending(
             .await;
         match budget.check_result(result) {
             Ok(None) => index += 1,
-            Ok(Some(value)) => send(pending.swap_remove(index).command, Ok(value)),
+            Ok(Some(value)) => pending.swap_remove(index).completion.send(Ok(value)),
             Err(error) => {
-                send(pending.swap_remove(index).command, Err(error.clone()));
+                pending
+                    .swap_remove(index)
+                    .completion
+                    .send(Err(error.clone()));
                 if fatal(&error) {
                     return Err(error);
                 }
@@ -330,3 +358,6 @@ async fn poll_pending(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

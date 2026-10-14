@@ -12,6 +12,15 @@ CI 仅构建 Linux amd64 镜像，不推送、不发布、不运行容器。按�
 本文件是唯一进度文档，只保存当前状态、剩余任务、阻碍与待验证项；长期契约见[设计基线](design.md)，
 命令、依赖选择和构建配置见[开发指引](development.md)。
 
+## 待验证与后续工作
+
+- 单独运行 `context-stream` JS 实验与 `transport-contracts` HTTP 实验，补齐流 hook、四种传输组合、
+  usage 尾块、截断、取消及终态观察的运行证据；纯逻辑测试不能替代这些实验。
+- 在 Linux 上验证编译、TLS/CA、SIGTERM、慢客户端、流背压及关闭传播。
+- 验证 Docker 构建、容器启动、只读配置挂载、非 root 文件权限、端口绑定和关闭行为。
+- 配置远程后运行 GitHub CI，核实 Linux Rust job 与镜像构建，再依据实际结果配置分支保护。
+- 分发前确定许可证、发布位置与权限；镜像推送、release 和真实上游验收单独安排。
+
 ## 首版之外
 
 自动重试、故障转移、热重载、上游模型发现、UI、Responses/Embeddings/Images/音频接口、
