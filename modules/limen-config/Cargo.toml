@@ -1,0 +1,17 @@
+[package]
+name = "limen-config"
+description = "Validated configuration and shared contracts for Limen"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+serde_path_to_error.workspace = true
+http.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

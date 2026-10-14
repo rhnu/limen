@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/limen"]
+members = ["apps/limen", "modules/limen-config", "modules/limen-script"]
 resolver = "3"
 
 [workspace.package]
@@ -8,6 +8,18 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+limen-config = { path = "modules/limen-config" }
+limen-script = { path = "modules/limen-script" }
+http = "1.5.0"
+rquickjs = { version = "0.14.0", features = ["futures", "loader"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_path_to_error = "0.1.20"
+serde-saphyr = { version = "2.0.0", default-features = false, features = ["deserialize"] }
+tokio = { version = "1.53.3", features = ["rt", "sync", "time", "macros"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
+url = "2.5.8"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
