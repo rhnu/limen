@@ -1,0 +1,8 @@
+[global]
+respect-gitignore = true
+exclude = ["target/**"]
+disable = ["MD013"]
+extend-enable = ["MD060"]
+
+[MD060]
+style = "aligned"

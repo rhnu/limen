@@ -1,0 +1,51 @@
+# Only overrides are needed; cargo dev config show displays the complete profile.
+version = 1
+
+[execution]
+# Bound Rusteward file processing: 0 selects available CPUs and file count; 1 is serial.
+# Cargo Clippy controls its own jobs.
+jobs = 0
+
+[scan]
+# Arrays replace the previous config layer. Globs are relative to the workspace root.
+exclude = ["**/vendor/**", "**/dist/**"]
+
+[format]
+spacing = true
+# toolchain = "stable" # Optional: otherwise use the target project's active toolchain.
+
+[format.rustfmt]
+# Native rustfmt keys and TOML values are passed through --config KEY=VALUE.
+max_width = 100
+
+[lint]
+clippy = true
+deny-warnings = false
+all-targets = true
+all-features = false
+no-default-features = false
+features = []
+# Extra rustc flags follow the managed lint profile.
+clippy-args = [] # For example: ["-A", "clippy::similar_names"]
+
+[lint.clippy-lints]
+# Native unqualified lint names merge with the strict built-in profile.
+# Levels are allow, warn, deny, or forbid. All and pedantic are already enabled.
+must_use_candidate = "allow"
+
+[lint.clippy-config]
+# Native Clippy parameter keys and TOML values merge with the built-in parameters.
+# Standalone clippy.toml and .clippy.toml files do not participate.
+allow-unwrap-in-tests = true
+allow-unwrap-in-consts = false
+
+[rules]
+mod-rs = "error"
+inline-tests = "warning"
+
+[rules.lines]
+# Only values strictly greater than these thresholds raise a finding.
+warn = 650
+error = 1200
+warn-level = "warning"
+error-level = "error"

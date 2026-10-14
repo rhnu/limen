@@ -1,0 +1,24 @@
+/target/
+.rumdl_cache/
+
+# Local runtime configuration and secrets. Commit sanitized *.example.* files instead.
+/local/
+/server.yaml
+/config.js
+/config.mjs
+secrets.js
+secrets.mjs
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.log

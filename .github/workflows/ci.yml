@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install the repository toolchain
+        run: rustup show
+      - name: Install Rusteward
+        uses: rhnu/rusteward@main
+      - name: Compile check
+        run: cargo check --workspace --all-targets --locked
+      - name: Format check
+        run: cargo dev format --check --diff --locked
+      - name: Lint
+        run: cargo dev lint --locked --deny-warnings
+      - name: Unit tests
+        run: cargo test --workspace --bins --locked
+
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: rvben/rumdl@v0
+        with:
+          version: "0.2.79"
+          command: check
+          report-type: annotations
+          args: --deny-config-warnings
