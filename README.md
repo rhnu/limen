@@ -70,7 +70,8 @@ Ctrl-C 会停止监听并取消在途请求；Unix 下也处理 SIGTERM。VM 退
 - [开发指引](docs/development.md)：构建、Rusteward、单元测试与隔离运行时实验。
 - [工作区约定](AGENTS.md)：代理在本仓库工作时遵循的项目约束。
 
-应用是 workspace 根包，源码位于 `src/`，配置和 JS 运行时库位于 `modules/`。依赖由 workspace 根集中管理，
+应用是 workspace 根包，源码位于 `src/`，配置和 JS 运行时库分别位于 `modules/config/` 与 `modules/script/`。
+整体模块拆分建议见[设计中的工程边界](docs/design.md#12-workspace-与模块边界)。依赖由 workspace 根集中管理，
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
 Linux 构建、Docker、真实上游及 GitHub runner 验证尚未完成，本机验证不能替代这些证据。

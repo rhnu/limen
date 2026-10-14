@@ -854,7 +854,79 @@ rquickjs 官方将绑定描述为 mostly stable，同时说明实验性 feature
 reqwest 的 TLS feature 名称和默认行为会随主次版本变化；以实际采用版本的官方
 feature 文档为准，不照抄旧示例的 feature 字符串。
 
-## 12. 实施边界与验证清单
+## 12. Workspace 与模块边界
+
+### 12.1 当前结构
+
+主应用 `limen` 位于 workspace 根包，`src/` 包含 CLI、启动组合、HTTP server、gateway、日志和隔离实验入口。
+`modules/config/` 对应 Cargo 包 `limen-config`，`modules/script/` 对应 `limen-script`。
+目录使用简短职责名，包名保留项目前缀；目录名与 Cargo 包身份不要求相同。
+全部依赖（包括内部路径依赖）由根清单集中声明，成员通过 `workspace = true` 使用。
+
+当前配置库还包含公开错误码与响应状态映射，根包 `gateway/pipeline.rs` 同时承担阶段调度与上游收发。
+以下是面向完整首版的拆分建议，尚未完成这些职责迁移，也尚未建立 `chat` 库。
+
+### 12.2 建议的包边界
+
+建议保留一个根应用包和三个职责库，在实际进入流阶段时引入第三个库，不提前建立空包。
+
+| 位置              | Cargo 包       | 职责                                                                      | 边界                                                                      |
+| ----------------- | -------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 根包 `src/`       | `limen`        | CLI、启动组合、认证、单次路由、hook 顺序、上下游 HTTP、请求与进程生命周期 | 拥有产品策略与资源协调；初始化日志、处理信号并决定退出                    |
+| `modules/config/` | `limen-config` | YAML/业务 schema、默认值、provider/model 引用、资源配置和安全配置诊断     | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线                |
+| `modules/script/` | `limen-script` | 本地 ESM、函数登记、JS context/draft、JSON 桥接、VM 线程、Promise 与预算  | 只提供启动、调用、状态和关闭能力；不选择 provider，不编排请求阶段         |
+| `modules/chat/`   | `limen-chat`   | SSE 增量编解码、Chat chunk 语义、JSON↔SSE 转换、有界聚合与结束条件        | 建议新增的纯逻辑库；不依赖配置、VM、HTTP 客户端或服务框架，不持有网络连接 |
+
+根包是应用组合与策略层，不只保留 `main.rs`。认证、模型表、路由和 provider → model 阶段次序只有当前应用这一调用方，
+拆成独立 crate 会增加接口与跨包协调，却没有独立的依赖或复用收益，先保留为根包内部模块。
+`config` 的拆分隔离启动 schema，`script` 的拆分隔离 VM 所有权与引擎依赖，`chat` 的拆分隔离协议状态机与转换逻辑；
+这些边界能分别用纯逻辑测试或隔离运行实验验证。
+
+不为认证、provider、model、limits、错误、日志或通用 SSE framing 单独建包，也不建立兜底的 `common`/`core` 包。
+SSE 解码先复用经调查适合的现有库，`chat` 只增加本项目需要的预算、Chat 语义与转换边界。
+只有出现真实的独立调用方或依赖隔离需求，才重新评估更多 crate。
+
+### 12.3 根包内部职责
+
+保留现有顶层 `cli`、`bootstrap`、`server`、`gateway`、`telemetry` 模块；在对应逻辑实际增长时拆子模块，
+不一次性创建以下所有文件。
+
+- `cli`：参数、帮助与参数退出语义。`bootstrap`：配置装载、脚本启动、配置校验、资源选项转换及失败清理。
+- `server`：监听和 HTTP/1 连接驱动、头部与连接预算、断开通知、信号及 VM 退役后的有界关闭。
+- `gateway`：请求许可、ID、任务追踪、请求 deadline 与终态。当前 `Lifecycle` 可随流生命周期调整移入 `gateway/lifecycle.rs`。
+- `gateway/logic`：认证、请求校验、显式模型表、浅层 defaults 和单次路由；规则增长后再按认证、路由、头部拆分。
+- `gateway/pipeline`：全局与 provider → model 的阶段调度、成功 draft/state 提交、四种传输路径选择。
+- `gateway/upstream`：建议从当前管线提取的上游客户端、连接池、单次发送、原始 status/media 与有界 body 读取。
+- `gateway/response`：建议集中 JSON/SSE 下游表示、别名默认、头部策略、状态映射及流开始前后的错误输出。
+- `gateway/observe`：建议集中 `onError`/`onFinish` 与有限清理预算；流路径按实际完成、失败或截断进入终态。
+- `gateway/error`：稳定的应用错误码、失败分类、保留来源及安全对外错误对象。
+- `telemetry`：subscriber、panic hook 和应用边界失败报告。`runtime_probe` 继续作为根包实验二进制，显式运行。
+
+当前 `config/protocol.rs` 的 `ErrorCode` 属于网关应用策略，建议连同测试迁入 `gateway/error`；
+`validate_response_status` 建议迁入 `gateway/response`。配置错误继续留在 `config`，脚本错误留在 `script`，
+未来协议/转换错误留在 `chat`，由根包映射为应用失败并保留原始来源；不另设共享错误包。
+
+### 12.4 库内模块与依赖方向
+
+`config` 保留 `server`、`business`、`error`；静态配置只保存 owned 数据与 hook ID。
+`script` 保留 `loader`、`json`、`context`、`engine`、`error`，`engine/startup` 与 `engine/scheduler` 分工不变。
+`lib.rs` 的公开调用与通道入口只有在职责或维护需要时再移入 `runtime.rs`，不把 VM 内部类型公开给根包。
+
+建议的 `chat` 库内部按 `sse`（分块解码与 framing）、`chunk`（Chat 事件与结束校验）、
+`aggregate`（按 choice/tool index 聚合）、`encode`（完整 JSON 转事件）、`error` 组织。
+同形态保留合法扩展字段；跨形态支持范围仍由第 7 节约束。转换输入、输出和状态均受显式预算约束，
+JSON 转事件采用有界迭代或分批输出，不返回无界事件集合。
+
+依赖方向为根包 → `config`、`script`、`chat`，三个职责库之间保持独立，也不反向依赖根包。
+根包将 `ResourceLimits` 转为各库实际需要的选项；各库执行自身队列、VM、解析或聚合边界，
+根包执行跨步骤事件展开总预算、请求并发、整体 deadline 与上下游背压。
+hook 的 `replaceEvents` 方法和单次调用约束属于 `script` 的 draft 契约，展开事件如何进入后续步骤属于根包管线。
+`chat` 只消费 owned 字节/JSON/事件与预算，报告结束或截断；根包决定何时读取、调用 hook、写出、取消和观察。
+
+整个拆分沿用 `foo.rs` 加 `foo/` 子模块，单元测试随被测职责迁移至对应 `tests.rs`。
+目录与操作命令见[开发指引](development.md)，尚未实施的迁移只在[路线图](roadmap.md)中跟踪。
+
+## 13. 实施边界与验证清单
 
 建议分四个可验收部分推进：
 
@@ -886,7 +958,7 @@ HTTP 非流管线已有本机合成上游证据，流处理尚未完成。配置
 不等于行为测试。目标平台的编译、真实上游接入、性能与端到端体验仍是后续验证范围，不能在仅有文档和
 API 核验时宣布通过。
 
-## 13. 参考来源
+## 14. 参考来源
 
 - [WHATWG SSE 解析规范](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream)
 - [OpenAI Chat Completions 官方参考](https://developers.openai.com/api/reference/resources/chat)

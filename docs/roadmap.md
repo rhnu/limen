@@ -4,11 +4,12 @@
 
 `limen check` 与 `limen serve` 已可用：基础 YAML、业务 schema、本地 ESM、有界 JS 调度与 HTTP/1 JSON 网关已接通。
 两个 API 共用独立客户端认证，完整非流管线按 provider → model 顺序运行，具备请求隔离、取消、观察预算与有界关闭。
-应用是 workspace 根包，配置和脚本各有独立库。流请求和上游 SSE 仍明确拒绝。
+应用是 workspace 根包，配置和脚本库分别位于 `modules/config/` 与 `modules/script/`。流请求和上游 SSE 仍明确拒绝。
 本文件是唯一进度文档，只保存当前状态、剩余任务、阻碍与待验证项；长期契约见[设计基线](design.md)，
 命令与依赖选择见[开发指引](development.md)。
 
-下一步是 **M5：SSE 与四种传输组合**。当前已有 Windows 本机纯逻辑测试、隔离 JS 实验及本地合成 HTTP 上游实验；
+整体模块拆分建议见[设计中的工程边界](design.md#12-workspace-与模块边界)；`chat` 库与职责迁移尚未实施。
+后续功能阶段为 **M5：SSE 与四种传输组合**。当前已有 Windows 本机纯逻辑测试、隔离 JS 实验及本地合成 HTTP 上游实验；
 覆盖单次发送、认证、顺序、失败提交、状态映射、资源拒绝、观察失败、deadline、断开、Ctrl-C 与退役退出。
 不把这些结果视为 Linux、Docker、真实上游、TLS 接入或 GitHub runner 的执行证据。
 JSON 连接期限已接线；Windows 系统写入排队未形成可靠的阻塞写证据，Linux 慢客户端实验仍待补充。
@@ -29,6 +30,8 @@ JS 自行捕获的 OOM 无法通过当前安全 API 可靠观察；内存上限�
 ## M5：SSE 与四种传输组合
 
 - [ ] 先调查现有 SSE 增量解析库，对照 WHATWG 规范；可复用解码能力与本项目语义层分开。
+- [ ] 按模块拆分建议建立 `modules/chat` 纯逻辑库，根包接入四路径调度；不预建网络或 hook 抽象。
+- [ ] 将配置库 `protocol` 的公开错误码与状态映射迁入根包，并按实际职责拆小 gateway 的管线模块。
 - [ ] 覆盖跨分块 UTF-8、CRLF/LF/CR、多行 data、注释和空事件边界；限制单事件大小。
 - [ ] 实现 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四条阶段次序，严格遵守设计第 7 节。
 - [ ] 支持文本、refusal、function tool calls、多 choice、finish reason、usage；按 index 正确归并分片。

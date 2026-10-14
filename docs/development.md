@@ -6,8 +6,8 @@
 .
 ├── src/                 根包：CLI、bootstrap、JSON gateway、HTTP server、日志与运行时实验入口
 ├── modules/
-│   ├── limen-config/    YAML/业务配置、资源 schema、错误与状态契约
-│   └── limen-script/    ESM、严格 JSON 桥接、专属线程和有界 JS 调度
+│   ├── config/          limen-config：YAML/业务配置、资源 schema、配置诊断
+│   └── script/          limen-script：ESM、严格 JSON 桥接、专属线程和有界 JS 调度
 ├── examples/            无真实凭据的基础配置与共享模块
 ├── tools/               有外部超时保护的 JS 与本地 HTTP 实验驱动
 ├── docs/                设计、唯一实施路线图、开发指引
@@ -21,7 +21,10 @@
 根包 `limen` 是默认 workspace 成员，根目录的 `cargo run`、`cargo build` 和 `cargo test` 默认选择它；
 全 workspace 检查与测试继续显式使用 `--workspace`。`runtime_probe` 同属根包，仅由隔离实验驱动运行。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
-根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播；不预建空 crate。
+根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播。
+短目录名表示职责，Cargo 包名仍为 `limen-config`、`limen-script`；路径依赖由根清单显式指定。
+当前公开错误码与状态映射仍在配置库的 `protocol` 模块中；后续归属与整体拆分建议见
+[设计中的工程边界](design.md#12-workspace-与模块边界)，不预建空 crate。
 单元测试放在被测模块的 `tests.rs` 子模块，禁止 `mod.rs`。
 
 ## 本地检查
