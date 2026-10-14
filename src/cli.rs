@@ -1,65 +1,35 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::path::PathBuf;
 
-pub const HELP: &str = "Limen — Chat Completions gateway configuration\n\nUsage:\n  limen check [--config PATH]\n  limen serve [--config PATH]\n  limen --help\n  limen --version\n\nThe default config path is ./server.yaml. check executes local top-level JavaScript,\nbut does not invoke request hooks, listen on a port, or call a provider.\nserve validates configuration, then reports that HTTP serving is not implemented.";
+use clap::{Args, Parser, Subcommand};
 
-#[derive(Debug, PartialEq, Eq)]
+/// The process command line; clap handles help, version and argument errors.
+#[derive(Debug, Parser)]
+#[command(
+    name = "limen",
+    version,
+    about = "Chat Completions gateway configuration",
+    disable_help_subcommand = true
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, PartialEq, Eq, Subcommand)]
 pub enum Command {
-    Check(PathBuf),
-    Serve(PathBuf),
-    Help,
-    Version,
+    /// Validate configuration, executing local top-level JavaScript.
+    #[command(after_help = "Does not invoke request hooks, listen on a port, or call a provider.")]
+    Check(ConfigArgs),
+    /// Validate configuration, then report that HTTP serving is not implemented.
+    Serve(ConfigArgs),
 }
 
-/// Parse the small command surface without converting filesystem paths to UTF-8.
-pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, &'static str> {
-    let mut args = args.into_iter();
-    let first = args.next().ok_or("a command is required; use --help")?;
-    if first == "--help" || first == "-h" {
-        return no_extra(args, Command::Help);
-    }
-    if first == "--version" || first == "-V" {
-        return no_extra(args, Command::Version);
-    }
-    let serve = if first == "check" {
-        false
-    } else if first == "serve" {
-        true
-    } else {
-        return Err("unknown command; use --help");
-    };
-    let path = match args.next() {
-        None => PathBuf::from("server.yaml"),
-        Some(flag) if flag == "--help" || flag == "-h" => {
-            return no_extra(args, Command::Help);
-        },
-        Some(flag) if flag == "--config" => {
-            let path = args.next().ok_or("--config requires a path")?;
-            if path.is_empty() || path.to_string_lossy().starts_with('-') {
-                return Err("--config requires a path (prefix dash-leading paths with ./)");
-            }
-            PathBuf::from(path)
-        },
-        Some(_) => return Err("unexpected argument; use --help"),
-    };
-    no_extra(
-        args,
-        if serve {
-            Command::Serve(path)
-        } else {
-            Command::Check(path)
-        },
-    )
-}
-
-fn no_extra(
-    mut args: impl Iterator<Item = OsString>,
-    command: Command,
-) -> Result<Command, &'static str> {
-    if args.next().is_some() {
-        Err("unexpected argument; use --help")
-    } else {
-        Ok(command)
-    }
+/// Shared configuration options, with native filesystem path parsing.
+#[derive(Debug, PartialEq, Eq, Args)]
+pub struct ConfigArgs {
+    /// Path to the server YAML; config.js is resolved relative to this file.
+    #[arg(long, value_name = "PATH", default_value = "server.yaml")]
+    pub config: PathBuf,
 }
 
 #[cfg(test)]

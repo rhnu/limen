@@ -86,6 +86,7 @@ cargo run --locked -- check --config examples/basic/server.yaml
 
 | 依赖                | 解析版本 | MSRV | 启用能力与依据                                                               |
 | ------------------- | -------- | ---- | ---------------------------------------------------------------------------- |
+| clap                | 4.6.7    | 1.85 | std、derive、help、usage；禁用默认 features，避免参数错误上下文回显输入      |
 | rquickjs            | 0.14.0   | 1.87 | std、futures、loader；不启用 parallel、rust-alloc；保留 QuickJS 内建分配统计 |
 | Tokio               | 1.53.3   | 1.71 | rt、sync、time、macros；专属 current-thread executor 与有界通道              |
 | serde               | 1.0.229  | 1.56 | derive，强类型配置                                                           |
@@ -98,7 +99,8 @@ cargo run --locked -- check --config examples/basic/server.yaml
 | tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                         |
 | thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                |
 
-上游依据：[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、
+上游依据：[clap 发布](https://github.com/clap-rs/clap/releases/tag/v4.6.7)与
+[feature 文档](https://docs.rs/crate/clap/4.6.7/features)、[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、
 [Tokio 发布](https://github.com/tokio-rs/tokio/releases)、[Serde 发布](https://github.com/serde-rs/serde/releases)、
 [serde_json 发布](https://github.com/serde-rs/json/releases)、[serde-saphyr 发布](https://github.com/bourumir-wyngs/serde-saphyr/releases)、
 [字段路径发布](https://github.com/dtolnay/path-to-error/releases)、[url 发布](https://github.com/servo/rust-url/releases)、

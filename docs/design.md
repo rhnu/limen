@@ -692,12 +692,16 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
 
 ### 10.1 CLI
 
-建议保留两个基本入口：
+CLI 使用 clap 定义两个基本入口：
 
 ```text
 limen serve --config ./server.yaml
 limen check --config ./server.yaml
 ```
+
+默认配置路径是 `server.yaml`，支持 `--config PATH` 和 `--config=PATH`，按原生文件系统路径解析。
+顶层提供 `--help` / `-h` 和 `--version` / `-V`，两个子命令提供各自的帮助。
+帮助与版本输出到 stdout 并返回 `0`；参数错误输出到 stderr 并返回 `2`，不回显任意参数值。
 
 `check` 与 `serve`
 共用配置加载、模块求值、导出提取和结构校验逻辑，但不监听端口、不调用

@@ -16,6 +16,8 @@ cargo run --locked -- check --config examples/basic/server.yaml
 ```
 
 默认配置路径为当前目录的 `server.yaml`；`config.js` 始终相对于该 YAML 所在目录定位。
+CLI 使用 clap，支持 `--config PATH` 和 `--config=PATH`；`limen --help` 查看命令，
+`limen check --help` / `limen serve --help` 查看对应选项，`limen --version` 查看版本。
 示例使用保留域名和占位令牌，演示 `../shared/rules.mjs` 导入，不会连接上游。
 实际配置放在被忽略的 `local/`，不要提交真实令牌。
 
@@ -33,7 +35,7 @@ client_auth:
 也不执行请求阶段 hook。通过检查只代表配置结构和启动求值有效，不能证明 hook 在所有输入上正确。
 脚本不提供 Node、网络、定时器、进程或任意文件读写 API；本地模块导入是允许的文件访问。
 
-退出码：`0` 检查成功或帮助输出；`1` 配置、运行时或关闭失败；`2` CLI 参数错误；`3` 服务尚未实现。
+退出码：`0` 检查成功、帮助或版本输出；`1` 配置、运行时或关闭失败；`2` CLI 参数错误；`3` 服务尚未实现。
 
 ## 开发与边界
 

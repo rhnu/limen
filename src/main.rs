@@ -5,46 +5,28 @@ mod telemetry;
 use std::process::ExitCode;
 
 use bootstrap::Bootstrap;
-use cli::Command;
+use clap::Parser;
+use cli::{Cli, Command};
 
 /// The application owns process exit; the VM library only reports retirement.
 fn main() -> ExitCode {
     telemetry::install_panic_hook();
-    let command = match cli::parse(std::env::args_os().skip(1)) {
-        Ok(command) => command,
-        Err(error) => {
-            eprintln!("limen: {error}");
-            return ExitCode::from(2);
+    let cli = Cli::parse();
+    let (path, serve) = match &cli.command {
+        Command::Check(args) => (&args.config, false),
+        Command::Serve(args) => (&args.config, true),
+    };
+    let executor = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
+        Ok(executor) => executor,
+        Err(source) => {
+            telemetry::report_failure(&bootstrap::Error::Executor(source), "startup", "executor");
+            return ExitCode::FAILURE;
         },
     };
-    match command {
-        Command::Help => {
-            println!("{}", cli::HELP);
-            ExitCode::SUCCESS
-        },
-        Command::Version => {
-            println!("limen {}", env!("CARGO_PKG_VERSION"));
-            ExitCode::SUCCESS
-        },
-        Command::Check(ref path) | Command::Serve(ref path) => {
-            let serve = matches!(&command, Command::Serve(_));
-            let executor = match tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()
-            {
-                Ok(executor) => executor,
-                Err(source) => {
-                    telemetry::report_failure(
-                        &bootstrap::Error::Executor(source),
-                        "startup",
-                        "executor",
-                    );
-                    return ExitCode::FAILURE;
-                },
-            };
-            executor.block_on(run(path, serve))
-        },
-    }
+    executor.block_on(run(path, serve))
 }
 
 async fn run(path: &std::path::Path, serve: bool) -> ExitCode {
