@@ -12,7 +12,7 @@ Limen 是面向个人与内网使用的 Rust Chat Completions 网关：显式配
 安装 Rustup 和 C 编译工具链后，在仓库根目录执行：
 
 ```sh
-cargo run -p limen --locked -- check --config examples/basic/server.yaml
+cargo run --locked -- check --config examples/basic/server.yaml
 ```
 
 默认配置路径为当前目录的 `server.yaml`；`config.js` 始终相对于该 YAML 所在目录定位。
@@ -42,7 +42,7 @@ client_auth:
 - [开发指引](docs/development.md)：构建、Rusteward、单元测试与隔离运行时实验。
 - [工作区约定](AGENTS.md)：代理在本仓库工作时遵循的项目约束。
 
-应用位于 `apps/limen`，配置和 JS 运行时库位于 `modules/`。依赖由 workspace 根集中管理，
+应用是 workspace 根包，源码位于 `src/`，配置和 JS 运行时库位于 `modules/`。依赖由 workspace 根集中管理，
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
 Linux 构建、Docker、真实上游及 GitHub runner 验证尚未完成，本机验证不能替代这些证据。
