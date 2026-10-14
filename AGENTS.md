@@ -18,7 +18,8 @@
 
 ## 工程约束
 
-- workspace 根集中管理依赖；成员使用 `workspace = true`。主应用位于根包，配置与脚本库在 `modules/`，按实际职责拆分。
+- workspace 根集中管理依赖；成员使用 `workspace = true`。主应用位于根包，职责库在 `modules/`，开发实验与任务入口在 `xtask/`。
+- unsafe 默认 deny；只有 xtask Windows 控制台模块局部允许，必须保留每个 unsafe block 的安全解释与 lint 检查。
 - 使用 `foo.rs` 加 `foo/` 子模块，避免 `mod.rs`；单元测试放被测模块的 `tests.rs` 子模块。
 - 默认新增和运行纯逻辑单元测试。Linux 运行时实验、端到端、真实上游和 Docker 运行验证按阶段单独安排，明确报告证据。
 - 使用开发指引中的编译、Rusteward、测试与 rumdl 检查，不以格式或编译通过代替行为验证。

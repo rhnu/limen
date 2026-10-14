@@ -884,7 +884,7 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 
 ### 12.2 包边界
 
-保留一个根应用包和三个职责库。
+保留一个根应用包、三个职责库，以及一个独立的 xtask 开发工具包。
 
 | 位置              | Cargo 包       | 职责                                                                      | 边界                                                              |
 | ----------------- | -------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -892,11 +892,14 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 | `modules/config/` | `limen-config` | YAML/业务 schema、默认值、provider/model 引用、资源配置和安全配置诊断     | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线        |
 | `modules/script/` | `limen-script` | 本地 ESM、函数登记、JS context/draft、JSON 桥接、VM 线程、Promise 与预算  | 只提供启动、调用、状态和关闭能力；不选择 provider，不编排请求阶段 |
 | `modules/chat/`   | `limen-chat`   | SSE 增量编解码、Chat chunk 语义、JSON↔SSE 转换、有界聚合与结束条件        | 纯逻辑库；不依赖配置、VM、HTTP 客户端或服务框架，不持有网络连接   |
+| `xtask/`          | `limen-xtask`  | 隔离 VM/HTTP 实验、实验构建、硬超时、进程树监督与临时文件清理             | 显式开发入口；VM 调用 script 公开 API，HTTP 启动 limen 可执行文件 |
 
 根包是应用组合与策略层，不只保留 `main.rs`。认证、模型表、路由和 provider → model 阶段次序只有当前应用这一调用方，
 拆成独立 crate 会增加接口与跨包协调，却没有独立的依赖或复用收益，先保留为根包内部模块。
 `config` 的拆分隔离启动 schema，`script` 的拆分隔离 VM 所有权与引擎依赖，`chat` 的拆分隔离协议状态机与转换逻辑；
 这些边界能分别用纯逻辑测试或隔离运行实验验证。
+xtask 不反向成为应用或职责库的依赖。根包保留为默认 workspace 成员，普通应用构建仅包含产品二进制；
+开发实验通过 `cargo xtask probe runtime` 或 `cargo xtask probe http` 显式运行，保持与普通单元测试分离。
 
 不为认证、provider、model、limits、错误、日志或通用 SSE framing 单独建包，也不建立兜底的 `common`/`core` 包。
 SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事件队列，overflow 转为明确失败；
@@ -918,7 +921,7 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 - `gateway/events`：流 hook 顺序、成功输出提交和贯穿两阶段的单源事件展开预算。
 - `gateway/observe`：`onError`/`onFinish` 与有限清理预算；流路径按实际完成、失败或截断进入终态。
 - `gateway/error`：稳定的应用错误码、失败分类、保留来源及安全对外错误对象。
-- `telemetry`：subscriber、panic hook 和应用边界失败报告。`runtime_probe` 继续作为根包实验二进制，显式运行。
+- `telemetry`：subscriber、panic hook 和应用边界失败报告。
 
 `ErrorCode` 和 `validate_response_status` 位于 `gateway/error`。配置错误留在 `config`，脚本错误留在 `script`，
 协议/转换错误留在 `chat`，由根包映射为应用失败并保留原始来源；不另设共享错误包。

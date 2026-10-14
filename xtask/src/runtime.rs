@@ -10,10 +10,9 @@ use limen_script::{
 };
 use serde_json::{Value, json};
 
-#[path = "cases/context.rs"]
 mod context;
 
-type ProbeResult = Result<(), Box<dyn Error>>;
+type ProbeResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 /// The external timeout driver owns and removes the temporary root.
 struct Fixture {
@@ -21,14 +20,14 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(root: PathBuf) -> Result<Self, Box<dyn Error>> {
+    fn new(root: PathBuf) -> Result<Self, Box<dyn Error + Send + Sync>> {
         if !root.is_dir() || fs::read_dir(&root)?.next().is_some() {
             return Err("fixture directory must exist and be empty".into());
         }
         Ok(Self { root })
     }
 
-    fn write(&self, relative: &str, source: &str) -> Result<PathBuf, Box<dyn Error>> {
+    fn write(&self, relative: &str, source: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
         let path = self.root.join(relative);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -37,11 +36,34 @@ impl Fixture {
         Ok(path)
     }
 
-    async fn start(&self, source: &str) -> Result<(ScriptRuntime, Value), Box<dyn Error>> {
+    async fn start(
+        &self,
+        source: &str,
+    ) -> Result<(ScriptRuntime, Value), Box<dyn Error + Send + Sync>> {
         let path = self.write("config.js", source)?;
         Ok(ScriptRuntime::start(path, RuntimeOptions::default()).await?)
     }
 }
+
+pub const CASES: &[&str] = &[
+    "void",
+    "pending-fairness",
+    "late-completion",
+    "invalid-return",
+    "rejection",
+    "top-level-await",
+    "strict-json",
+    "modules",
+    "sync-loop",
+    "microtask-loop",
+    "memory-limit",
+    "shutdown-pending",
+    "startup-loop",
+    "context-headers",
+    "context-readonly",
+    "context-isolation",
+    "context-stream",
+];
 
 pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
     let fixture = Fixture::new(root)?;
@@ -65,7 +87,7 @@ pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
     }
 }
 
-fn hook(config: &Value, name: &str) -> Result<u64, Box<dyn Error>> {
+fn hook(config: &Value, name: &str) -> Result<u64, Box<dyn Error + Send + Sync>> {
     config[name]
         .as_u64()
         .ok_or_else(|| format!("missing registered {name}").into())

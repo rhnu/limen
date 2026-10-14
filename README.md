@@ -94,9 +94,11 @@ Compose 将 `local/` 整个目录只读挂载到 `/config`，保留共享 ESM �
 
 应用是 workspace 根包，源码位于 `src/`；配置、JS 运行时和 Chat 协议库分别位于
 `modules/config/`、`modules/script/` 与 `modules/chat/`。
+隔离开发实验位于独立的 `xtask/` 包，使用 `cargo xtask probe runtime` 与 `cargo xtask probe http`，无需 Python。
 职责见[设计中的工程边界](docs/design.md#12-workspace-与模块边界)。依赖由 workspace 根集中管理，
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
 容器启动、Linux 运行行为及真实上游验收按部署阶段单独安排。
-Windows 本机已有纯逻辑测试、隔离 JS 实验及本地合成 HTTP 上游实验，覆盖顺序、认证、取消、预算与关闭。
+Windows 本机已有纯逻辑测试和原驱动的隔离实验；Rust xtask 的 17 个 VM 与 10 个本地 HTTP 实验已在 Linux 通过，
+覆盖顺序、认证、取消、预算、流转换与 SIGTERM 关闭。新驱动的 Windows 运行验证仍待补齐。
 GitHub 远程为 `rhnu/limen`；项目尚未决定分发许可证，Cargo 包设置为不发布。

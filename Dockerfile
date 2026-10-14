@@ -20,6 +20,7 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY modules ./modules
+COPY xtask ./xtask
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -29,6 +30,7 @@ RUN cargo chef cook --release --locked --bin limen --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY modules ./modules
+COPY xtask ./xtask
 RUN cargo build --release --locked --bin limen
 
 FROM debian:trixie-slim AS runtime

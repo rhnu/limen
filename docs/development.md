@@ -4,13 +4,14 @@
 
 ```text
 .
-├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server、日志与运行时实验入口
+├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server 与日志
 ├── modules/
 │   ├── config/          limen-config：YAML/业务配置、资源 schema、配置诊断
 │   ├── script/          limen-script：ESM、严格 JSON 桥接、专属线程和有界 JS 调度
 │   └── chat/            limen-chat：SSE 编解码、chunk 校验、四路径转换与有界聚合
 ├── examples/            无真实凭据的基础配置与共享模块
-├── tools/               有外部超时保护的 JS 与本地 HTTP 实验驱动
+├── xtask/               limen-xtask：Rust 编写的隔离 VM/HTTP 实验与进程监督
+├── .cargo/config.toml   cargo xtask 别名
 ├── docs/                设计、唯一实施路线图、开发指引
 ├── Cargo.toml           根包、workspace、集中依赖和共享 lint
 ├── Cargo.lock           应用依赖解析结果，纳入版本控制
@@ -21,13 +22,16 @@
 应用组合配置、脚本和 Chat 协议库；配置库不依赖 VM，脚本库不依赖 HTTP 服务框架或配置 schema（使用 http 校验头部）。
 Chat 库仅消费 owned 字节与 JSON，不持有连接，也不依赖配置或 VM。
 根包 `limen` 是默认 workspace 成员，根目录的 `cargo run`、`cargo build` 和 `cargo test` 默认选择它；
-全 workspace 检查与测试继续显式使用 `--workspace`。`runtime_probe` 同属根包，仅由隔离实验驱动运行。
+全 workspace 检查与测试继续显式使用 `--workspace`。`limen-xtask` 是独立开发工具包，
+通过 `cargo xtask` 显式调用；应用与职责库不依赖它。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
 根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播。
 短目录名表示职责，Cargo 包名使用 `limen-` 前缀；路径依赖由根清单显式指定。
 公开错误码、状态映射和安全错误对象属于根包 gateway；职责见
 [设计中的工程边界](design.md#12-workspace-与模块边界)。
 单元测试放在被测模块的 `tests.rs` 子模块，禁止 `mod.rs`。
+workspace 默认拒绝 `unsafe`；仅 xtask 的 Windows 控制台模块局部允许原生调用，
+每个 unsafe block 必须写明安全依据，Clippy 的 `undocumented_unsafe_blocks` 设置为 deny。
 
 ## 本地检查
 
@@ -68,19 +72,24 @@ actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/wo
 
 ## 隔离运行时实验
 
-JS 执行实验与普通单元测试分开。Python 3 标准库驱动构建专用二进制，再将每个实验放入独立子进程，
-超过外部时间上限即终止，避免同步死循环或 VM 故障让单元测试及 CI 无界挂起。
+JS 执行实验与普通单元测试分开。xtask 通过内部 worker 子命令将每个实验放入独立进程，
+超过外部时间上限即终止，避免同步死循环或 VM 故障让单元测试及 CI 无界挂起。无需 Python。
 
 ```sh
-python tools/runtime-probes.py
+cargo xtask probe runtime
+cargo xtask probe runtime context-stream
+cargo xtask probe runtime --list
 ```
 
-使用 `python tools/runtime-probes.py --help` 查看单项实验、超时和列表选项。
-不要直接运行失控脚本实验二进制而省略外部超时保护。
+使用 `cargo xtask probe runtime --help` 查看单项实验、超时和列表选项。
+`--timeout` 默认 12 秒，接受 1–60 秒；`--list` 不启动实验 worker。
+Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调用，不应绕过外部超时保护直接使用。
 实验只使用临时合成配置；不会连接真实 provider，不属于 Linux、Docker 或 HTTP 端到端验收。
-临时目录由 Python 父进程统一持有和清理，覆盖正常完成、失败与外部超时终止；Rust 实验入口只负责写入合成配置。
+临时目录由 xtask 父进程统一持有和清理，覆盖正常完成、失败与外部超时终止。
+父进程监听 Ctrl-C 和 Unix SIGTERM，停止并回收进程树后再删除目录；实验失败以非零退出码汇总。
+退出码为 `0` 全部通过或列表/帮助成功，`1` 实验、构建或清理失败，`2` 参数错误。
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
-该实验需单独调用，运行证据仍待补齐。
+17 个 VM 实验（包含 `context-stream`）已通过 Linux 隔离运行验证。
 
 检查示例配置：
 
@@ -94,17 +103,27 @@ cargo run --locked -- check --config examples/basic/server.yaml
 
 ## 本地 HTTP 实验
 
-单独运行本地合成上游与网关，每个实验在有外部超时保护的 Python 子进程中执行。
+单独运行本地合成上游与网关，每个实验在有外部超时保护的 Rust worker 中执行。
 驱动只绑定回环地址并使用临时合成配置和占位秘密；不连接真实 provider。
 
 ```sh
-python tools/http-probes.py
+cargo xtask probe http
+cargo xtask probe http transport-contracts
+cargo xtask probe http --executable target/debug/limen
 ```
 
 `--list` 查看实验，位置参数选择单项，`--executable PATH` 复用已构建二进制，`--timeout` 设置单项外部上限。
+HTTP 外部上限默认 18 秒，接受 5–60 秒。未提供 `--executable` 时通过 Cargo 构建 `limen`，
+从 JSON artifact 消息读取可执行文件位置，支持自定义 target-dir 与含空格的路径。
+Unix 使用独立进程 session，Windows 使用 Job Object；超时、失败及父进程中断均清理整棵进程树。
+VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixture 子目录。
+合成上游复用 Hyper，客户端复用 reqwest；客户端断开实验另外持有原始 TCP socket。
 实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
-`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，运行证据仍待补齐。
-Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；当前执行证据只覆盖 Windows。
+`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误。
+10 个 Rust HTTP 实验（包含 `transport-contracts` 和 SIGTERM 关闭）已通过 Linux 隔离运行验证。
+Windows 关闭实验由两个短命 helper 隔离控制台和 Ctrl-C，避免向用户终端广播；
+新 Rust 实现的 Windows 运行验证仍待补齐，历史 Windows 证据来自原驱动。
+Windows 原生进程模块已通过 GNU 目标的交叉编译与严格 Clippy；静态检查不替代控制台与信号的运行证据。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动均显式调用，不混入普通单元测试或自动 CI。
 日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
 
@@ -133,6 +152,18 @@ Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；�
 | tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                           |
 | thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                  |
 | sse-parse           | 0.1.0    | 1.65 | 默认 std；sans-IO 增量解析，项目逐字节推进并将 overflow 转为明确失败           |
+| anyhow              | 1.0.104  | 1.68 | xtask 应用边界错误与保留来源的上下文                                           |
+| tempfile            | 3.27.0   | 1.63 | xtask 父进程持有的临时目录与显式清理                                           |
+| process-wrap        | 10.0.1   | 1.87 | std/Tokio 进程封装、Unix session、Windows Job Object 与创建标志                |
+| windows-sys         | 0.61.2   | 1.71 | 仅 xtask Windows 控制台原生调用                                                |
+
+xtask 新依赖核对了 crates.io 最新稳定版、MSRV 和上游标签/源码：
+[anyhow 发布](https://github.com/dtolnay/anyhow/releases/tag/1.0.104)、
+[tempfile 标签](https://github.com/Stebalien/tempfile/tree/v3.27.0)、
+[process-wrap 标签](https://github.com/watchexec/process-wrap/tree/v10.0.1)与
+[windows-sys 发布清单](https://docs.rs/crate/windows-sys/0.61.2/source/Cargo.toml)。
+process-wrap 的创建标志使用其 shim，与 Job Object 的 suspended 启动及赋值顺序保持一致。
+Tokio 的 `process` feature 仅由 xtask 请求；新依赖不加入根应用的直接依赖。
 
 上游依据：[clap 发布](https://github.com/clap-rs/clap/releases/tag/v4.6.7)与
 [feature 文档](https://docs.rs/crate/clap/4.6.7/features)、[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、

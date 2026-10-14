@@ -5,6 +5,7 @@
 `limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立客户端认证和单次路由。
 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → model 正序 hook 已实现。
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
+开发实验统一在 Rust `xtask/` 包，17 个 VM 与 10 个合成 HTTP 实验已通过 Linux 隔离运行验证。
 
 Dockerfile、Compose、精简非 root 运行层、cargo-chef 依赖缓存、Rust 与 Buildx GHA 缓存已配置。
 CI 在 main push 检查通过后构建 Linux amd64 镜像并推送 GHCR latest，成功后只保留该版本；
@@ -15,9 +16,8 @@ PR 和手动 CI 只构建，不推送。Linux CI 与容器镜像构建已跑通�
 
 ## 待验证与后续工作
 
-- 单独运行 `context-stream` JS 实验与 `transport-contracts` HTTP 实验，补齐流 hook、四种传输组合、
-  usage 尾块、截断、取消及终态观察的运行证据；纯逻辑测试不能替代这些实验。
-- 在 Linux 上验证 TLS/CA、SIGTERM、慢客户端、流背压及关闭传播。
+- 在 Windows 上验证 Rust xtask 的 Job Object 清理、独立控制台 Ctrl-C 和全部实验。
+- 在 Linux 上验证 TLS/CA、慢客户端、流背压及关闭传播。
 - 验证容器启动、只读配置挂载、非 root 文件权限、端口绑定和关闭行为。
 - 依据已跑通的 CI 配置分支保护。
 - 分发前确定许可证；release 和真实上游验收单独安排。
