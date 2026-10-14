@@ -6,7 +6,7 @@
 .
 ├── .github/             CI、依赖更新、PR 模板
 ├── docs/                设计、路线图、开发指引
-├── modules/limen/       应用 crate；目前只有未实现状态入口
+├── apps/limen/          应用 crate；目前只有未实现状态入口
 ├── Cargo.toml           workspace 与共享约定
 ├── Cargo.lock           应用解析锁文件，纳入版本控制
 ├── rust-toolchain.toml  固定工具链
