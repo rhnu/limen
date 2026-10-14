@@ -10,6 +10,9 @@ use limen_script::{
 };
 use serde_json::{Value, json};
 
+#[path = "cases/context.rs"]
+mod context;
+
 type ProbeResult = Result<(), Box<dyn Error>>;
 
 /// The external parent owns the root; this guard removes only files it created.
@@ -75,6 +78,9 @@ pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
         "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&mut fixture, case).await,
         "shutdown-pending" => shutdown_pending(&mut fixture).await,
         "startup-loop" => startup_loop(&mut fixture).await,
+        "context-headers" => context::headers(&mut fixture).await,
+        "context-readonly" => context::readonly(&mut fixture).await,
+        "context-isolation" => context::isolation(&mut fixture).await,
         _ => Err("unknown experiment".into()),
     }
 }
@@ -449,6 +455,8 @@ async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
         options.continuous_work_timeout = Duration::from_secs(3);
     }
     let (runtime, config) = ScriptRuntime::start(path, options).await?;
+    let mut changes = runtime.status_changes();
+    changes.borrow_and_update();
     let result = runtime
         .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
         .await;
@@ -456,6 +464,10 @@ async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
         result.is_err_and(|error| error.kind() == expected),
         "rogue script did not report its resource limit",
     )?;
+    // Retiring the VM must wake an HTTP server even when there is no next request.
+    while !matches!(*changes.borrow_and_update(), RuntimeStatus::Retired(_)) {
+        changes.changed().await?;
+    }
     let status = runtime.shutdown().await;
     ensure(
         matches!(status, RuntimeStatus::Retired(error) if error.kind() == expected),

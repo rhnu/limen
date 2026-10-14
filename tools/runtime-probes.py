@@ -24,6 +24,9 @@ CASES = (
     "memory-limit",
     "shutdown-pending",
     "startup-loop",
+    "context-headers",
+    "context-readonly",
+    "context-isolation",
 )
 
 

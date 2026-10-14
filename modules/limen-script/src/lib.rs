@@ -1,5 +1,6 @@
 //! Bounded JavaScript configuration and hook execution on one owning thread.
 
+mod context;
 mod engine;
 mod error;
 mod json;
@@ -102,7 +103,8 @@ impl Cancellation {
     #[must_use]
     pub fn is_cancelled(&self) -> bool { self.0.flag.load(Ordering::Acquire) }
 
-    async fn cancelled(&self) {
+    /// Wait until cancellation, including cancellation signalled before this call.
+    pub async fn cancelled(&self) {
         loop {
             let notified = self.0.notify.notified();
             tokio::pin!(notified);
@@ -228,6 +230,10 @@ impl ScriptRuntime {
 
     #[must_use]
     pub fn status(&self) -> RuntimeStatus { self.status.borrow().clone() }
+
+    /// Observe lifecycle changes without polling; terminal states follow VM teardown.
+    #[must_use]
+    pub fn status_changes(&self) -> watch::Receiver<RuntimeStatus> { self.status.clone() }
 
     fn retirement_or(&self, fallback: ScriptError) -> ScriptError {
         match self.status() {

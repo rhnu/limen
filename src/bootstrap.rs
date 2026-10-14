@@ -38,6 +38,8 @@ pub enum Error {
     Logging(#[source] TryInitError),
     #[error("cannot initialize async executor")]
     Executor(#[source] std::io::Error),
+    #[error("HTTP service failed")]
+    Http(#[from] crate::server::Error),
     #[error("configuration failed and runtime cleanup also failed")]
     Cleanup {
         #[source]
@@ -63,6 +65,7 @@ impl Error {
             Self::ShutdownTimeout(_) | Self::ShutdownState { .. } => "shutdown",
             Self::Logging(_) => "logging",
             Self::Executor(_) => "executor",
+            Self::Http(source) => source.phase(),
             Self::Cleanup { primary, .. } => primary.phase(),
         }
     }
@@ -85,6 +88,7 @@ impl fmt::Display for Diagnostic<'_> {
                 write!(formatter, "{}: {source}", self.0)
             },
             Error::Executor(source) => write!(formatter, "{}: IO {:?}", self.0, source.kind()),
+            Error::Http(source) => write!(formatter, "{}: {}", self.0, source.diagnostic()),
             Error::Logging(_) => write!(formatter, "{}: subscriber installation failed", self.0),
             Error::Cleanup { primary, cleanup } => write!(
                 formatter,

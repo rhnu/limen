@@ -204,6 +204,14 @@ async fn begin(
             let bytes = serde_json::to_vec(&command.call.context)
                 .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
             let draft = ctx.json_parse(bytes).map_err(|e| bridge.failure(&ctx, e))?;
+            let prepare = bridge
+                .prepare
+                .clone()
+                .restore(&ctx)
+                .map_err(|e| bridge.failure(&ctx, e))?;
+            let draft: Value = prepare
+                .call((draft,))
+                .map_err(|e| bridge.failure(&ctx, e))?;
             let result: Value = hook
                 .call((draft.clone(),))
                 .map_err(|e| bridge.failure(&ctx, e))?;
@@ -249,6 +257,12 @@ fn output<'js>(
     draft: Value<'js>,
     options: &RuntimeOptions,
 ) -> Result<Json, ScriptError> {
+    let project = bridge
+        .project
+        .clone()
+        .restore(ctx)
+        .map_err(|e| bridge.failure(ctx, e))?;
+    let draft: Value = project.call((draft,)).map_err(|e| bridge.failure(ctx, e))?;
     let function = bridge
         .convert
         .clone()

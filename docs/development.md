@@ -4,12 +4,12 @@
 
 ```text
 .
-├── src/                 根包：CLI、共享 bootstrap、日志与显式运行时实验入口
+├── src/                 根包：CLI、bootstrap、JSON gateway、HTTP server、日志与运行时实验入口
 ├── modules/
 │   ├── limen-config/    YAML/业务配置、资源 schema、错误与状态契约
 │   └── limen-script/    ESM、严格 JSON 桥接、专属线程和有界 JS 调度
 ├── examples/            无真实凭据的基础配置与共享模块
-├── tools/               有外部超时保护的运行时实验驱动
+├── tools/               有外部超时保护的 JS 与本地 HTTP 实验驱动
 ├── docs/                设计、唯一实施路线图、开发指引
 ├── Cargo.toml           根包、workspace、集中依赖和共享 lint
 ├── Cargo.lock           应用依赖解析结果，纳入版本控制
@@ -17,11 +17,11 @@
 └── rusteward.toml       Rusteward 格式与 lint 配置
 ```
 
-应用组合配置和脚本库；配置库不依赖 VM，脚本库不依赖 HTTP 或配置 schema。
+应用组合配置和脚本库；配置库不依赖 VM，脚本库不依赖 HTTP 服务框架或配置 schema（使用 http 校验头部）。
 根包 `limen` 是默认 workspace 成员，根目录的 `cargo run`、`cargo build` 和 `cargo test` 默认选择它；
 全 workspace 检查与测试继续显式使用 `--workspace`。`runtime_probe` 同属根包，仅由隔离实验驱动运行。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
-后续在实际需求出现时增加 pipeline、http/upstream、protocol 模块，不预建空 crate。
+根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播；不预建空 crate。
 单元测试放在被测模块的 `tests.rs` 子模块，禁止 `mod.rs`。
 
 ## 本地检查
@@ -76,8 +76,23 @@ cargo run --locked -- check --config examples/basic/server.yaml
 ```
 
 `check` 会执行顶层 JS，但不执行请求阶段 hook。CLI 退出码与操作边界见 README。
-运行时库只报告退役，应用负责在启动/关闭失败时非零退出；后续 HTTP 服务必须监听退役状态并结束进程，
-不能继续接收依赖失效 VM 的请求，也不能自动重放上游请求。
+运行时库只报告退役；HTTP 服务监听状态变更，停止监听、取消在途请求并非零退出，
+不继续接收依赖失效 VM 的请求，也不自动重放上游请求。
+
+## 本地 HTTP 实验
+
+单独运行本地合成上游与网关，每个实验在有外部超时保护的 Python 子进程中执行。
+驱动只绑定回环地址并使用临时合成配置和占位秘密；不连接真实 provider。
+
+```sh
+python tools/http-probes.py
+```
+
+`--list` 查看实验，位置参数选择单项，`--executable PATH` 复用已构建二进制，`--timeout` 设置单项外部上限。
+实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
+Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；当前执行证据只覆盖 Windows。
+纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动均显式调用，不混入普通单元测试或自动 CI。
+日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
 
 ## 当前依赖选择
 
@@ -86,9 +101,14 @@ cargo run --locked -- check --config examples/basic/server.yaml
 
 | 依赖                | 解析版本 | MSRV | 启用能力与依据                                                               |
 | ------------------- | -------- | ---- | ---------------------------------------------------------------------------- |
+| axum                | 0.8.9    | 1.80 | 禁用默认 features；body/response 类型与有界正文读取                          |
+| hyper               | 1.12.0   | 1.63 | http1、server；连接由应用持有，断开与关闭可传播到请求                        |
+| hyper-util          | 0.1.21   | 1.85 | tokio；TokioIo、TokioTimer                                                   |
+| http-body-util      | 0.1.5    | 1.61 | 有类型的正文长度限制错误                                                     |
+| reqwest             | 0.13.5   | 1.85 | rustls、json；禁用默认 features，不启用自动解压、HTTP/2 或环境代理           |
 | clap                | 4.6.7    | 1.85 | std、derive、help、usage；禁用默认 features，避免参数错误上下文回显输入      |
 | rquickjs            | 0.14.0   | 1.87 | std、futures、loader；不启用 parallel、rust-alloc；保留 QuickJS 内建分配统计 |
-| Tokio               | 1.53.3   | 1.71 | rt、sync、time、macros；专属 current-thread executor 与有界通道              |
+| Tokio               | 1.53.3   | 1.71 | rt、sync、time、macros、net、signal、io-util；单线程 executor、HTTP 与取消   |
 | serde               | 1.0.229  | 1.56 | derive，强类型配置                                                           |
 | serde_json          | 1.0.154  | 1.71 | 默认 std，不启用无限深度或任意精度来掩盖 JS 数字边界                         |
 | serde-saphyr        | 2.0.0    | 1.89 | 禁用默认 features，仅 deserialize；配置解析预算和位置                        |
@@ -106,6 +126,16 @@ cargo run --locked -- check --config examples/basic/server.yaml
 [字段路径发布](https://github.com/dtolnay/path-to-error/releases)、[url 发布](https://github.com/servo/rust-url/releases)、
 [http 发布](https://github.com/hyperium/http/releases)、[tracing 发布](https://github.com/tokio-rs/tracing/releases)、
 [thiserror 注册表](https://crates.io/crates/thiserror/2.0.21)与[上游清单](https://github.com/dtolnay/thiserror/blob/2.0.21/Cargo.toml)。
+
+HTTP 引入时重新核对了注册表及上游发布/feature：
+[Axum 发布](https://github.com/tokio-rs/axum/releases/tag/axum-v0.8.9)、
+[Hyper 发布](https://github.com/hyperium/hyper/releases/tag/v1.12.0)、
+[hyper-util 发布](https://github.com/hyperium/hyper-util/releases/tag/v0.1.21)、
+[http-body-util 发布](https://github.com/hyperium/http-body/releases/tag/http-body-util-v0.1.5)、
+[reqwest 发布](https://github.com/seanmonstar/reqwest/releases/tag/v0.13.5)与
+[reqwest features](https://docs.rs/crate/reqwest/0.13.5/features)。
+reqwest 0.13 的 `rustls` feature 使用平台证书验证与 AWS-LC；Windows 本机构建已验证，CMake 可用，
+Linux 的 C 构建、证书与运行环境仍须部署阶段单独验证。锁文件不代表已执行目标平台或 TLS 真实上游验收。
 
 ## 错误与日志
 

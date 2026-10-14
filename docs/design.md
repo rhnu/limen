@@ -1,7 +1,8 @@
 # Limen 设计
 
 本文是 Limen 的工作区设计基线，完整承接原始 `Limen-design.md` 的产品与技术约束，后续工作无需访问原始附件。
-配置装载与 JS 调度基础已经实现；HTTP、请求管线与流处理仍是待实施契约。依赖解析以锁文件为准，升级时重新核对上游。
+配置装载、有界 JS 调度、HTTP/1 JSON 网关与非流管线已经实现；流处理仍是待实施契约。
+依赖解析以锁文件为准，升级时重新核对上游。
 当前状态与剩余工作见[实施路线图](roadmap.md)，工程操作见[开发指引](development.md)。
 
 “已确认”是产品边界，“建议默认”是实施起点，“待验证”必须以实现证据关闭。本文中的示例和验证清单是项目资料，
@@ -36,7 +37,8 @@
 上述异步与平台选择已经确定，运行时与平台能力仍需实施验证。
 
 - **已有本机证据：**Rust 与 QuickJS 引用关闭顺序、Promise 调度与取消、执行/内存预算和数字边界已通过隔离实验；已知限制见第 9 节。
-- **实施时验证：**完整 HTTP 请求生命周期、SSE 转换、慢客户端与关闭传播。
+- **已有本机证据：**Windows 本地合成上游验证了 JSON 管线、认证隔离、单次发送、普通超时、客户端断开与 Ctrl-C 关闭。
+- **实施时验证：**SSE 转换、流背压、目标平台的慢客户端与关闭传播。
 - **实施时验证：**Linux Docker 中的构建、启动、配置挂载、端口绑定与关闭行为。
 - **实施时验证：**依赖最新稳定版本、MSRV、平台及 feature 兼容性；本文不把网页上的 `latest` 快照作为锁定版本。
 
@@ -84,7 +86,7 @@ token；无认证模式需显式写明。首版不做用户数据库、多租户
 
 资源限制由 Rust 强制执行，业务 hook 不能取消。以下是当前 schema；所有字段可在 `limits` 中覆盖，未知字段报错。
 默认值是面向个人使用的保守初值，用于给内存、队列和执行建立上界，不是测量所得的容量或吞吐保证。
-HTTP 与流相关字段目前完成解析校验，随对应处理路径实现后接入。
+HTTP 非流路径已接入正文、并发、deadline、hook 和清理限制；事件展开与流聚合字段随流路径实现后接入。
 
 | 字段                   | 默认值   | 允许范围           | 用途                                   |
 | ---------------------- | -------- | ------------------ | -------------------------------------- |
@@ -236,7 +238,7 @@ provider；可用普通 JS 常量、函数或对象展开复用重复配置。
 
 当前 schema 要求 1–1024 个 provider、1–4096 个 model；每条 pipeline 最多 256 步，步名在该数组内唯一。
 provider 名、模型别名与步名为 1–128 字节的 ASCII 字母、数字或 `-._/`；`upstream` 为 1–1024 字节且不含控制字符。
-endpoint 最多 8192 字节，显式使用小写 `http://` 或 `https://` 前缀，拒绝空白、反斜杠、userinfo 和 fragment，
+endpoint 最多 8192 字节，显式使用 `http://` 或 `https://` 前缀（scheme 忽略大小写），拒绝空白、反斜杠、userinfo 和 fragment，
 保留原始完整路径与 query。静态 `headers` 是字符串到字符串的对象，拒绝大小写重复的头名及 Rust 管理的传输头。
 可选字段通过省略表达缺失，显式 `null` 不能代替 auth、hook 或其他配置记录；defaults 内的 JSON `null` 保留。
 所有结构记录要求对象，不接受按字段位置排列的数组。bearer 最多 8192 字节，不允许空值或控制字符。
@@ -336,6 +338,13 @@ provider、配置上游模型名及冻结的客户端传输意图；不是全部
 状态，默认空对象，在该请求的各阶段与流事件之间保留；不同请求绝不共享。`onError`
 / `onFinish` 只能读取其最终视图。需要步骤局部状态时可按步骤名放到 `state`
 子字段中。
+
+当前上下文固定 `ctx.meta` 与 `ctx.state` 的引用：meta 及其嵌套内容只读，state 可原地修改，
+观察阶段则整个 context 深度只读。`ctx.body` 可修改或替换为合法 JSON 对象；URL、status 和 headers
+仅在相应阶段开放修改，headers 必须通过受控方法操作，不能替换引用。
+meta 包含 requestId、phase、model、provider、configuredUpstreamModel、clientStream、原始 upstreamStatus
+和解析类别 upstreamContentType（json/sse/other）；路由前尚未确定的字段为 null。
+观察上下文另提供 outcome、error（失败时）与 stats，均为只读快照。
 
 把请求准备、实际发送与响应处理区分为明确阶段，参考了
 [agentgateway 的 policy 分阶段结构](https://github.com/agentgateway/agentgateway/blob/e523afba89e667c20fedaf9d00ae2ab312d6f9fb/crates/agentgateway/src/store/policy.rs)；本设计不因此引入其完整策略系统。
@@ -475,6 +484,23 @@ SSE 内部采用“解码 → 语义处理 → 编码”的职责分离，可参
 JSON → SSE 转换须保留 `onResponse`
 已显式修改的响应模型名，而不是二次套用别名默认。默认值只在对应路径第一次形成对外响应表示时应用。
 
+### 7.5 当前 JSON 适配
+
+当前 HTTP/1 入口使用 Hyper 连接驱动与 Axum body/response 类型。两个 API 共用客户端认证与有界请求处理，
+入口正文限制为 `max_body_bytes`；合并后的上游 body、上游 JSON 和最终 JSON 输出受 `max_output_bytes` 限制。
+初始请求必须为对象，包含非空字符串 `model`、非空对象数组 `messages`；`stream` 只能为布尔值或省略。
+消息内的扩展字段保留，具体消息协议兼容性由上游判断。当前只接受 JSON 媒体类型（忽略大小写及参数）。
+
+客户端原始 `stream: true`、hook 最终选择 `stream: true` 都明确返回 `invalid_request`，且不发送上游。
+上游 2xx 必须为完整 JSON 对象；SSE、无正文状态、非法 JSON、过大正文与读取失败进入错误路径。
+原始 3xx–5xx 默认映射为 502，`afterReceive` 可显式映射到 4xx/5xx；不读取或回显失败正文。
+响应头默认仅保留 content-language、x-request-id 和 retry-after，并排除 Connection 指定的逐跳字段；
+可信 hook 可显式增改普通下游头。最终 Content-Type 由 Rust 设置为 application/json。
+
+reqwest 客户端明确禁用重试、重定向和环境代理，使用 Rustls 与平台证书验证。
+配置中的有限 origin 复用一个连接池，每个 origin 至多保留一个空闲连接，空闲超时为 30 秒。
+hook 选择其他 origin 时使用不保留空闲连接的短期客户端；活动客户端受并发限制，避免长期积累任意目标的连接。
+
 ### 7.4 非文本内容与未知字段
 
 建议将“同形态传递”和“跨形态转换”分开承诺：
@@ -511,7 +537,7 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
 
 返回头尚未发送时，错误使用 `{"error":{"code":"...","message":"...","request_id":"..."}}`。
 消息由 Rust 提供清理后的固定说明，不包含上游正文、JS 异常文本、token 或源码。
-下表固定对外 code/status 契约；HTTP/SSE 适配将在后续实现。
+下表固定对外 code/status 契约；HTTP JSON 适配已实现，SSE 错误适配随流处理实现。
 
 | code                                    | HTTP 状态                                 |
 | --------------------------------------- | ----------------------------------------- |
@@ -549,6 +575,19 @@ hook，不修改响应或恢复失败。成功、失败与取消都进入一次�
 `void | Promise<void>`，由调度器追踪并使用独立、有限的清理预算，不能无限拖住请求结束或服务关闭。Rust
 侧只记录一次最终 outcome；VM 正常时只调度一次 `onFinish`。若 VM
 已退役无法调用观察函数，则记录未执行原因，不假称 JS 回调已经成功。
+
+当前请求任务在响应结果固定后立即交付 HTTP 层，再顺序调度错误观察（失败或取消时）与结束观察；
+观察失败不会改变已固定结果。两者共享从终态开始的 `cleanup_ms` 绝对预算，耗尽后记录未执行原因。
+观察任务保留在请求 JoinSet 中并占用请求并发许可，服务关闭时等待它们；容量拒绝的观察在有界连接任务内等待，
+不另外创建无界任务。JSON 终态表示管线已生成结果，输出字节数表示生成的 JSON 大小，不承诺客户端已经收到全部字节。
+
+HTTP 连接任务上限为 `concurrency + queue_capacity`，不再创建额外等待队列；请求许可不足时返回 429。
+JS 命令队列与 pending 上限独立执行。连接固定限制 100 个头和 32 KiB 头部/缓冲，并有读取头部的超时。
+每次进入服务时建立 `request_ms + cleanup_ms` 绝对连接期限，覆盖正文读取、管线与 JSON 写出；
+随后进入空闲 keepalive 时继续保留该期限，下个请求进入服务时重新计时。超时关闭连接并记录传输失败。
+客户端断开会取消本地请求任务的推进和上游读取，但请求任务保留到有限观察结束。
+该连接期限已有编译和 deadline/关闭接线证据；本机 Windows 写入由系统排队，未获得可靠的阻塞写实验，
+Linux 慢客户端和流背压仍需单独验证。
 
 ## 9. JavaScript 运行时
 
@@ -683,6 +722,7 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
 - JavaScript Number 不能无损承载任意 `i64/u64`。首版建议对实际进入 hook
   的输入/输出校验安全整数范围，超出 `±(2^53−1)` 的整数明确报错；不需要 hook
   的路径无需为了统一流程而进入 JS。原始值保留可后续单独设计。
+  当前 HTTP JSON 路径统一采用该安全整数范围和深度/节点限制，即使没有 hook 也明确拒绝越界整数。
 - 不声明“Rust → JS → Rust 对所有 JSON 数字完全无损”。
 - Promise 是 hook 完成协议的一部分，不是 JSON 数据；先等待其完成值为
   `undefined`，再验证并转换 draft 和 `ctx.state`。检查完成值时先读取 JS `Value`
@@ -735,6 +775,9 @@ provider，也不执行请求阶段 hook。
 
 默认不记录完整请求体、响应体、消息文本、原始头、令牌、Cookie 或 URL
 query。错误、调试日志和 JS 日志同样需要处理秘密，不能只在 INFO 级别遮蔽。
+当前目标日志只保留 scheme、host 和 port，连可能携密的 URL path 也省略；发送时仍使用完整 endpoint。
+请求 ID 由 Rust 分配，并通过 `x-limen-request-id` 及统一错误对象返回。
+观察 stats 的 upstreamHeadersMs 表示从请求开始到收到上游头的时间。
 
 YAML 诊断提供清理后的 schema 字段路径以及解析器确实提供的行列；缺少位置时不伪造坐标。
 任意用户键名以 `*` 代替，避免把携密键名带入错误。求值生成的 JS 对象只报告静态 schema 路径，
@@ -783,7 +826,7 @@ Promise。
 | 职责       | 候选                        | 设计阶段判断                                                      |
 | ---------- | --------------------------- | ----------------------------------------------------------------- |
 | 异步运行时 | Tokio                       | 成熟生态；承担服务并发、取消、通道与超时                          |
-| HTTP 入口  | Axum                        | 基于 Tower/Hyper，与 Tokio 配合自然                               |
+| HTTP 入口  | Hyper、Axum                 | Hyper 拥有有界 HTTP/1 连接生命周期；Axum 提供 body/response 类型  |
 | 上游 HTTP  | reqwest                     | 复用连接池与流式 body；选用 Rustls TLS 路径                       |
 | TLS        | Rustls                      | 优先由 HTTP 客户端集成，不为列依赖而重复直接依赖                  |
 | JSON       | Serde、serde_json           | 静态配置采用强类型；业务 JSON 保留动态结构                        |
@@ -821,7 +864,8 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 3. 有序变换：provider/model 顺序 await、header draft、异步提交边界、资源预算。
 4. 流处理：SSE 解析、四种传输组合、usage/tool call 边界、取消与截断错误。
 
-HTTP 与完整请求管线尚未完成。配置纯逻辑测试、隔离 JS 运行实验与后续网络验收分开记录，优先验证可独立确定的语义，例如：
+HTTP 非流管线已有本机合成上游证据，流处理尚未完成。配置纯逻辑测试、隔离 JS 运行实验与网络实验分开记录，
+继续用可独立确定的语义检验契约，例如：
 
 - 同一字段先 provider 后 model 修改，模型后的值最终发送。
 - 客户端 bearer 不泄漏到上游；认证与普通头冲突能定位。

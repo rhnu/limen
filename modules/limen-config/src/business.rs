@@ -155,7 +155,11 @@ fn validate_name(name: &str, field: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn validate_endpoint(endpoint: &str) -> Result<(), ConfigError> {
+/// Validate a complete HTTP(S) endpoint without exposing its credentials or query.
+///
+/// # Errors
+/// Returns a sanitized endpoint error for malformed or forbidden URL forms.
+pub fn validate_endpoint(endpoint: &str) -> Result<(), ConfigError> {
     let invalid = || {
         ConfigError::new(
             ConfigErrorKind::Endpoint,
@@ -287,8 +291,11 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
     Ok(())
 }
 
-/// Static data shares the runtime's conservative JSON boundary, independent of Serde coercion.
-fn validate_json(value: &Value, max_depth: usize, max_nodes: usize) -> Result<(), ConfigError> {
+/// Share the runtime's conservative JSON boundary, independent of Serde coercion.
+///
+/// # Errors
+/// Returns a sanitized error when JSON depth, nodes or numbers exceed safe limits.
+pub fn validate_json(value: &Value, max_depth: usize, max_nodes: usize) -> Result<(), ConfigError> {
     let invalid = || {
         ConfigError::new(
             ConfigErrorKind::Json,

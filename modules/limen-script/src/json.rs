@@ -67,6 +67,8 @@ pub(crate) fn validate_owned(
 
 pub(crate) struct Bridge {
     pub convert: Persistent<Function<'static>>,
+    pub prepare: Persistent<Function<'static>>,
+    pub project: Persistent<Function<'static>>,
     oom: Persistent<Function<'static>>,
 }
 
@@ -79,7 +81,32 @@ pub(crate) fn bridge(ctx: &Ctx<'_>, limits: JsonLimits) -> Result<Bridge, Script
     let result: Object = factory
         .call((proxy, limits.max_depth, limits.max_nodes, limits.max_bytes))
         .map_err(|e| failure(ctx, e))?;
+    let context_factory: Function = ctx
+        .eval(include_str!("context.js"))
+        .map_err(|e| failure(ctx, e))?;
+    let validate_header = Function::new(
+        ctx.clone(),
+        |name: String, value: String, writable: bool| {
+            crate::context::header_name(&name, &value, writable)
+        },
+    )
+    .map_err(|e| failure(ctx, e))?;
+    let context: Object = context_factory
+        .call((validate_header, limits.max_nodes, limits.max_bytes))
+        .map_err(|e| failure(ctx, e))?;
     Ok(Bridge {
+        prepare: Persistent::save(
+            ctx,
+            context
+                .get::<_, Function>("prepare")
+                .map_err(|e| failure(ctx, e))?,
+        ),
+        project: Persistent::save(
+            ctx,
+            context
+                .get::<_, Function>("project")
+                .map_err(|e| failure(ctx, e))?,
+        ),
         convert: Persistent::save(
             ctx,
             result

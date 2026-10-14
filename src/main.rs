@@ -1,5 +1,7 @@
 mod bootstrap;
 mod cli;
+mod gateway;
+mod server;
 mod telemetry;
 
 use std::process::ExitCode;
@@ -17,7 +19,7 @@ fn main() -> ExitCode {
         Command::Serve(args) => (&args.config, true),
     };
     let executor = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
+        .enable_all()
         .build()
     {
         Ok(executor) => executor,
@@ -38,22 +40,28 @@ async fn run(path: &std::path::Path, serve: bool) -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
-    if let Err(error) = loaded.shutdown().await {
-        telemetry::report_failure(&error, command, "shutdown");
+    let primary = if serve {
+        server::serve(&loaded).await.map_err(bootstrap::Error::from)
+    } else {
+        Ok(())
+    };
+    let result = match (primary, loaded.shutdown().await) {
+        (Ok(()), result) | (result, Ok(())) => result,
+        (Err(primary), Err(cleanup)) => Err(bootstrap::Error::Cleanup {
+            primary: Box::new(primary),
+            cleanup: Box::new(cleanup),
+        }),
+    };
+    if let Err(error) = result {
+        telemetry::report_failure(&error, command, error.phase());
         return ExitCode::FAILURE;
     }
-    if serve {
-        tracing::warn!(
-            command,
-            "HTTP serving is not implemented; configuration validation succeeded"
-        );
-        ExitCode::from(3)
-    } else {
+    if !serve {
         println!(
             "Configuration valid ({} providers, {} models).",
             loaded.business.providers.len(),
             loaded.business.models.len()
         );
-        ExitCode::SUCCESS
     }
+    ExitCode::SUCCESS
 }

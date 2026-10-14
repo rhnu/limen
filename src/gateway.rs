@@ -1,0 +1,225 @@
+mod error;
+mod logic;
+mod pipeline;
+
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use axum::{
+    body::Body,
+    http::{HeaderValue, Request, header},
+    response::Response,
+};
+use error::Failure;
+use limen_config::{BusinessConfig, ErrorCode, ServerConfig};
+use limen_script::{Cancellation, RuntimeStatus, ScriptRuntime};
+use pipeline::Lifecycle;
+use tokio::{
+    sync::{Mutex, Semaphore, oneshot},
+    task::JoinSet,
+};
+use tracing::Instrument;
+
+use crate::bootstrap::Bootstrap;
+
+/// Owns the connection pool and the bounded, tracked request lifetimes.
+pub struct Gateway {
+    server: ServerConfig,
+    business: BusinessConfig,
+    runtime: ScriptRuntime,
+    client: reqwest::Client,
+    pooled_origins: BTreeSet<String>,
+    shutdown: Cancellation,
+    permits: Arc<Semaphore>,
+    tasks: Mutex<JoinSet<()>>,
+    requests: AtomicU64,
+    calls: AtomicU64,
+}
+
+impl Gateway {
+    pub fn new(loaded: &Bootstrap, shutdown: Cancellation) -> Result<Arc<Self>, reqwest::Error> {
+        // Generation is sent once. Disable even protocol-level retries and redirects.
+        let client = upstream_client(1)?;
+        let pooled_origins = loaded
+            .business
+            .providers
+            .values()
+            .map(|provider| logic::safe_target(&provider.endpoint))
+            .collect();
+        Ok(Arc::new(Self {
+            server: loaded.server.clone(),
+            business: loaded.business.clone(),
+            runtime: loaded.runtime.clone(),
+            client,
+            pooled_origins,
+            shutdown,
+            permits: Arc::new(Semaphore::new(loaded.server.limits.concurrency)),
+            tasks: Mutex::new(JoinSet::new()),
+            requests: AtomicU64::new(1),
+            calls: AtomicU64::new(1),
+        }))
+    }
+
+    /// The worker survives a dropped HTTP future only long enough to record its terminal
+    /// outcome and run bounded observations. Its permit covers that cleanup as well.
+    pub async fn handle(
+        self: Arc<Self>,
+        request: Request<Body>,
+        connection_cancel: Cancellation,
+    ) -> Response {
+        let request_id = format!("limen-{}", self.requests.fetch_add(1, Ordering::Relaxed));
+        let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
+            let failure = Failure::new(ErrorCode::Busy, "admission");
+            let lifecycle = Lifecycle::new(
+                request_id.clone(),
+                Cancellation::new(),
+                self.server.limits.request_ms,
+            );
+            lifecycle.record(&Err(failure));
+            let failure = Failure::new(ErrorCode::Busy, "admission");
+            // HTTP/1 drivers bound these rejected lifetimes too. Their observations
+            // await inline and cannot create an unbounded second task queue.
+            self.observe(&lifecycle, Some(&failure)).await;
+            return error_response(&failure, &request_id);
+        };
+        let cancellation = Cancellation::new();
+        let cancel_on_drop = CancelOnDrop(cancellation.clone());
+        let (reply, receive) = oneshot::channel();
+        let gateway = Arc::clone(&self);
+        let id = request_id.clone();
+        let span = tracing::info_span!("request", request_id = %id);
+        let mut tasks = self.tasks.lock().await;
+        while let Some(result) = tasks.try_join_next() {
+            report_task(result);
+        }
+        tasks.spawn(async move {
+            let _permit = permit;
+            let mut lifecycle = Lifecycle::new(id, cancellation, gateway.server.limits.request_ms);
+            let cancellation = lifecycle.cancellation.clone();
+            let deadline = lifecycle.deadline;
+            let result = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+                () = gateway.shutdown.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+                () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase)),
+                result = gateway.process(request, &mut lifecycle) => result,
+            };
+            let result = if lifecycle.cancellation.is_cancelled() || gateway.shutdown.is_cancelled() {
+                Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase))
+            } else if Instant::now() >= lifecycle.deadline {
+                Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase))
+            } else { result };
+            lifecycle.record(&result);
+            let (response, failure) = match result {
+                Ok(response) => (response, None),
+                Err(failure) => (json_response(failure.http_status(), lifecycle.response_headers.clone(), &failure.error_json(&lifecycle.request_id), &lifecycle.request_id), Some(failure)),
+            };
+            // Cleanup has its own budget and cannot delay delivery of the fixed result.
+            let _delivered = reply.send(response);
+            gateway.observe(&lifecycle, failure.as_ref()).await;
+        }.instrument(span));
+        drop(tasks);
+        let response = tokio::select! {
+            biased;
+            () = connection_cancel.cancelled() => {
+                cancel_on_drop.0.cancel();
+                error_response(&Failure::new(ErrorCode::Cancelled, "connection"), &request_id)
+            },
+            result = receive => result.unwrap_or_else(|_| error_response(&Failure::new(ErrorCode::Internal, "request_task"), &request_id)),
+        };
+        drop(cancel_on_drop);
+        response
+    }
+
+    /// Shutdown stops admission before draining all tracked requests and observations.
+    pub async fn drain(&self) {
+        self.permits.close();
+        let mut tasks = self.tasks.lock().await;
+        while let Some(result) = tasks.join_next().await {
+            report_task(result);
+        }
+    }
+
+    fn next_call(&self) -> u64 { self.calls.fetch_add(1, Ordering::Relaxed) }
+
+    fn ready(&self) -> bool {
+        !self.shutdown.is_cancelled() && matches!(self.runtime.status(), RuntimeStatus::Ready)
+    }
+
+    fn hook_deadline(&self, lifecycle: &Lifecycle) -> Instant {
+        lifecycle
+            .deadline
+            .min(Instant::now() + Duration::from_millis(self.server.limits.hook_ms))
+    }
+
+    fn client_for(&self, endpoint: &str) -> Result<reqwest::Client, Failure> {
+        if self.pooled_origins.contains(&logic::safe_target(endpoint)) {
+            Ok(self.client.clone())
+        } else {
+            // Hooks may select arbitrarily many origins over time. Those clients
+            // must not accumulate idle sockets in the long-lived shared pool.
+            upstream_client(0).map_err(|source| Failure::upstream(source, "upstream_client"))
+        }
+    }
+}
+
+fn upstream_client(max_idle: usize) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .pool_max_idle_per_host(max_idle)
+        .pool_idle_timeout(Duration::from_secs(30))
+        .build()
+}
+
+struct CancelOnDrop(Cancellation);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) { self.0.cancel(); }
+}
+
+fn report_task(result: Result<(), tokio::task::JoinError>) {
+    if let Err(error) = result {
+        tracing::error!(
+            panicked = error.is_panic(),
+            cancelled = error.is_cancelled(),
+            "request worker failed; payload omitted"
+        );
+    }
+}
+
+fn error_response(failure: &Failure, request_id: &str) -> Response {
+    json_response(
+        failure.http_status(),
+        http::HeaderMap::new(),
+        &failure.error_json(request_id),
+        request_id,
+    )
+}
+
+fn json_response(
+    status: u16,
+    mut headers: http::HeaderMap,
+    body: &serde_json::Value,
+    request_id: &str,
+) -> Response {
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(id) = HeaderValue::from_str(request_id) {
+        headers.insert("x-limen-request-id", id);
+    }
+    let mut response = Response::new(Body::from(body.to_string()));
+    *response.status_mut() =
+        http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR);
+    *response.headers_mut() = headers;
+    response
+}

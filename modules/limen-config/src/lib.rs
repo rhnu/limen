@@ -5,7 +5,10 @@ mod error;
 mod protocol;
 mod server;
 
-pub use business::{BusinessConfig, HookId, Model, PipelineStep, Provider, UpstreamAuth};
+pub use business::{
+    BusinessConfig, HookId, Model, PipelineStep, Provider, UpstreamAuth, validate_endpoint,
+    validate_json,
+};
 pub use error::{ConfigError, ConfigErrorKind};
 pub use protocol::{ErrorCode, validate_response_status};
 pub use server::{

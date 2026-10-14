@@ -1,0 +1,226 @@
+use http::{HeaderMap, HeaderName, HeaderValue, header};
+use limen_config::{BusinessConfig, ClientAuth, ErrorCode, Model, Provider, ResourceLimits};
+use serde_json::{Value, json};
+
+use super::error::Failure;
+
+pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> {
+    let ClientAuth::Bearer(expected) = auth else {
+        return Ok(());
+    };
+    let invalid = || Failure::new(ErrorCode::Unauthorized, "authentication");
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let value = values.next().ok_or_else(invalid)?;
+    if values.next().is_some() {
+        return Err(invalid());
+    }
+    let value = value
+        .to_str()
+        .map_err(|source| invalid().with_source(source))?;
+    let (scheme, token) = value.split_once(' ').ok_or_else(invalid)?;
+    let token = token.trim_start_matches(' ');
+    if !scheme.eq_ignore_ascii_case("bearer")
+        || !valid_bearer(token)
+        || !secret_equal(token.as_bytes(), expected.as_bytes())
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn valid_bearer(token: &str) -> bool {
+    if token.len() > 8192 {
+        return false;
+    }
+    let token = token.trim_end_matches('=');
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/".contains(&byte))
+}
+
+// Compare every byte once lengths match; authentication never exits at the first difference.
+fn secret_equal(actual: &[u8], expected: &[u8]) -> bool {
+    actual.len() == expected.len()
+        && actual
+            .iter()
+            .zip(expected)
+            .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+            == 0
+}
+
+pub fn parse_request(bytes: &[u8], limits: &ResourceLimits) -> Result<(Value, bool), Failure> {
+    if bytes.len() > limits.max_body_bytes {
+        return Err(Failure::new(ErrorCode::PayloadTooLarge, "request_body"));
+    }
+    let body = serde_json::from_slice(bytes).map_err(|source| {
+        Failure::new(ErrorCode::InvalidRequest, "request_body").with_source(source)
+    })?;
+    validate_body(&body, limits)?;
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    Ok((body, stream))
+}
+
+pub fn validate_body(body: &Value, limits: &ResourceLimits) -> Result<(), Failure> {
+    let invalid = || Failure::new(ErrorCode::InvalidRequest, "request_body");
+    limen_config::validate_json(body, limits.max_json_depth, limits.max_json_nodes)
+        .map_err(|source| invalid().with_source(source))?;
+    let object = body.as_object().ok_or_else(invalid)?;
+    let model = object
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid)?;
+    if model.is_empty() || model.len() > 1024 || model.chars().any(char::is_control) {
+        return Err(invalid());
+    }
+    let messages = object
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid)?;
+    if messages.is_empty()
+        || messages.iter().any(|message| !message.is_object())
+        || object
+            .get("stream")
+            .is_some_and(|stream| !stream.is_boolean())
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+pub fn merge_body(provider: &Provider, model: &Model, client: &Value) -> Value {
+    let mut body = provider.defaults.clone();
+    body.extend(model.defaults.clone());
+    if let Some(client) = client.as_object() {
+        body.extend(client.clone());
+    }
+    body.insert("model".to_owned(), Value::String(model.upstream.clone()));
+    Value::Object(body)
+}
+
+pub fn outbound_headers(provider: &Provider) -> Result<HeaderMap, Failure> {
+    let mut entries: Vec<Value> = provider
+        .headers
+        .iter()
+        .map(|(name, value)| json!({"name": name, "value": value}))
+        .collect();
+    if let Some(auth) = &provider.auth {
+        if provider
+            .headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"))
+            || !valid_bearer(&auth.bearer)
+        {
+            return Err(Failure::new(ErrorCode::Internal, "upstream_headers"));
+        }
+        entries.push(json!({"name": "authorization", "value": format!("Bearer {}", auth.bearer)}));
+    }
+    let mut headers = headers_from_json(&Value::Array(entries))?;
+    if !headers.contains_key(header::ACCEPT) {
+        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+    }
+    Ok(headers)
+}
+
+pub fn response_headers(upstream: &HeaderMap) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (name, value) in upstream {
+        if matches!(
+            name.as_str(),
+            "content-language" | "x-request-id" | "retry-after"
+        ) && !upstream.get_all(header::CONNECTION).iter().any(|value| {
+            value.to_str().is_ok_and(|value| {
+                value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case(name.as_str()))
+            })
+        }) {
+            headers.append(name.clone(), value.clone());
+        }
+    }
+    headers
+}
+
+pub fn headers_to_json(headers: &HeaderMap) -> Result<Value, Failure> {
+    let entries = headers
+        .iter()
+        .map(|(name, value)| {
+            let value = std::str::from_utf8(value.as_bytes()).map_err(|source| {
+                Failure::new(ErrorCode::UpstreamProtocol, "headers").with_source(source)
+            })?;
+            Ok(json!({"name": name.as_str(), "value": value}))
+        })
+        .collect::<Result<Vec<_>, Failure>>()?;
+    Ok(Value::Array(entries))
+}
+
+pub fn headers_from_json(value: &Value) -> Result<HeaderMap, Failure> {
+    let invalid = || Failure::new(ErrorCode::HookFailed, "headers");
+    let entries = value.as_array().ok_or_else(invalid)?;
+    let mut headers = HeaderMap::new();
+    for entry in entries {
+        let object = entry.as_object().ok_or_else(invalid)?;
+        if object.len() != 2 {
+            return Err(invalid());
+        }
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?;
+        let value = object
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?;
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|source| invalid().with_source(source))?;
+        if reserved_header(name.as_str()) {
+            return Err(invalid());
+        }
+        let value = HeaderValue::from_str(value).map_err(|source| invalid().with_source(source))?;
+        headers.append(name, value);
+    }
+    Ok(headers)
+}
+
+fn reserved_header(name: &str) -> bool {
+    matches!(
+        name,
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "content-encoding"
+            | "content-type"
+            | "proxy-connection"
+            | "keep-alive"
+            | "te"
+            | "trailer"
+            | "upgrade"
+    )
+}
+
+pub fn validate_url(url: &str) -> Result<(), Failure> {
+    limen_config::validate_endpoint(url)
+        .map_err(|source| Failure::new(ErrorCode::HookFailed, "before_send").with_source(source))
+}
+
+/// Diagnostic target omits all path/query/userinfo: each can contain request secrets.
+pub fn safe_target(endpoint: &str) -> String {
+    match url::Url::parse(endpoint) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.host_str().is_some() => {
+            format!(
+                "{}://{}",
+                url.scheme(),
+                &url[url::Position::BeforeHost..url::Position::AfterPort]
+            )
+        },
+        _ => "invalid_endpoint".to_owned(),
+    }
+}
+
+pub fn models_json(business: &BusinessConfig) -> Value {
+    json!({"object": "list", "data": business.models.keys().map(|name| json!({"id": name, "object": "model", "created": 0, "owned_by": "limen"})).collect::<Vec<_>>()})
+}
+
+#[cfg(test)]
+mod tests;

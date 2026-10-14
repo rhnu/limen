@@ -1,0 +1,133 @@
+(function (validateHeader, maxNodes, maxBytes) {
+  "use strict";
+  // Capture intrinsics before trusted configuration can replace global methods.
+  const ownKeys = Reflect.ownKeys;
+  const descriptor = Object.getOwnPropertyDescriptor;
+  const define = Object.defineProperty;
+  const freeze = Object.freeze;
+  const seal = Object.seal;
+  const create = Object.create;
+  const setProto = Object.setPrototypeOf;
+  const isArray = Array.isArray;
+  const ErrorType = TypeError;
+  const WeakMapType = WeakMap;
+  const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
+  const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
+  const prepared = new WeakMapType();
+  function fail() { throw new ErrorType("invalid hook context or header operation"); }
+  function read(object, key) {
+    const d = descriptor(object, key);
+    if (!d || !descriptor(d, "value")) fail();
+    return d.value;
+  }
+  function deepFreeze(value) {
+    if (value !== null && typeof value === "object") {
+      const keys = ownKeys(value);
+      for (let i = 0; i < keys.length; i++) deepFreeze(read(value, keys[i]));
+      freeze(value);
+    }
+    return value;
+  }
+  function headerDraft(input, writable) {
+    if (!isArray(input)) fail();
+    let fields = setProto([], null), bytes = 0;
+    function normalized(name, value, mutation) {
+      if (typeof name !== "string" || typeof value !== "string") fail();
+      const normalized = validateHeader(name, value, mutation);
+      if (typeof normalized !== "string") fail();
+      return normalized;
+    }
+    function appendField(name, value) {
+      const added = name.length + value.length;
+      if (fields.length >= maxNodes || added + bytes > maxBytes) fail();
+      fields[fields.length] = freeze({ name, value });
+      bytes += added;
+    }
+    for (let i = 0; i < input.length; i++) {
+      const field = input[i];
+      appendField(normalized(read(field, "name"), read(field, "value"), false), read(field, "value"));
+    }
+    function remove(name) {
+      const next = setProto([], null);
+      let nextBytes = 0;
+      for (let i = 0; i < fields.length; i++) {
+        if (fields[i].name !== name) {
+          next[next.length] = fields[i];
+          nextBytes += fields[i].name.length + fields[i].value.length;
+        }
+      }
+      fields = next; bytes = nextBytes;
+    }
+    function mutation(name, value) {
+      if (!writable) fail();
+      return normalized(name, value, true);
+    }
+    const api = freeze({
+      getAll(name) {
+        name = normalized(name, "", false);
+        const values = [];
+        for (let i = 0; i < fields.length; i++) {
+          if (fields[i].name === name) values[values.length] = fields[i].value;
+        }
+        return values;
+      },
+      append(name, value) { appendField(mutation(name, value), value); },
+      set(name, value) {
+        name = mutation(name, value);
+        remove(name); appendField(name, value);
+      },
+      delete(name) { remove(mutation(name, "")); },
+    });
+    // Prevent changes to method function objects from becoming shared mutable state.
+    const methods = ownKeys(api);
+    for (let i = 0; i < methods.length; i++) freeze(api[methods[i]]);
+    return { api, snapshot() {
+      const output = [];
+      for (let i = 0; i < fields.length; i++) output[output.length] = fields[i];
+      return output;
+    } };
+  }
+  function prepare(root) {
+    // Older standalone scheduler experiments use plain JSON drafts.
+    if (!descriptor(root, "meta")) return root;
+    const meta = read(root, "meta");
+    if (meta === null || typeof meta !== "object" || isArray(meta)) fail();
+    const phase = read(meta, "phase");
+    if (phase !== "onRequest" && phase !== "beforeSend" && phase !== "afterReceive"
+        && phase !== "onResponse" && phase !== "onError" && phase !== "onFinish") fail();
+    const observer = phase === "onError" || phase === "onFinish";
+    const state = read(root, "state");
+    if (state === null || typeof state !== "object" || isArray(state)) fail();
+    const keys = ownKeys(root);
+    let headers;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      let value = read(root, key), writable = false;
+      if (key === "headers") {
+        headers = headerDraft(value, !observer && (phase === "beforeSend" || phase === "afterReceive"));
+        value = headers.api;
+      } else if (key === "body" && !observer && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse")) {
+        writable = true;
+      } else if ((key === "url" && phase === "beforeSend") || (key === "status" && phase === "afterReceive")) {
+        writable = true;
+      } else if (key !== "state" || observer) {
+        deepFreeze(value);
+      }
+      define(root, key, { value, enumerable: true, writable, configurable: false });
+    }
+    seal(root);
+    weakSet(prepared, root, { keys, headers });
+    return root;
+  }
+  function project(root) {
+    const info = weakGet(prepared, root);
+    if (!info) return root;
+    const output = create(null);
+    for (let i = 0; i < info.keys.length; i++) {
+      const key = info.keys[i];
+      output[key] = key === "headers" ? info.headers.snapshot() : read(root, key);
+    }
+    return output;
+  }
+  return { prepare, project };
+})
