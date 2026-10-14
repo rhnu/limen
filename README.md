@@ -69,7 +69,8 @@ Ctrl-C 会停止监听并取消在途请求；Unix 下也处理 SIGTERM。VM 退
 
 ## Docker
 
-仓库提供多阶段 Dockerfile 与 Compose 示例，CI 构建 Linux amd64 镜像但不推送。
+仓库提供多阶段 Dockerfile 与 Compose 示例。每次 main 推送通过 CI 检查后，构建 Linux amd64 镜像并推送
+`ghcr.io/rhnu/limen:latest`，成功后删除该包的其他镜像版本；PR 和手动 CI 只构建。
 将整个 `examples/` 复制到 `local/`，在 `local/basic/config.js` 中填写上游配置，
 在 `local/docker/server.yaml` 中设置客户端令牌。容器配置示例显式监听 `0.0.0.0:8080`。
 
@@ -82,7 +83,7 @@ docker compose down
 Compose 将 `local/` 整个目录只读挂载到 `/config`，保留共享 ESM 的相对路径，默认仅向宿主
 `127.0.0.1:8080` 发布端口。容器以非 root 用户运行，配置文件需对该用户可读。
 构建上下文只允许源码和构建所需文件，真实配置与秘密不进入镜像层。
-构建、缓存与配置检查命令见[开发指引](docs/development.md)；本次未执行 Docker 或 Linux 运行验收。
+构建、缓存与配置检查命令见[开发指引](docs/development.md)。Linux CI 和容器镜像构建已跑通。
 
 ## 开发与边界
 
@@ -96,6 +97,6 @@ Compose 将 `local/` 整个目录只读挂载到 `/config`，保留共享 ESM �
 职责见[设计中的工程边界](docs/design.md#12-workspace-与模块边界)。依赖由 workspace 根集中管理，
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
-Linux 构建、Docker、真实上游及 GitHub runner 验证尚未完成，本机验证不能替代这些证据。
+容器启动、Linux 运行行为及真实上游验收按部署阶段单独安排。
 Windows 本机已有纯逻辑测试、隔离 JS 实验及本地合成 HTTP 上游实验，覆盖顺序、认证、取消、预算与关闭。
-仓库尚未配置远程，项目尚未决定分发许可证，Cargo 包设置为不发布。
+GitHub 远程为 `rhnu/limen`；项目尚未决定分发许可证，Cargo 包设置为不发布。

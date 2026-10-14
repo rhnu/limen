@@ -7,7 +7,8 @@ JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → mode
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
 
 Dockerfile、Compose、精简非 root 运行层、cargo-chef 依赖缓存、Rust 与 Buildx GHA 缓存已配置。
-CI 仅构建 Linux amd64 镜像，不推送、不发布、不运行容器。按本轮要求，Linux 与容器运行验收单独安排。
+CI 在 main push 检查通过后构建 Linux amd64 镜像并推送 GHCR latest，成功后只保留该版本；
+PR 和手动 CI 只构建，不推送。Linux CI 与容器镜像构建已跑通。
 
 本文件是唯一进度文档，只保存当前状态、剩余任务、阻碍与待验证项；长期契约见[设计基线](design.md)，
 命令、依赖选择和构建配置见[开发指引](development.md)。
@@ -16,10 +17,10 @@ CI 仅构建 Linux amd64 镜像，不推送、不发布、不运行容器。按�
 
 - 单独运行 `context-stream` JS 实验与 `transport-contracts` HTTP 实验，补齐流 hook、四种传输组合、
   usage 尾块、截断、取消及终态观察的运行证据；纯逻辑测试不能替代这些实验。
-- 在 Linux 上验证编译、TLS/CA、SIGTERM、慢客户端、流背压及关闭传播。
-- 验证 Docker 构建、容器启动、只读配置挂载、非 root 文件权限、端口绑定和关闭行为。
-- 配置远程后运行 GitHub CI，核实 Linux Rust job 与镜像构建，再依据实际结果配置分支保护。
-- 分发前确定许可证、发布位置与权限；镜像推送、release 和真实上游验收单独安排。
+- 在 Linux 上验证 TLS/CA、SIGTERM、慢客户端、流背压及关闭传播。
+- 验证容器启动、只读配置挂载、非 root 文件权限、端口绑定和关闭行为。
+- 依据已跑通的 CI 配置分支保护。
+- 分发前确定许可证；release 和真实上游验收单独安排。
 
 ## 首版之外
 

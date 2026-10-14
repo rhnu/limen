@@ -32,7 +32,7 @@ Chat 库仅消费 owned 字节与 JSON，不持有连接，也不依赖配置或
 ## 本地检查
 
 QuickJS 包含 C 源码，需要可用的 C 编译工具链。Windows 本机已能构建其 MSVC 目标；
-Linux 需准备 C compiler、归档器及 libc 开发环境，目标平台实测仍列于路线图。
+Linux 需准备 C compiler、归档器及 libc 开发环境；Linux CI 编译与容器镜像构建已跑通。
 
 在仓库根目录按顺序执行：
 
@@ -60,6 +60,11 @@ rumdl check --fix README.md docs/design.md docs/roadmap.md docs/development.md
 ```
 
 本机使用 rumdl 0.2.79，CI 同版本。可用时另运行 `actionlint .github/workflows/ci.yml`，并执行 `git diff --check`。
+actionlint 1.7.12 尚不识别 GitHub 已支持的 `concurrency.queue`，该版本可仅忽略这一诊断：
+
+```sh
+actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/ci.yml
+```
 
 ## 隔离运行时实验
 
@@ -145,7 +150,7 @@ HTTP 引入时重新核对了注册表及上游发布/feature：
 [reqwest 发布](https://github.com/seanmonstar/reqwest/releases/tag/v0.13.5)与
 [reqwest features](https://docs.rs/crate/reqwest/0.13.5/features)。
 reqwest 0.13 的 `rustls` feature 使用平台证书验证与 AWS-LC；Windows 本机构建已验证，CMake 可用，
-Linux 的 C 构建、证书与运行环境仍须部署阶段单独验证。锁文件不代表已执行目标平台或 TLS 真实上游验收。
+Linux CI 与镜像构建已通过 C 编译；证书与运行环境验收按部署阶段单独安排。锁文件不代表已执行 TLS 真实上游验收。
 
 SSE 解码对照 WHATWG，并调查了 eventsource-stream、sse-codec 与 sse-stream；选用可独立于异步网络层使用的
 [sse-parse 发布](https://github.com/hey-jj/sse-parse/releases/tag/v0.1.0)与
@@ -177,16 +182,33 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 
 ## GitHub CI 与容器构建
 
-CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，只授予 `contents: read`。
-同 ref 新运行取消旧运行；每个 job 有超时；checkout 不持久化凭据。
+CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，默认只授予 `contents: read`，
+镜像 job 另授予 `packages: write`。同 ref 运行串行排队，`queue: max` 最多容纳 100 个等待运行，
+超过 GitHub 队列上限的运行会被取消；新运行不取消正在执行的构建与发布。每个 job 有超时；checkout 不持久化凭据。
 Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、纯逻辑单元测试；Markdown job 检查仓库文档。
 隔离运行实验当前手动调用，不自动加入普通 CI 测试步骤。
 
-尚未配置远程或运行托管 runner。建立远程后运行一次 CI，再依据实际结果配置分支保护。
-镜像 job 通过 Buildx 构建 `linux/amd64`，使用 GHA `mode=max` 缓存中间层，不登录 registry、不推送镜像，
-也不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
+GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支保护可依据现有 CI 配置。
+镜像 job 等待 Rust 与 Markdown 检查通过，使用 Buildx 构建 `linux/amd64` 和 GHA `mode=max` 中间层缓存。
+仅 `main` push 使用 `GITHUB_TOKEN` 登录 GHCR 并推送 `ghcr.io/<小写 owner>/<小写 repo>:latest`，
+当前仓库为 `ghcr.io/rhnu/limen:latest`。PR 和手动触发只构建并加载到 runner，不登录、不推送、不清理。
+CI 不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
 Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层只含二进制、CA 与运行依赖，使用非 root 用户。
 release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind 以维持运行时的异常清理边界。
+
+成功推送后，使用 GitHub Packages REST API 分页获取版本，确认 `latest` 的 digest 与本次 Buildx 输出一致，
+再删除该包的所有其他版本（包括无标签和带其他标签的历史版本）。重复推送同一 digest 时仍保留实际 `latest`，
+不按版本创建时间判断。清理失败使 job 失败，已成功推送的 latest 保留；构建或推送失败不执行清理。
+只发布单架构单 manifest，显式关闭 provenance 与 SBOM attestations，避免清理无标签版本时删除 latest 引用的子 manifest。
+未来启用多架构或 attestations 时需先调整清理策略以保留完整引用图。
+
+workflow 发布的包自动关联仓库，并带 `org.opencontainers.image.source` 和 revision 标签。
+无需额外 PAT；删除版本要求该仓库对包拥有 admin 权限。如果同名包曾由其他方式创建，需在包设置中关联仓库、
+授予 Actions 访问权限。新包默认 private，可按需要在 GHCR 包设置中调整可见性。
+公开包版本超过 GitHub 的 5,000 次下载删除限制时，清理会失败并需 GitHub 支持处理。
+权限、可见性与删除限制见 [GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)、
+[Packages REST API](https://docs.github.com/en/rest/packages/packages)；队列行为见
+[Actions concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
 
 本地可显式调用以下命令（本次未运行）：
 
@@ -210,4 +232,6 @@ Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量
 缓存与镜像构建使用 [Rust cache](https://github.com/Swatinem/rust-cache)、
 [Buildx action](https://github.com/docker/setup-buildx-action)和
 [Build push action](https://github.com/docker/build-push-action)。
-容器运行、Linux 构建与 TLS/CA、SIGTERM、慢客户端及流背压仍待独立验收；镜像推送和 release 需先明确发布位置与权限。
+GHCR 登录使用 [Docker login action v4](https://github.com/docker/login-action)，清理使用
+[GitHub Script v9](https://github.com/actions/github-script) 提供的 Octokit 分页和 REST 请求；两者使用 Node 24，适配 GitHub 托管 runner。
+容器运行与 Linux TLS/CA、SIGTERM、慢客户端及流背压验收按部署阶段单独安排。

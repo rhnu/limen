@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,21 +68,75 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [rust, markdown]
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH_IMAGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Build the runtime image
+      - name: Set the image name
+        id: image-name
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        if: env.PUBLISH_IMAGE == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the runtime image and publish on main push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           target: runtime
           platforms: linux/amd64
           pull: true
-          push: false
-          load: true
-          tags: limen:ci
+          push: ${{ env.PUBLISH_IMAGE == 'true' }}
+          load: ${{ env.PUBLISH_IMAGE != 'true' }}
+          tags: ${{ steps.image-name.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # A single manifest can be retained without deleting referenced attestations.
+          provenance: false
+          sbom: false
           cache-from: type=gha,scope=limen-linux-amd64
           cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=limen-linux-amd64,mode=max' || '' }}
+      - name: Delete old GHCR versions after a successful push
+        if: env.PUBLISH_IMAGE == 'true'
+        uses: actions/github-script@v9
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        with:
+          script: |
+            const ownerPath = context.payload.repository.owner.type === 'Organization'
+              ? '/orgs/{owner}' : '/users/{owner}';
+            const packagePath = `${ownerPath}/packages/{package_type}/{package_name}/versions`;
+            const params = {
+              owner: context.repo.owner,
+              package_type: 'container',
+              package_name: context.repo.repo.toLowerCase(),
+            };
+            // List before deleting so pagination cannot skip versions after removals.
+            const versions = await github.paginate(`GET ${packagePath}`, {
+              ...params, per_page: 100,
+            });
+            const latest = versions.find(version => version.metadata?.container?.tags.includes('latest'));
+            if (!latest || latest.name !== process.env.IMAGE_DIGEST) {
+              throw new Error('latest does not match the pushed digest; refusing to delete versions');
+            }
+            // Match the digest, not creation time: a repeated push can reuse an older version.
+            for (const version of versions) {
+              if (version.id === latest.id) continue;
+              await github.request(`DELETE ${packagePath}/{package_version_id}`, {
+                ...params, package_version_id: version.id,
+              });
+              core.info(`Deleted old container version ${version.id}`);
+            }
