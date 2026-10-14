@@ -6,7 +6,7 @@ use std::{
 };
 
 use limen_script::{
-    Cancellation, HookCall, RuntimeOptions, RuntimeStatus, ScriptError, ScriptRuntime,
+    Cancellation, HookCall, RuntimeOptions, RuntimeStatus, ScriptErrorKind, ScriptRuntime,
 };
 use serde_json::{Value, json};
 
@@ -106,7 +106,7 @@ fn ensure(condition: bool, message: &str) -> ProbeResult {
 
 async fn stop(runtime: &ScriptRuntime) -> ProbeResult {
     ensure(
-        runtime.shutdown().await == RuntimeStatus::Stopped,
+        matches!(runtime.shutdown().await, RuntimeStatus::Stopped),
         "ordinary VM shutdown failed",
     )
 }
@@ -171,16 +171,16 @@ async fn pending_fairness(fixture: &mut Fixture) -> ProbeResult {
             cancellation.cancel();
         }
         let expected = if deadline {
-            ScriptError::Deadline
+            ScriptErrorKind::Deadline
         } else {
-            ScriptError::Cancelled
+            ScriptErrorKind::Cancelled
         };
         ensure(
-            waiting.await? == Err(expected),
+            waiting.await?.is_err_and(|error| error.kind() == expected),
             "pending cancellation/deadline was not delivered",
         )?;
         ensure(
-            runtime.status() == RuntimeStatus::Ready,
+            matches!(runtime.status(), RuntimeStatus::Ready),
             "ordinary wait failure retired the VM",
         )?;
     }
@@ -216,12 +216,12 @@ async fn late_completion(fixture: &mut Fixture) -> ProbeResult {
             cancellation.cancel();
         }
         let expected = if deadline {
-            ScriptError::Deadline
+            ScriptErrorKind::Deadline
         } else {
-            ScriptError::Cancelled
+            ScriptErrorKind::Cancelled
         };
         ensure(
-            waiting.await? == Err(expected),
+            waiting.await?.is_err_and(|error| error.kind() == expected),
             "failed call exposed a draft instead of an error",
         )?;
         let trigger = runtime
@@ -243,7 +243,7 @@ async fn late_completion(fixture: &mut Fixture) -> ProbeResult {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         ensure(
-            runtime.status() == RuntimeStatus::Ready,
+            matches!(runtime.status(), RuntimeStatus::Ready),
             "late completion retired the VM",
         )?;
     }
@@ -258,7 +258,7 @@ async fn invalid_return(fixture: &mut Fixture) -> ProbeResult {
     for kind in 0..=12 {
         let output = runtime.invoke(call(id, kind, json!({"kind": kind}))).await;
         ensure(
-            output == Err(ScriptError::Contract),
+            output.is_err_and(|error| error.kind() == ScriptErrorKind::Contract),
             "non-void completion or thenable was accepted",
         )?;
     }
@@ -278,7 +278,7 @@ async fn rejection(fixture: &mut Fixture) -> ProbeResult {
             ))
             .await;
         ensure(
-            output == Err(ScriptError::JavaScript),
+            output.is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
             "throw/rejection was not reported",
         )?;
     }
@@ -332,7 +332,7 @@ async fn strict_json(fixture: &mut Fixture) -> ProbeResult {
         )?;
         let result = ScriptRuntime::start(path, RuntimeOptions::default()).await;
         match result {
-            Err(ScriptError::Json) => {},
+            Err(error) if error.kind() == ScriptErrorKind::Json => {},
             Err(error) => {
                 return Err(format!("invalid static JSON used unexpected error: {error}").into());
             },
@@ -354,7 +354,7 @@ async fn strict_json(fixture: &mut Fixture) -> ProbeResult {
             ))
             .await;
         ensure(
-            result == Err(ScriptError::Json),
+            result.is_err_and(|error| error.kind() == ScriptErrorKind::Json),
             "invalid hook JSON was accepted",
         )?;
     }
@@ -366,7 +366,7 @@ async fn strict_json(fixture: &mut Fixture) -> ProbeResult {
         ))
         .await;
     ensure(
-        result == Err(ScriptError::Json),
+        result.is_err_and(|error| error.kind() == ScriptErrorKind::Json),
         "unsafe Rust input integer entered JS",
     )?;
     let result = runtime
@@ -406,7 +406,7 @@ async fn modules(fixture: &mut Fixture) -> ProbeResult {
             &format!("import '{specifier}'; export default {{}};"),
         )?;
         match ScriptRuntime::start(path, RuntimeOptions::default()).await {
-            Err(ScriptError::Module) => {},
+            Err(error) if error.kind() == ScriptErrorKind::Module => {},
             Err(error) => {
                 return Err(
                     format!("forbidden module import used unexpected error: {error}").into(),
@@ -423,14 +423,14 @@ async fn modules(fixture: &mut Fixture) -> ProbeResult {
 
 async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
     let (body, expected) = match case {
-        "sync-loop" => ("while (true) {}", ScriptError::ExecutionBudget),
+        "sync-loop" => ("while (true) {}", ScriptErrorKind::ExecutionBudget),
         "microtask-loop" => (
             "function spin() { Promise.resolve().then(spin); } spin(); return new Promise(() => {});",
-            ScriptError::ExecutionBudget,
+            ScriptErrorKind::ExecutionBudget,
         ),
         "memory-limit" => (
             "const retained = []; while (true) retained.push(new Array(8192).fill(1));",
-            ScriptError::MemoryLimit,
+            ScriptErrorKind::MemoryLimit,
         ),
         _ => return Err("invalid retirement experiment".into()),
     };
@@ -453,12 +453,12 @@ async fn retirement(fixture: &mut Fixture, case: &str) -> ProbeResult {
         .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
         .await;
     ensure(
-        result == Err(expected),
+        result.is_err_and(|error| error.kind() == expected),
         "rogue script did not report its resource limit",
     )?;
     let status = runtime.shutdown().await;
     ensure(
-        status == RuntimeStatus::Retired(expected),
+        matches!(status, RuntimeStatus::Retired(error) if error.kind() == expected),
         "resource failure did not retire the VM",
     )?;
     let later = runtime
@@ -494,7 +494,11 @@ async fn startup_loop(fixture: &mut Fixture) -> ProbeResult {
             ..RuntimeOptions::default()
         };
         match ScriptRuntime::start(path, options).await {
-            Err(ScriptError::ExecutionBudget | ScriptError::Deadline) => {},
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ScriptErrorKind::ExecutionBudget | ScriptErrorKind::Deadline
+                ) => {},
             Err(error) => {
                 return Err(format!("startup limit used unexpected error: {error}").into());
             },

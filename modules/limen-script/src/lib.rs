@@ -1,11 +1,11 @@
 //! Bounded JavaScript configuration and hook execution on one owning thread.
 
 mod engine;
+mod error;
 mod json;
 mod loader;
 
 use std::{
-    fmt,
     path::PathBuf,
     sync::{
         Arc,
@@ -16,6 +16,7 @@ use std::{
 
 use serde_json::Value;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tracing::Instrument;
 
 pub type HookId = u64;
 
@@ -70,34 +71,9 @@ impl Default for JsonLimits {
     }
 }
 
-/// Safe diagnostics deliberately omit JavaScript exception text, source and paths.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScriptError {
-    InvalidOptions,
-    Module,
-    JavaScript,
-    Json,
-    Contract,
-    UnknownHook,
-    Busy,
-    Cancelled,
-    Deadline,
-    ExecutionBudget,
-    MemoryLimit,
-    Retired,
-    Stopped,
-    Thread,
-}
+pub use error::{ScriptError, ScriptErrorKind};
 
-impl fmt::Display for ScriptError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "JavaScript runtime: {self:?}")
-    }
-}
-
-impl std::error::Error for ScriptError {}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum RuntimeStatus {
     Starting,
     Ready,
@@ -179,101 +155,139 @@ impl ScriptRuntime {
         path: PathBuf,
         options: RuntimeOptions,
     ) -> Result<(Self, Value), ScriptError> {
-        if !valid_options(&options) {
-            return Err(ScriptError::InvalidOptions);
+        async move {
+            if !valid_options(&options) {
+                return Err(ScriptError::new(ScriptErrorKind::InvalidOptions));
+            }
+            let (commands, receiver) = mpsc::channel(options.queue_capacity);
+            let (status_tx, status) = watch::channel(RuntimeStatus::Starting);
+            let (ready_tx, ready) = oneshot::channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            let wake = Arc::new(Notify::new());
+            let thread_stop = Arc::clone(&stop);
+            let thread_wake = Arc::clone(&wake);
+            let limits = options.json_limits;
+            let runtime_span = tracing::debug_span!("script_runtime_thread").or_current();
+            std::thread::Builder::new()
+                .name("limen-javascript".into())
+                .spawn(move || {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let executor = tokio::runtime::Builder::new_current_thread()
+                            .enable_time()
+                            .build()
+                            .map_err(|error| {
+                                ScriptError::with_source(ScriptErrorKind::Thread, error)
+                            })?;
+                        executor.block_on(
+                            engine::run(
+                                path,
+                                options,
+                                receiver,
+                                ready_tx,
+                                &status_tx,
+                                thread_stop,
+                                thread_wake,
+                            )
+                            .instrument(runtime_span),
+                        )
+                    }));
+                    let status = match result {
+                        Ok(Ok(())) => RuntimeStatus::Stopped,
+                        Ok(Err(e)) => RuntimeStatus::Retired(e),
+                        Err(_) => RuntimeStatus::Retired(ScriptError::with_source(
+                            ScriptErrorKind::Thread,
+                            error::ThreadFailure::Panic,
+                        )),
+                    };
+                    let _sent = status_tx.send(status);
+                })
+                .map_err(|error| ScriptError::with_source(ScriptErrorKind::Thread, error))?;
+            let handle = Self {
+                commands,
+                status,
+                stop,
+                wake,
+                limits,
+            };
+            match ready.await {
+                Ok(Ok(config)) => Ok((handle, config)),
+                Ok(Err(e)) => Err(e),
+                Err(source) => {
+                    // The sender may drop before the thread publishes its actual failure.
+                    let error = match handle.shutdown().await {
+                        RuntimeStatus::Retired(error) => error,
+                        _ => ScriptError::with_source(ScriptErrorKind::Thread, source),
+                    };
+                    Err(error)
+                },
+            }
         }
-        let (commands, receiver) = mpsc::channel(options.queue_capacity);
-        let (status_tx, status) = watch::channel(RuntimeStatus::Starting);
-        let (ready_tx, ready) = oneshot::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let wake = Arc::new(Notify::new());
-        let thread_stop = Arc::clone(&stop);
-        let thread_wake = Arc::clone(&wake);
-        let limits = options.json_limits;
-        std::thread::Builder::new()
-            .name("limen-javascript".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let executor = tokio::runtime::Builder::new_current_thread()
-                        .enable_time()
-                        .build()
-                        .map_err(|_error| ScriptError::Thread)?;
-                    executor.block_on(engine::run(
-                        path,
-                        options,
-                        receiver,
-                        ready_tx,
-                        &status_tx,
-                        thread_stop,
-                        thread_wake,
-                    ))
-                }));
-                let status = match result {
-                    Ok(Ok(())) => RuntimeStatus::Stopped,
-                    Ok(Err(e)) => RuntimeStatus::Retired(e),
-                    Err(_) => RuntimeStatus::Retired(ScriptError::Thread),
-                };
-                let _sent = status_tx.send(status);
-            })
-            .map_err(|_error| ScriptError::Thread)?;
-        let handle = Self {
-            commands,
-            status,
-            stop,
-            wake,
-            limits,
-        };
-        match ready.await {
-            Ok(Ok(config)) => Ok((handle, config)),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err(ScriptError::Thread),
-        }
+        .instrument(tracing::debug_span!("script_start"))
+        .await
     }
 
     #[must_use]
-    pub fn status(&self) -> RuntimeStatus { *self.status.borrow() }
+    pub fn status(&self) -> RuntimeStatus { self.status.borrow().clone() }
+
+    fn retirement_or(&self, fallback: ScriptError) -> ScriptError {
+        match self.status() {
+            RuntimeStatus::Retired(error) => error,
+            _ => fallback,
+        }
+    }
 
     /// Execute one hook and return its validated, privately owned draft.
     ///
     /// # Errors
     /// Reports cancellation, deadlines, capacity, hook contracts and VM retirement.
     pub async fn invoke(&self, call: HookCall) -> Result<Value, ScriptError> {
+        let span = tracing::debug_span!(
+            "script_invoke",
+            call_id = call.call_id,
+            hook_id = call.hook_id
+        );
+        async move {
         json::validate_owned(&call.context, self.limits)?;
         if call.request_id.len() > 128 {
-            return Err(ScriptError::Contract);
+            return Err(ScriptError::new(ScriptErrorKind::Contract));
         }
         let cancellation = call.cancellation.clone();
         let deadline = call.deadline;
         if cancellation.is_cancelled() {
-            return Err(ScriptError::Cancelled);
+            return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }
         if Instant::now() >= deadline {
-            return Err(ScriptError::Deadline);
+            return Err(ScriptError::new(ScriptErrorKind::Deadline));
         }
         let _wake_on_drop = WakeOnDrop(Arc::clone(&self.wake));
         let (response, mut receive) = oneshot::channel();
         self.commands
             .try_send(Command { call, response })
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => ScriptError::Busy,
-                mpsc::error::TrySendError::Closed(_) => ScriptError::Retired,
+            .map_err(|error| {
+                let kind = match &error {
+                    mpsc::error::TrySendError::Full(_) => ScriptErrorKind::Busy,
+                    mpsc::error::TrySendError::Closed(_) => ScriptErrorKind::Retired,
+                };
+                let error = ScriptError::with_source(kind, error);
+                if kind == ScriptErrorKind::Retired { self.retirement_or(error) } else { error }
             })?;
         self.wake.notify_one();
         let result = tokio::select! {
             biased;
-            () = cancellation.cancelled() => Err(ScriptError::Cancelled),
-            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(ScriptError::Deadline),
-            result = &mut receive => result.unwrap_or(Err(ScriptError::Retired)),
+            () = cancellation.cancelled() => Err(ScriptError::new(ScriptErrorKind::Cancelled)),
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(ScriptError::new(ScriptErrorKind::Deadline)),
+            result = &mut receive => result.unwrap_or_else(|error| Err(self.retirement_or(ScriptError::with_source(ScriptErrorKind::Retired, error)))),
         };
         receive.close();
         self.wake.notify_one();
         if cancellation.is_cancelled() {
-            return Err(ScriptError::Cancelled);
+            return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }
         if Instant::now() >= deadline {
-            return Err(ScriptError::Deadline);
+            return Err(ScriptError::new(ScriptErrorKind::Deadline));
         }
         result
+        }.instrument(span).await
     }
 
     /// Completion is reported only after pending refs, hooks, context and VM drop.
@@ -282,12 +296,15 @@ impl ScriptRuntime {
         self.wake.notify_one();
         let mut status = self.status.clone();
         loop {
-            let current = *status.borrow_and_update();
+            let current = status.borrow_and_update().clone();
             if matches!(current, RuntimeStatus::Stopped | RuntimeStatus::Retired(_)) {
                 return current;
             }
-            if status.changed().await.is_err() {
-                return RuntimeStatus::Retired(ScriptError::Thread);
+            if let Err(error) = status.changed().await {
+                return RuntimeStatus::Retired(ScriptError::with_source(
+                    ScriptErrorKind::Thread,
+                    error,
+                ));
             }
         }
     }

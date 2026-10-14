@@ -6,8 +6,8 @@ use tokio::sync::oneshot;
 
 use super::{Hooks, Vm, conversion_error, module_error};
 use crate::{
-    ScriptError,
-    loader::{self, LocalLoader, LocalResolver},
+    ScriptError, ScriptErrorKind,
+    loader::{self, LocalLoader, LocalResolver, ModuleDiagnostics},
 };
 
 pub(super) async fn load(
@@ -25,11 +25,15 @@ pub(super) async fn load(
     } = *vm;
     let path = loader::module_path(path)?;
     let bytes = loader::source(&path, options.max_source_bytes)?;
-    let name = path.to_str().ok_or(ScriptError::Module)?;
+    let name = path
+        .to_str()
+        .ok_or(ScriptError::new(ScriptErrorKind::Module))?;
+    let diagnostics = ModuleDiagnostics::default();
     runtime
         .set_loader(
-            LocalResolver,
+            LocalResolver(diagnostics.clone()),
             LocalLoader {
+                diagnostics: diagnostics.clone(),
                 remaining: options.max_source_bytes - bytes.len(),
                 max_modules: options.max_modules,
                 loaded: HashSet::from([path.clone()]),
@@ -44,19 +48,31 @@ pub(super) async fn load(
                 Ok((module, promise)) => {
                     let namespace = module
                         .namespace()
-                        .map_err(|e| module_error(bridge.failure(&ctx, &e)))?;
+                        .map_err(|e| module_error(bridge.failure(&ctx, e)))?;
                     Ok((
                         Persistent::save(&ctx, namespace),
                         Persistent::save(&ctx, promise),
                     ))
                 },
-                Err(error) => Err(module_error(bridge.failure(&ctx, &error))),
+                Err(error) => Err(module_error(bridge.failure(&ctx, error))),
             }
         })
         .await;
-    budget.check()?;
+    let evaluated = budget.check_result(evaluated);
+    let failure = diagnostics.take();
+    let evaluated = evaluated.map_err(|error| {
+        if error.kind() == ScriptErrorKind::Module {
+            failure.unwrap_or(error)
+        } else {
+            error
+        }
+    });
     let (module, evaluation) = evaluated?;
-    wait_for_evaluation(vm, &evaluation, deadline, ready).await?;
+    // A dynamic import may be caught by JS before an unrelated Promise rejects.
+    // Only synchronous graph failures can be associated with the loader's I/O cause.
+    let waited = wait_for_evaluation(vm, &evaluation, deadline, ready).await;
+    let _unassigned = diagnostics.take();
+    waited?;
     extract(vm, &module, deadline).await
 }
 
@@ -76,23 +92,23 @@ async fn wait_for_evaluation(
     let continuous_start = Instant::now();
     loop {
         if Instant::now() >= deadline {
-            return Err(ScriptError::Deadline);
+            return Err(ScriptError::new(ScriptErrorKind::Deadline));
         }
         if ready.is_closed() {
-            return Err(ScriptError::Cancelled);
+            return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }
         let state = context
             .with(|ctx| {
                 let promise = evaluation
                     .clone()
                     .restore(&ctx)
-                    .map_err(|e| bridge.failure(&ctx, &e))?;
+                    .map_err(|e| bridge.failure(&ctx, e))?;
                 promise
                     .result::<Value>()
                     .map(|result| {
                         result
                             .map(|_| ())
-                            .map_err(|e| module_error(bridge.failure(&ctx, &e)))
+                            .map_err(|e| module_error(bridge.failure(&ctx, e)))
                     })
                     .transpose()
             })
@@ -104,7 +120,7 @@ async fn wait_for_evaluation(
         for _ in 0..options.job_batch {
             let work_deadline = continuous_start + options.continuous_work_timeout;
             if Instant::now() >= work_deadline {
-                return Err(ScriptError::ExecutionBudget);
+                return Err(ScriptError::new(ScriptErrorKind::ExecutionBudget));
             }
             budget.arm(
                 deadline
@@ -117,15 +133,14 @@ async fn wait_for_evaluation(
                 Err(error) => {
                     let failure = error
                         .0
-                        .with(|ctx| bridge.failure(&ctx, &rquickjs::Error::Exception))
+                        .with(|ctx| bridge.failure(&ctx, rquickjs::Error::Exception))
                         .await;
-                    budget.check()?;
-                    return Err(module_error(failure));
+                    return budget.check_result(Err(module_error(failure)));
                 },
             }
             budget.check()?;
             if Instant::now() >= deadline {
-                return Err(ScriptError::Deadline);
+                return Err(ScriptError::new(ScriptErrorKind::Deadline));
             }
         }
         if worked {
@@ -157,36 +172,36 @@ async fn extract(
                 .clone()
                 .restore(&ctx)
                 .and_then(|m| m.get::<_, Value>("default"))
-                .map_err(|e| module_error(bridge.failure(&ctx, &e)))?;
+                .map_err(|e| module_error(bridge.failure(&ctx, e)))?;
             let convert = bridge
                 .convert
                 .clone()
                 .restore(&ctx)
-                .map_err(|e| bridge.failure(&ctx, &e))?;
+                .map_err(|e| bridge.failure(&ctx, e))?;
             let converted: Object = convert
                 .call((default, true))
-                .map_err(|e| conversion_error(bridge.failure(&ctx, &e)))?;
-            let text: String = converted
-                .get("json")
-                .map_err(|e| bridge.failure(&ctx, &e))?;
+                .map_err(|e| conversion_error(bridge.failure(&ctx, e)))?;
+            let text: String = converted.get("json").map_err(|e| bridge.failure(&ctx, e))?;
             if text.len() > options.json_limits.max_bytes {
-                return Err(ScriptError::Json);
+                return Err(ScriptError::new(ScriptErrorKind::Json));
             }
-            let config = serde_json::from_str(&text).map_err(|_error| ScriptError::Json)?;
+            let config = serde_json::from_str(&text)
+                .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
             let functions: Array = converted
                 .get("hooks")
-                .map_err(|e| bridge.failure(&ctx, &e))?;
+                .map_err(|e| bridge.failure(&ctx, e))?;
             let mut hooks = Hooks::new();
             for index in 0..functions.len() {
                 let function = functions
                     .get::<Function>(index)
-                    .map_err(|e| bridge.failure(&ctx, &e))?;
-                let id = u64::try_from(index).map_err(|_error| ScriptError::Contract)? + 1;
+                    .map_err(|e| bridge.failure(&ctx, e))?;
+                let id = u64::try_from(index)
+                    .map_err(|error| ScriptError::with_source(ScriptErrorKind::Contract, error))?
+                    + 1;
                 hooks.insert(id, Persistent::save(&ctx, function));
             }
             Ok((hooks, config))
         })
         .await;
-    budget.check()?;
-    result
+    budget.check_result(result)
 }

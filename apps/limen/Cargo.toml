@@ -10,6 +10,7 @@ publish.workspace = true
 limen-config.workspace = true
 limen-script.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

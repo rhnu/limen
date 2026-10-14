@@ -192,6 +192,8 @@ fn map_spanned<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Strict<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
+        // Generic Serde custom errors have no source field; the concrete YAML
+        // error produced by this fixed category is preserved by ServerConfig::parse.
         T::deserialize(value)
             .map(Self)
             .map_err(|_error| serde::de::Error::custom("invalid field type"))
@@ -252,7 +254,9 @@ impl ServerConfig {
                 &safe_path(&track.path()),
                 "invalid YAML syntax, field, duplicate key or type",
             );
-            diagnostic.at(error.location().unwrap_or(Location::UNKNOWN))
+            diagnostic
+                .at(error.location().unwrap_or(Location::UNKNOWN))
+                .with_source("deserialize server configuration", error)
         })?;
         let auth = match (raw.client_auth.value.none, raw.client_auth.value.bearer) {
             (Some(true), None) => ClientAuth::None,
@@ -292,7 +296,7 @@ pub(crate) fn valid_bearer(token: &str) -> bool {
     }
 }
 
-/// Read at most one MiB plus a sentinel byte, without retaining file contents in errors.
+/// Read at most one MiB plus a sentinel byte; keep raw parser text out of diagnostics.
 ///
 /// # Errors
 /// Returns a sanitized diagnostic for file, UTF-8 or configuration errors.
@@ -305,19 +309,24 @@ pub fn load_server(path: &Path) -> Result<ServerConfig, ConfigError> {
         )
     };
     if !std::fs::metadata(path)
-        .map_err(|_error| io_error())?
+        .map_err(|error| io_error().with_source("inspect configuration metadata", error))?
         .is_file()
     {
         return Err(io_error());
     }
-    let file = File::open(path).map_err(|_error| io_error())?;
-    if !file.metadata().map_err(|_error| io_error())?.is_file() {
+    let file = File::open(path)
+        .map_err(|error| io_error().with_source("open configuration file", error))?;
+    if !file
+        .metadata()
+        .map_err(|error| io_error().with_source("inspect open configuration file", error))?
+        .is_file()
+    {
         return Err(io_error());
     }
     let mut bytes = Vec::new();
     file.take((MAX_SERVER_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_error| io_error())?;
+        .map_err(|error| io_error().with_source("read configuration bytes", error))?;
     if bytes.len() > MAX_SERVER_BYTES {
         return Err(ConfigError::new(
             ConfigErrorKind::TooLarge,
@@ -325,12 +334,13 @@ pub fn load_server(path: &Path) -> Result<ServerConfig, ConfigError> {
             "configuration too large",
         ));
     }
-    let source = std::str::from_utf8(&bytes).map_err(|_error| {
+    let source = std::str::from_utf8(&bytes).map_err(|error| {
         ConfigError::new(
             ConfigErrorKind::Syntax,
             "server",
             "configuration must be UTF-8",
         )
+        .with_source("decode configuration as UTF-8", error)
     })?;
     ServerConfig::parse(source)
 }

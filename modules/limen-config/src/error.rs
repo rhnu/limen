@@ -1,8 +1,8 @@
-use std::fmt;
+use std::{error::Error, fmt};
 
 use serde::Deserialize;
 
-/// Stable configuration failure classes; parser text is deliberately discarded.
+/// Stable configuration failure classes, independent of dependency error wording.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigErrorKind {
     Io,
@@ -16,14 +16,20 @@ pub enum ConfigErrorKind {
     Json,
 }
 
-/// A diagnostic containing only schema-owned names and source coordinates.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Safe configuration context with the original error retained for typed inspection.
+///
+/// Raw sources may contain credentials or configuration text. Use `diagnostic()` for
+/// logs and reports rather than formatting or walking those sources directly.
+#[derive(thiserror::Error)]
 pub struct ConfigError {
     pub kind: ConfigErrorKind,
     pub field: String,
     pub line: Option<u64>,
     pub column: Option<u64>,
     pub message: &'static str,
+    operation: Option<&'static str>,
+    #[source]
+    source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl ConfigError {
@@ -34,6 +40,8 @@ impl ConfigError {
             line: None,
             column: None,
             message,
+            operation: None,
+            source: None,
         }
     }
 
@@ -44,6 +52,21 @@ impl ConfigError {
         }
         self
     }
+
+    pub(crate) fn with_source(
+        mut self,
+        operation: &'static str,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        self.operation = Some(operation);
+        self.source = Some(Box::new(source));
+        self
+    }
+
+    /// Render schema context and a bounded, redacted classification of the cause chain.
+    /// Dependency `Display` and `Debug` implementations are never invoked.
+    #[must_use]
+    pub fn diagnostic(&self) -> impl fmt::Display + '_ { Diagnostic(self) }
 }
 
 impl fmt::Display for ConfigError {
@@ -56,7 +79,91 @@ impl fmt::Display for ConfigError {
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl fmt::Debug for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConfigError")
+            .field("kind", &self.kind)
+            .field("diagnostic", &format_args!("{}", self.diagnostic()))
+            .finish_non_exhaustive()
+    }
+}
+
+struct Diagnostic<'a>(&'a ConfigError);
+
+impl fmt::Display for Diagnostic<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        if let Some(operation) = self.0.operation {
+            write!(f, "; operation: {operation}")?;
+        }
+        let mut source = self.0.source();
+        // An opaque custom I/O source can have an arbitrary or cyclic chain.
+        for _ in 0..8 {
+            let Some(error) = source else {
+                return Ok(());
+            };
+            f.write_str("; cause: ")?;
+            safe_cause(error, f)?;
+            source = error.source();
+        }
+        if source.is_some() {
+            f.write_str("; further causes omitted")?;
+        }
+        Ok(())
+    }
+}
+
+fn safe_cause(error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        write!(f, "I/O ({:?})", error.kind())
+    } else if let Some(error) = error.downcast_ref::<serde_saphyr::Error>() {
+        write!(f, "YAML ({})", yaml_class(error))
+    } else if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+        write!(
+            f,
+            "JSON ({:?}, line {}, column {})",
+            error.classify(),
+            error.line(),
+            error.column()
+        )
+    } else if error.is::<url::ParseError>() {
+        f.write_str("invalid URL")
+    } else if error.is::<http::header::InvalidHeaderName>() {
+        f.write_str("invalid header name")
+    } else if error.is::<http::header::InvalidHeaderValue>() {
+        f.write_str("invalid header value")
+    } else if let Some(error) = error.downcast_ref::<std::str::Utf8Error>() {
+        write!(f, "invalid UTF-8 at byte {}", error.valid_up_to())
+    } else {
+        f.write_str("opaque dependency error")
+    }
+}
+
+fn yaml_class(error: &serde_saphyr::Error) -> &'static str {
+    use serde_saphyr::Error;
+    match error {
+        Error::DuplicateMappingKey { .. } => "duplicate key",
+        Error::SerdeUnknownField { .. } => "unknown field",
+        Error::SerdeMissingField { .. } => "missing field",
+        Error::SerdeUnknownVariant { .. } => "unknown variant",
+        Error::SerdeInvalidType { .. }
+        | Error::SerdeInvalidValue { .. }
+        | Error::SerdeInvalidLength { .. }
+        | Error::InvalidScalar { .. }
+        | Error::InvalidBooleanStrict { .. }
+        | Error::NullIntoString { .. } => "invalid type or value",
+        Error::Eof { .. } => "unexpected end",
+        Error::MultipleDocuments { .. } => "multiple documents",
+        Error::MergeKeyNotAllowed { .. } => "merge key rejected",
+        Error::Budget { .. } => "resource limit",
+        Error::UnsupportedTag { .. } => "unsupported tag",
+        Error::IOError { .. } => "input I/O",
+        Error::AliasError { .. } => "alias",
+        Error::WithSnippet { .. } => "parser context",
+        Error::Message { .. } => "schema or parser error",
+        _ => "invalid input",
+    }
+}
 
 pub(crate) fn present_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
@@ -64,10 +171,15 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
+    // Serde's generic custom-error API cannot carry a source. Keep a fixed class;
+    // the enclosing concrete deserializer error is retained at its caller boundary.
     T::deserialize(value)
         .map(Some)
         .map_err(|_error| serde::de::Error::custom("invalid field type"))
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Never echo arbitrary keys (including provider names and headers) from an error path.
 pub(crate) fn safe_path(path: &serde_path_to_error::Path) -> String {

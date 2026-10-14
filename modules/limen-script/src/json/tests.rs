@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::validate_owned;
-use crate::{JsonLimits, ScriptError};
+use crate::{JsonLimits, ScriptErrorKind};
 
 #[test]
 fn accepts_safe_json_and_rejects_integer_precision_loss() {
@@ -13,8 +13,10 @@ fn accepts_safe_json_and_rejects_integer_precision_loss() {
         .is_ok()
     );
     assert_eq!(
-        validate_owned(&json!(9_007_199_254_740_992_u64), JsonLimits::default()),
-        Err(ScriptError::Json)
+        validate_owned(&json!(9_007_199_254_740_992_u64), JsonLimits::default())
+            .unwrap_err()
+            .kind(),
+        ScriptErrorKind::Json
     );
 }
 
@@ -35,7 +37,10 @@ fn bounds_depth_nodes_and_encoded_size() {
             ..JsonLimits::default()
         },
     ] {
-        assert_eq!(validate_owned(&value, limits), Err(ScriptError::Json));
+        assert_eq!(
+            validate_owned(&value, limits).unwrap_err().kind(),
+            ScriptErrorKind::Json
+        );
     }
 }
 
@@ -46,11 +51,15 @@ fn rejects_oversized_strings_without_buffering_serialized_output() {
         ..JsonLimits::default()
     };
     assert_eq!(
-        validate_owned(&json!("x".repeat(1024)), limits),
-        Err(ScriptError::Json)
+        validate_owned(&json!("x".repeat(1024)), limits)
+            .unwrap_err()
+            .kind(),
+        ScriptErrorKind::Json
     );
     assert_eq!(
-        validate_owned(&json!("\u{0000}".repeat(3)), limits),
-        Err(ScriptError::Json)
+        validate_owned(&json!("\u{0000}".repeat(3)), limits)
+            .unwrap_err()
+            .kind(),
+        ScriptErrorKind::Json
     );
 }

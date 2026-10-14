@@ -11,7 +11,7 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
-use crate::{Command, RuntimeOptions, ScriptError, json::Bridge};
+use crate::{Command, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge};
 
 struct Pending {
     command: Command,
@@ -28,9 +28,13 @@ pub(super) async fn serve(
 ) -> Result<(), ScriptError> {
     let mut pending = Vec::new();
     let outcome = run_loop(vm, hooks, commands, &stop, &wake, &mut pending).await;
-    let failure = outcome.err().unwrap_or(ScriptError::Stopped);
+    let failure = outcome
+        .as_ref()
+        .err()
+        .cloned()
+        .unwrap_or_else(|| ScriptError::new(ScriptErrorKind::Stopped));
     for waiting in pending {
-        let _sent = waiting.command.response.send(Err(failure));
+        let _sent = waiting.command.response.send(Err(failure.clone()));
     }
     outcome
 }
@@ -86,7 +90,9 @@ async fn admit(
     pending: &mut Vec<Pending>,
 ) -> Result<(), ScriptError> {
     if pending.len() >= vm.options.pending_capacity {
-        let _sent = command.response.send(Err(ScriptError::Busy));
+        let _sent = command
+            .response
+            .send(Err(ScriptError::new(ScriptErrorKind::Busy)));
         return Ok(());
     }
     vm.budget.arm(Instant::now() + vm.options.execution_timeout);
@@ -122,11 +128,10 @@ async fn pump(vm: &Vm<'_>, continuous_start: &mut Option<Instant>) -> Result<boo
             Err(error) => {
                 let failure = error
                     .0
-                    .with(|ctx| bridge.failure(&ctx, &rquickjs::Error::Exception))
+                    .with(|ctx| bridge.failure(&ctx, rquickjs::Error::Exception))
                     .await;
-                budget.check()?;
                 // A detached-job exception cannot be assigned to one request.
-                return Err(failure);
+                return budget.check_result(Err(failure));
             },
         }
         budget.check()?;
@@ -135,7 +140,7 @@ async fn pump(vm: &Vm<'_>, continuous_start: &mut Option<Instant>) -> Result<boo
     if pending
         && continuous_start.is_some_and(|start| start.elapsed() >= options.continuous_work_timeout)
     {
-        return Err(ScriptError::ExecutionBudget);
+        return Err(ScriptError::new(ScriptErrorKind::ExecutionBudget));
     }
     Ok(pending)
 }
@@ -164,9 +169,9 @@ async fn wait(
 
 fn invalid(command: &Command) -> Option<ScriptError> {
     if command.call.cancellation.is_cancelled() || command.response.is_closed() {
-        Some(ScriptError::Cancelled)
+        Some(ScriptError::new(ScriptErrorKind::Cancelled))
     } else if Instant::now() >= command.call.deadline {
-        Some(ScriptError::Deadline)
+        Some(ScriptError::new(ScriptErrorKind::Deadline))
     } else {
         None
     }
@@ -185,7 +190,9 @@ async fn begin(
         return Ok(None);
     }
     let Some(hook) = hooks.get(&command.call.hook_id) else {
-        let _sent = command.response.send(Err(ScriptError::UnknownHook));
+        let _sent = command
+            .response
+            .send(Err(ScriptError::new(ScriptErrorKind::UnknownHook)));
         return Ok(None);
     };
     let result = context
@@ -193,15 +200,13 @@ async fn begin(
             let hook = hook
                 .clone()
                 .restore(&ctx)
-                .map_err(|e| bridge.failure(&ctx, &e))?;
-            let bytes =
-                serde_json::to_vec(&command.call.context).map_err(|_error| ScriptError::Json)?;
-            let draft = ctx
-                .json_parse(bytes)
-                .map_err(|e| bridge.failure(&ctx, &e))?;
+                .map_err(|e| bridge.failure(&ctx, e))?;
+            let bytes = serde_json::to_vec(&command.call.context)
+                .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
+            let draft = ctx.json_parse(bytes).map_err(|e| bridge.failure(&ctx, e))?;
             let result: Value = hook
                 .call((draft.clone(),))
-                .map_err(|e| bridge.failure(&ctx, &e))?;
+                .map_err(|e| bridge.failure(&ctx, e))?;
             if result.is_undefined() {
                 let json = output(&ctx, bridge, draft, options)?;
                 Ok(Ok(json))
@@ -211,11 +216,11 @@ async fn begin(
                     Persistent::save(&ctx, promise),
                 )))
             } else {
-                Err(ScriptError::Contract)
+                Err(ScriptError::new(ScriptErrorKind::Contract))
             }
         })
         .await;
-    let result = budget.check().and(result);
+    let result = budget.check_result(result);
     match result {
         Ok(Ok(value)) => {
             send(command, Ok(value));
@@ -227,8 +232,8 @@ async fn begin(
             promise,
         })),
         Err(error) => {
-            let _sent = command.response.send(Err(error));
-            if fatal(error) { Err(error) } else { Ok(None) }
+            let _sent = command.response.send(Err(error.clone()));
+            if fatal(&error) { Err(error) } else { Ok(None) }
         },
     }
 }
@@ -248,15 +253,16 @@ fn output<'js>(
         .convert
         .clone()
         .restore(ctx)
-        .map_err(|e| bridge.failure(ctx, &e))?;
+        .map_err(|e| bridge.failure(ctx, e))?;
     let converted: Object = function
         .call((draft, false))
-        .map_err(|e| conversion_error(bridge.failure(ctx, &e)))?;
-    let text: String = converted.get("json").map_err(|e| bridge.failure(ctx, &e))?;
+        .map_err(|e| conversion_error(bridge.failure(ctx, e)))?;
+    let text: String = converted.get("json").map_err(|e| bridge.failure(ctx, e))?;
     if text.len() > options.json_limits.max_bytes {
-        return Err(ScriptError::Json);
+        return Err(ScriptError::new(ScriptErrorKind::Json));
     }
-    serde_json::from_str(&text).map_err(|_error| ScriptError::Json)
+    serde_json::from_str(&text)
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))
 }
 
 async fn poll_pending(
@@ -281,29 +287,28 @@ async fn poll_pending(
                     .promise
                     .clone()
                     .restore(&ctx)
-                    .map_err(|e| bridge.failure(&ctx, &e))?;
+                    .map_err(|e| bridge.failure(&ctx, e))?;
                 let Some(result) = promise.result::<Value>() else {
                     return Ok(None);
                 };
-                let value = result.map_err(|e| bridge.failure(&ctx, &e))?;
+                let value = result.map_err(|e| bridge.failure(&ctx, e))?;
                 if !value.is_undefined() {
-                    return Err(ScriptError::Contract);
+                    return Err(ScriptError::new(ScriptErrorKind::Contract));
                 }
                 let draft = waiting
                     .draft
                     .clone()
                     .restore(&ctx)
-                    .map_err(|e| bridge.failure(&ctx, &e))?;
+                    .map_err(|e| bridge.failure(&ctx, e))?;
                 output(&ctx, bridge, draft, options).map(Some)
             })
             .await;
-        budget.check()?;
-        match result {
+        match budget.check_result(result) {
             Ok(None) => index += 1,
             Ok(Some(value)) => send(pending.swap_remove(index).command, Ok(value)),
             Err(error) => {
-                send(pending.swap_remove(index).command, Err(error));
-                if fatal(error) {
+                send(pending.swap_remove(index).command, Err(error.clone()));
+                if fatal(&error) {
                     return Err(error);
                 }
             },

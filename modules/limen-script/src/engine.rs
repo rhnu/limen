@@ -15,7 +15,7 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::{
-    Command, HookId, RuntimeOptions, RuntimeStatus, ScriptError,
+    Command, HookId, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind,
     json::{self, Bridge},
 };
 
@@ -46,9 +46,18 @@ impl Budget {
                 .is_some_and(|deadline| Instant::now() >= deadline)
         {
             self.interrupted.set(true);
-            Err(ScriptError::ExecutionBudget)
+            Err(ScriptError::new(ScriptErrorKind::ExecutionBudget))
         } else {
             Ok(())
+        }
+    }
+
+    /// Resource policy wins, while the failed VM operation keeps its owned cause.
+    fn check_result<T>(&self, result: Result<T, ScriptError>) -> Result<T, ScriptError> {
+        match (self.check(), result) {
+            (Err(budget), Err(error)) => Err(error.reclassify(budget.kind())),
+            (Err(budget), Ok(_)) => Err(budget),
+            (Ok(()), result) => result,
         }
     }
 }
@@ -64,9 +73,13 @@ pub(crate) async fn run(
     wake: Arc<Notify>,
 ) -> Result<(), ScriptError> {
     let startup_deadline = Instant::now() + options.startup_timeout;
-    let Ok(runtime) = AsyncRuntime::new() else {
-        let _sent = ready.send(Err(ScriptError::MemoryLimit));
-        return Err(ScriptError::MemoryLimit);
+    let runtime = match AsyncRuntime::new() {
+        Ok(runtime) => runtime,
+        Err(source) => {
+            let error = ScriptError::with_source(ScriptErrorKind::MemoryLimit, source);
+            let _sent = ready.send(Err(error.clone()));
+            return Err(error);
+        },
     };
     runtime.set_memory_limit(options.memory_limit).await;
     runtime.set_max_stack_size(options.stack_limit).await;
@@ -87,9 +100,13 @@ pub(crate) async fn run(
             interrupt
         })))
         .await;
-    let Ok(context) = AsyncContext::full(&runtime).await else {
-        let _sent = ready.send(Err(ScriptError::MemoryLimit));
-        return Err(ScriptError::MemoryLimit);
+    let context = match AsyncContext::full(&runtime).await {
+        Ok(context) => context,
+        Err(source) => {
+            let error = ScriptError::with_source(ScriptErrorKind::MemoryLimit, source);
+            let _sent = ready.send(Err(error.clone()));
+            return Err(error);
+        },
     };
     budget.arm(startup_deadline.min(Instant::now() + options.execution_timeout));
     let bridge = match context
@@ -98,7 +115,7 @@ pub(crate) async fn run(
     {
         Ok(value) => value,
         Err(error) => {
-            let _sent = ready.send(Err(error));
+            let _sent = ready.send(Err(error.clone()));
             return Err(error);
         },
     };
@@ -113,14 +130,14 @@ pub(crate) async fn run(
     let (hooks, config) = match loaded {
         Ok(value) => value,
         Err(error) => {
-            let _sent = ready.send(Err(error));
+            let _sent = ready.send(Err(error.clone()));
             return Err(error);
         },
     };
     budget.check()?;
     if Instant::now() >= startup_deadline {
-        let _sent = ready.send(Err(ScriptError::Deadline));
-        return Err(ScriptError::Deadline);
+        let _sent = ready.send(Err(ScriptError::new(ScriptErrorKind::Deadline)));
+        return Err(ScriptError::new(ScriptErrorKind::Deadline));
     }
     let outcome = if ready.send(Ok(config)).is_err() {
         Ok(())
@@ -130,7 +147,12 @@ pub(crate) async fn run(
     };
     commands.close();
     while let Some(command) = commands.recv().await {
-        let _sent = command.response.send(Err(ScriptError::Retired));
+        let error = outcome
+            .as_ref()
+            .err()
+            .cloned()
+            .unwrap_or_else(|| ScriptError::new(ScriptErrorKind::Stopped));
+        let _sent = command.response.send(Err(error));
     }
     // Pending refs drop in serve, then hook/bridge refs, then context, then VM.
     drop(hooks);
@@ -141,24 +163,27 @@ pub(crate) async fn run(
 }
 
 fn module_error(error: ScriptError) -> ScriptError {
-    if error == ScriptError::JavaScript {
-        ScriptError::Module
+    if error.kind() == ScriptErrorKind::JavaScript {
+        error.reclassify(ScriptErrorKind::Module)
     } else {
         error
     }
 }
 
 fn conversion_error(error: ScriptError) -> ScriptError {
-    if error == ScriptError::JavaScript {
-        ScriptError::Json
+    if error.kind() == ScriptErrorKind::JavaScript {
+        error.reclassify(ScriptErrorKind::Json)
     } else {
         error
     }
 }
 
-fn fatal(error: ScriptError) -> bool {
+fn fatal(error: &ScriptError) -> bool {
     matches!(
-        error,
-        ScriptError::MemoryLimit | ScriptError::ExecutionBudget
+        error.kind(),
+        ScriptErrorKind::MemoryLimit | ScriptErrorKind::ExecutionBudget
     )
 }
+
+#[cfg(test)]
+mod tests;

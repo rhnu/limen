@@ -45,7 +45,7 @@ fn rejects_unknown_duplicate_and_wrong_type_without_secrets() {
         let error = ServerConfig::parse(source).err().unwrap();
         assert!(error.line.is_some());
         assert!(error.column.is_some());
-        let rendered = format!("{error} {error:?}");
+        let rendered = format!("{error} {error:?} {}", error.diagnostic());
         assert!(!rendered.contains("token-value"));
         assert!(!rendered.contains("secret-value"));
     }
@@ -117,4 +117,47 @@ fn type_errors_identify_known_schema_fields() {
         .err()
         .unwrap();
     assert_eq!(error.field, "limits.hook_ms");
+}
+
+#[test]
+fn yaml_error_preserves_original_unknown_field_and_coordinates() {
+    use std::error::Error;
+
+    let error = ServerConfig::parse("client_auth: {none: true}\nsecret-key: secret-value")
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ConfigErrorKind::Schema);
+    let source = error
+        .source()
+        .unwrap()
+        .downcast_ref::<serde_saphyr::Error>()
+        .unwrap();
+    assert!(
+        matches!(source, serde_saphyr::Error::SerdeUnknownField { field, .. } if field == "secret-key")
+    );
+    let location = source.location().unwrap();
+    assert_eq!(error.line, Some(location.line()));
+    assert_eq!(error.column, Some(location.column()));
+    assert!(
+        error
+            .diagnostic()
+            .to_string()
+            .contains("YAML (unknown field)")
+    );
+    let rendered = format!("{error} {error:?} {}", error.diagnostic());
+    assert!(!rendered.contains("secret-key"));
+    assert!(!rendered.contains("secret-value"));
+}
+
+#[test]
+fn yaml_generic_type_failure_keeps_concrete_safe_source() {
+    use std::error::Error;
+
+    let error = ServerConfig::parse("client_auth: {bearer: [secret-token]}")
+        .err()
+        .unwrap();
+    assert!(error.source().unwrap().is::<serde_saphyr::Error>());
+    assert_eq!(error.field, "client_auth.bearer");
+    assert!(error.line.is_some());
+    assert!(!error.diagnostic().to_string().contains("secret-token"));
 }

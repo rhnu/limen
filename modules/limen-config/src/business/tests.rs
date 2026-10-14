@@ -143,3 +143,88 @@ fn records_must_be_objects_and_respect_supplied_limits() {
         ConfigErrorKind::Json
     );
 }
+
+#[test]
+fn business_schema_error_retains_json_source_with_redacted_path() {
+    use std::error::Error;
+
+    let mut value = basic();
+    value["providers"]["primary"]["secret-key"] = json!("secret-value");
+    let error = parse(value).err().unwrap();
+    assert_eq!(error.kind, ConfigErrorKind::Schema);
+    let source = error
+        .source()
+        .unwrap()
+        .downcast_ref::<serde_json::Error>()
+        .unwrap();
+    assert!(source.is_data());
+    assert!(source.to_string().contains("secret-key"));
+    let diagnostic = error.diagnostic().to_string();
+    assert!(diagnostic.contains("deserialize business configuration"));
+    assert!(diagnostic.contains("JSON (Data"));
+    let rendered = format!("{error} {error:?} {diagnostic}");
+    assert!(!rendered.contains("secret-key"));
+    assert!(!rendered.contains("secret-value"));
+    assert!(!rendered.contains("primary"));
+}
+
+#[test]
+fn endpoint_parser_error_retains_source_without_query() {
+    use std::error::Error;
+
+    let mut value = basic();
+    value["providers"]["primary"]["endpoint"] = json!("https://[invalid]/?token=secret-query");
+    let error = parse(value).err().unwrap();
+    assert_eq!(error.kind, ConfigErrorKind::Endpoint);
+    assert_eq!(error.field, "providers.*.endpoint");
+    assert_eq!(
+        error.source().unwrap().downcast_ref::<url::ParseError>(),
+        Some(&url::ParseError::InvalidIpv6Address)
+    );
+    assert!(error.diagnostic().to_string().contains("invalid URL"));
+    assert!(!format!("{error} {error:?} {}", error.diagnostic()).contains("secret-query"));
+}
+
+#[test]
+fn header_parser_errors_keep_name_and_value_sources_separate() {
+    use std::error::Error;
+
+    let mut value = basic();
+    value["providers"]["primary"]["headers"] = json!({"secret header": "secret-token"});
+    let error = parse(value).err().unwrap();
+    assert_eq!(error.kind, ConfigErrorKind::Header);
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .is::<http::header::InvalidHeaderName>()
+    );
+    assert!(
+        error
+            .diagnostic()
+            .to_string()
+            .contains("invalid header name")
+    );
+    assert!(!format!("{error:?}").contains("secret"));
+
+    let mut value = basic();
+    value["providers"]["primary"]["headers"] =
+        json!({"x-secret": "secret-token\r\nCookie: private-cookie"});
+    let error = parse(value).err().unwrap();
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .is::<http::header::InvalidHeaderValue>()
+    );
+    assert!(
+        error
+            .diagnostic()
+            .to_string()
+            .contains("invalid header value")
+    );
+    let rendered = format!("{error} {error:?} {}", error.diagnostic());
+    assert!(!rendered.contains("x-secret"));
+    assert!(!rendered.contains("secret-token"));
+    assert!(!rendered.contains("private-cookie"));
+}

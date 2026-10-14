@@ -1,8 +1,10 @@
 use std::{
+    cell::RefCell,
     collections::HashSet,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use rquickjs::{
@@ -11,31 +13,35 @@ use rquickjs::{
     module::Declared,
 };
 
-use crate::ScriptError;
+use crate::{ScriptError, ScriptErrorKind};
 
 pub(crate) fn module_path(path: &Path) -> Result<PathBuf, ScriptError> {
     if !matches!(
         path.extension().and_then(|v| v.to_str()),
         Some("js" | "mjs")
     ) {
-        return Err(ScriptError::Module);
+        return Err(ScriptError::new(ScriptErrorKind::Module));
     }
-    path.canonicalize().map_err(|_error| ScriptError::Module)
+    path.canonicalize()
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Module, error))
 }
 
 /// Check metadata before opening so a named pipe cannot block the owning thread.
 pub(crate) fn source(path: &Path, remaining: usize) -> Result<Vec<u8>, ScriptError> {
-    let metadata = path.metadata().map_err(|_error| ScriptError::Module)?;
+    let metadata = path
+        .metadata()
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Module, error))?;
     if !metadata.is_file() || metadata.len() > u64::try_from(remaining).unwrap_or(u64::MAX) {
-        return Err(ScriptError::Module);
+        return Err(ScriptError::new(ScriptErrorKind::Module));
     }
-    let file = File::open(path).map_err(|_error| ScriptError::Module)?;
+    let file = File::open(path)
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Module, error))?;
     if !file
         .metadata()
-        .map_err(|_error| ScriptError::Module)?
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Module, error))?
         .is_file()
     {
-        return Err(ScriptError::Module);
+        return Err(ScriptError::new(ScriptErrorKind::Module));
     }
     let mut bytes = Vec::new();
     file.take(
@@ -44,14 +50,24 @@ pub(crate) fn source(path: &Path, remaining: usize) -> Result<Vec<u8>, ScriptErr
             .saturating_add(1),
     )
     .read_to_end(&mut bytes)
-    .map_err(|_error| ScriptError::Module)?;
+    .map_err(|error| ScriptError::with_source(ScriptErrorKind::Module, error))?;
     if bytes.len() > remaining {
-        return Err(ScriptError::Module);
+        return Err(ScriptError::new(ScriptErrorKind::Module));
     }
     Ok(bytes)
 }
 
-pub(crate) struct LocalResolver;
+/// Loader callbacks must return `QuickJS` errors; retain their owned I/O causes separately.
+#[derive(Clone, Default)]
+pub(crate) struct ModuleDiagnostics(Rc<RefCell<Option<ScriptError>>>);
+
+impl ModuleDiagnostics {
+    pub fn take(&self) -> Option<ScriptError> { self.0.borrow_mut().take() }
+
+    fn retain(&self, error: ScriptError) { *self.0.borrow_mut() = Some(error); }
+}
+
+pub(crate) struct LocalResolver(pub ModuleDiagnostics);
 
 impl Resolver for LocalResolver {
     fn resolve<'js>(
@@ -71,12 +87,16 @@ impl Resolver for LocalResolver {
             return Err(reject());
         }
         let parent = Path::new(base).parent().ok_or_else(reject)?;
-        let path = module_path(&parent.join(name)).map_err(|_error| reject())?;
+        let path = module_path(&parent.join(name)).map_err(|error| {
+            self.0.retain(error);
+            reject()
+        })?;
         path.to_str().map(str::to_owned).ok_or_else(reject)
     }
 }
 
 pub(crate) struct LocalLoader {
+    pub diagnostics: ModuleDiagnostics,
     pub remaining: usize,
     pub max_modules: usize,
     pub loaded: HashSet<PathBuf>,
@@ -93,11 +113,17 @@ impl Loader for LocalLoader {
         if attributes.is_some() || self.loaded.len() >= self.max_modules {
             return Err(reject());
         }
-        let path = module_path(Path::new(name)).map_err(|_error| reject())?;
+        let path = module_path(Path::new(name)).map_err(|error| {
+            self.diagnostics.retain(error);
+            reject()
+        })?;
         if path != Path::new(name) {
             return Err(reject());
         }
-        let bytes = source(&path, self.remaining).map_err(|_error| reject())?;
+        let bytes = source(&path, self.remaining).map_err(|error| {
+            self.diagnostics.retain(error);
+            reject()
+        })?;
         self.remaining -= bytes.len();
         self.loaded.insert(path);
         Module::declare(ctx.clone(), name, bytes)

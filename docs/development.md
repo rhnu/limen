@@ -94,12 +94,28 @@ cargo run -p limen --locked -- check --config examples/basic/server.yaml
 | http                | 1.5.0    | 1.57 | 成熟的 header 名称和值解析                                                   |
 | tracing             | 0.1.44   | 1.65 | std，无属性宏；应用元数据日志                                                |
 | tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                         |
+| thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                |
 
 上游依据：[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、
 [Tokio 发布](https://github.com/tokio-rs/tokio/releases)、[Serde 发布](https://github.com/serde-rs/serde/releases)、
 [serde_json 发布](https://github.com/serde-rs/json/releases)、[serde-saphyr 发布](https://github.com/bourumir-wyngs/serde-saphyr/releases)、
 [字段路径发布](https://github.com/dtolnay/path-to-error/releases)、[url 发布](https://github.com/servo/rust-url/releases)、
-[http 发布](https://github.com/hyperium/http/releases)、[tracing 发布](https://github.com/tokio-rs/tracing/releases)。
+[http 发布](https://github.com/hyperium/http/releases)、[tracing 发布](https://github.com/tokio-rs/tracing/releases)、
+[thiserror 注册表](https://crates.io/crates/thiserror/2.0.21)与[上游清单](https://github.com/dtolnay/thiserror/blob/2.0.21/Cargo.toml)。
+
+## 错误与日志
+
+配置错误保留 `ConfigErrorKind`、schema 字段及可用位置；脚本错误通过 `ScriptErrorKind` 分类，
+`ScriptError::kind()` 用于处理决策。`RuntimeStatus` 包含完整退役错误，使用模式匹配检查状态。
+错误通过 `thiserror` 的 `source`/`from` 或保留来源的转换传播；脚本错误手动实现 `source()`，
+直接返回共享原因的原始类型，避免 `Arc` 包装妨碍 downcast。主错误与清理失败分别保存。
+纯逻辑单元测试检查分类、来源类型、上下文及安全诊断，不执行 VM。
+
+原始 `source()` 可能含配置、键名或源码，仅用于内部类型检查；CLI、日志与 Debug 使用安全诊断。
+库的 `diagnostic()` 输出有界原因分类，应用补充失败阶段和逻辑配置文件类别，避免直接格式化任意来源。
+应用负责 subscriber 与最终失败报告；库仅建立操作 span，异步和线程入口显式传播上下文。
+默认等级为 info，格式为 text，输出为 stderr；日志配置被拒绝时不静默回退。
+预期配置拒绝为 warn，操作失败为 error；过滤不能让 CLI 失去失败原因。panic payload 不进入输出。
 
 ## Git 与配置文件
 

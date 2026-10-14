@@ -1,6 +1,6 @@
 use rquickjs::{Ctx, Error, Function, Object, Persistent, Value};
 
-use crate::{JsonLimits, ScriptError};
+use crate::{JsonLimits, ScriptError, ScriptErrorKind};
 
 struct Bounded {
     remaining: usize,
@@ -30,13 +30,13 @@ pub(crate) fn validate_owned(
     ) -> Result<(), ScriptError> {
         *nodes += 1;
         if depth > limits.max_depth || *nodes > limits.max_nodes {
-            return Err(ScriptError::Json);
+            return Err(ScriptError::new(ScriptErrorKind::Json));
         }
         match v {
             serde_json::Value::Number(n) => {
-                let f = n.as_f64().ok_or(ScriptError::Json)?;
+                let f = n.as_f64().ok_or(ScriptError::new(ScriptErrorKind::Json))?;
                 if !f.is_finite() || (f.fract() == 0.0 && f.abs() > 9_007_199_254_740_991.0) {
-                    return Err(ScriptError::Json);
+                    return Err(ScriptError::new(ScriptErrorKind::Json));
                 }
             },
             serde_json::Value::Array(a) => {
@@ -61,7 +61,7 @@ pub(crate) fn validate_owned(
         },
         value,
     )
-    .map_err(|_error| ScriptError::Json)?;
+    .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
     Ok(())
 }
 
@@ -73,62 +73,68 @@ pub(crate) struct Bridge {
 pub(crate) fn bridge(ctx: &Ctx<'_>, limits: JsonLimits) -> Result<Bridge, ScriptError> {
     let factory: Function = ctx
         .eval(include_str!("json/bridge.js"))
-        .map_err(|e| failure(ctx, &e))?;
+        .map_err(|e| failure(ctx, e))?;
     let proxy = Function::new(ctx.clone(), |value: Value<'_>| value.is_proxy())
-        .map_err(|e| failure(ctx, &e))?;
+        .map_err(|e| failure(ctx, e))?;
     let result: Object = factory
         .call((proxy, limits.max_depth, limits.max_nodes, limits.max_bytes))
-        .map_err(|e| failure(ctx, &e))?;
+        .map_err(|e| failure(ctx, e))?;
     Ok(Bridge {
         convert: Persistent::save(
             ctx,
             result
                 .get::<_, Function>("convert")
-                .map_err(|e| failure(ctx, &e))?,
+                .map_err(|e| failure(ctx, e))?,
         ),
         oom: Persistent::save(
             ctx,
             result
                 .get::<_, Function>("oom")
-                .map_err(|e| failure(ctx, &e))?,
+                .map_err(|e| failure(ctx, e))?,
         ),
     })
 }
 
 impl Bridge {
     /// Inspect only an own data descriptor; exception getters must never execute.
-    pub fn failure(&self, ctx: &Ctx<'_>, error: &Error) -> ScriptError {
+    pub fn failure(&self, ctx: &Ctx<'_>, error: Error) -> ScriptError {
         if matches!(error, Error::Allocation) {
-            return ScriptError::MemoryLimit;
+            return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
         }
         if error.is_exception() {
             let value = ctx.catch();
-            let oom = self
+            let oom = match self
                 .oom
                 .clone()
                 .restore(ctx)
                 .and_then(|f| f.call::<_, bool>((value,)))
-                .unwrap_or(true);
+            {
+                Ok(oom) => oom,
+                // An unusable classifier cannot establish VM safety; retain its failure.
+                Err(inspection) => {
+                    return ScriptError::with_source(ScriptErrorKind::MemoryLimit, inspection);
+                },
+            };
             if oom {
-                return ScriptError::MemoryLimit;
+                return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
             }
         }
-        ScriptError::JavaScript
+        ScriptError::with_source(ScriptErrorKind::JavaScript, error)
     }
 }
 
 /// Used only during pristine intrinsic bootstrap, before any user module runs.
-pub(crate) fn failure(ctx: &Ctx<'_>, error: &Error) -> ScriptError {
+pub(crate) fn failure(ctx: &Ctx<'_>, error: Error) -> ScriptError {
     if matches!(error, Error::Allocation) {
-        return ScriptError::MemoryLimit;
+        return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
     }
     if error.is_exception() {
         let value = ctx.catch();
         if value.is_null() {
-            return ScriptError::MemoryLimit;
+            return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
         }
     }
-    ScriptError::JavaScript
+    ScriptError::with_source(ScriptErrorKind::JavaScript, error)
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ use cli::Command;
 
 /// The application owns process exit; the VM library only reports retirement.
 fn main() -> ExitCode {
+    telemetry::install_panic_hook();
     let command = match cli::parse(std::env::args_os().skip(1)) {
         Ok(command) => command,
         Err(error) => {
@@ -27,12 +28,19 @@ fn main() -> ExitCode {
         },
         Command::Check(ref path) | Command::Serve(ref path) => {
             let serve = matches!(&command, Command::Serve(_));
-            let Ok(executor) = tokio::runtime::Builder::new_current_thread()
+            let executor = match tokio::runtime::Builder::new_current_thread()
                 .enable_time()
                 .build()
-            else {
-                eprintln!("limen: cannot initialize async executor");
-                return ExitCode::FAILURE;
+            {
+                Ok(executor) => executor,
+                Err(source) => {
+                    telemetry::report_failure(
+                        &bootstrap::Error::Executor(source),
+                        "startup",
+                        "executor",
+                    );
+                    return ExitCode::FAILURE;
+                },
             };
             executor.block_on(run(path, serve))
         },
@@ -40,24 +48,23 @@ fn main() -> ExitCode {
 }
 
 async fn run(path: &std::path::Path, serve: bool) -> ExitCode {
-    let loaded = match Bootstrap::load(path).await {
+    let command = if serve { "serve" } else { "check" };
+    let loaded = match Bootstrap::load(path, command).await {
         Ok(loaded) => loaded,
         Err(error) => {
-            eprintln!("limen: {error}");
+            telemetry::report_failure(&error, command, error.phase());
             return ExitCode::FAILURE;
         },
     };
-    tracing::info!(
-        providers = loaded.business.providers.len(),
-        models = loaded.business.models.len(),
-        "configuration loaded"
-    );
     if let Err(error) = loaded.shutdown().await {
-        tracing::error!(error = %error, "configuration runtime shutdown failed");
+        telemetry::report_failure(&error, command, "shutdown");
         return ExitCode::FAILURE;
     }
     if serve {
-        tracing::error!("HTTP serving is not implemented; configuration validation succeeded");
+        tracing::warn!(
+            command,
+            "HTTP serving is not implemented; configuration validation succeeded"
+        );
         ExitCode::from(3)
     } else {
         println!(

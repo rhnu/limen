@@ -84,12 +84,13 @@ impl BusinessConfig {
         validate_shapes(&value)?;
         let mut track = serde_path_to_error::Track::new();
         let config = Self::deserialize(serde_path_to_error::Deserializer::new(value, &mut track))
-            .map_err(|_error| {
+            .map_err(|error| {
             ConfigError::new(
                 ConfigErrorKind::Schema,
                 &safe_path(&track.path()),
                 "unknown field, missing field or invalid type",
             )
+            .with_source("deserialize business configuration", error)
         })?;
         if config.providers.is_empty() || config.providers.len() > 1024 {
             return Err(ConfigError::new(
@@ -174,7 +175,8 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ConfigError> {
     {
         return Err(invalid());
     }
-    let url = Url::parse(endpoint).map_err(|_error| invalid())?;
+    let url = Url::parse(endpoint)
+        .map_err(|error| invalid().with_source("parse provider endpoint", error))?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -206,8 +208,10 @@ fn validate_headers(provider: &Provider) -> Result<(), ConfigError> {
     };
     let mut names = BTreeSet::new();
     for (name, value) in &provider.headers {
-        let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_error| invalid())?;
-        HeaderValue::from_str(value).map_err(|_error| invalid())?;
+        let header = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|error| invalid().with_source("parse static header name", error))?;
+        HeaderValue::from_str(value)
+            .map_err(|error| invalid().with_source("parse static header value", error))?;
         let name = header.as_str();
         if !names.insert(name.to_owned())
             || matches!(
