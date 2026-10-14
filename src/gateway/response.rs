@@ -1,0 +1,234 @@
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+use axum::{
+    body::{Body, Bytes, HttpBody},
+    http::{HeaderMap, HeaderValue, header},
+    response::Response,
+};
+use hyper::body::Frame;
+use limen_config::{Model, Provider};
+use limen_script::Cancellation;
+use serde_json::{Value, json};
+use tokio::sync::{mpsc, oneshot};
+
+use super::{
+    Gateway,
+    error::{ErrorCode, Failure},
+    lifecycle::Lifecycle,
+    pipeline::{commit_state, require_body},
+};
+
+// Rust-owned error envelopes have a fixed bound independent of the model data cap.
+const CONTROL_EVENT_BYTES: usize = 1024;
+
+/// A single producer owns the bounded body until the HTTP consumer drains or drops it.
+/// Keeping the acknowledgement separate from queue capacity covers the final frame too.
+pub(super) struct Delivery {
+    reply: Option<oneshot::Sender<Response>>,
+    sender: Option<mpsc::Sender<Bytes>>,
+    drained: Option<oneshot::Receiver<()>>,
+    cancellation: Cancellation,
+    status: u16,
+    headers: HeaderMap,
+    request_id: String,
+    done_sent: bool,
+}
+
+impl Delivery {
+    pub fn new(
+        reply: oneshot::Sender<Response>,
+        cancellation: Cancellation,
+        request_id: String,
+    ) -> Self {
+        Self {
+            reply: Some(reply),
+            sender: None,
+            drained: None,
+            cancellation,
+            status: 200,
+            headers: HeaderMap::new(),
+            request_id,
+            done_sent: false,
+        }
+    }
+
+    pub fn configure(&mut self, status: u16, headers: HeaderMap) {
+        self.status = status;
+        self.headers = headers;
+    }
+
+    pub fn send_json(&mut self, response: Response) {
+        if let Some(reply) = self.reply.take() {
+            let _delivered = reply.send(response);
+        }
+    }
+
+    fn start(&mut self) -> Result<(), Failure> {
+        if self.sender.is_some() {
+            return Ok(());
+        }
+        let Some(reply) = self.reply.take() else {
+            return Err(Failure::new(ErrorCode::Cancelled, "response"));
+        };
+        let (sender, receiver) = mpsc::channel(1);
+        let (finished, drained) = oneshot::channel();
+        let body = StreamBody {
+            receiver,
+            finished: Some(finished),
+            cancellation: self.cancellation.clone(),
+            completed: false,
+        };
+        let mut response = Response::new(Body::new(body));
+        *response.status_mut() = http::StatusCode::from_u16(self.status)
+            .map_err(|source| Failure::new(ErrorCode::Internal, "response").with_source(source))?;
+        *response.headers_mut() = self.headers.clone();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/event-stream"),
+        );
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        if let Ok(id) = HeaderValue::from_str(&self.request_id) {
+            response.headers_mut().insert("x-limen-request-id", id);
+        }
+        reply
+            .send(response)
+            .map_err(|_undelivered_response| Failure::new(ErrorCode::Cancelled, "response"))?;
+        self.sender = Some(sender);
+        self.drained = Some(drained);
+        Ok(())
+    }
+
+    pub async fn emit(&mut self, bytes: Vec<u8>) -> Result<(), Failure> {
+        self.start()?;
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| Failure::new(ErrorCode::Internal, "response"))?;
+        sender
+            .send(Bytes::from(bytes))
+            .await
+            .map_err(|source| Failure::new(ErrorCode::Cancelled, "response").with_source(source))
+    }
+
+    pub async fn finish(&mut self) -> Result<(), Failure> {
+        self.emit(limen_chat::DONE.to_vec()).await?;
+        self.done_sent = true;
+        self.sender.take();
+        if let Some(drained) = self.drained.take() {
+            drained.await.map_err(|source| {
+                Failure::new(ErrorCode::Cancelled, "response").with_source(source)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn close(&mut self) {
+        self.sender.take();
+        self.drained.take();
+    }
+
+    /// Error delivery and observations share the caller's finite cleanup deadline.
+    pub async fn fail(&mut self, failure: &Failure, lifecycle: &Lifecycle) {
+        if self.reply.is_some() {
+            self.send_json(super::json_response(
+                failure.http_status(),
+                lifecycle.response_headers.clone(),
+                &failure.error_json(&lifecycle.request_id),
+                &lifecycle.request_id,
+            ));
+        } else if self.sender.is_some()
+            && !self.done_sent
+            && failure.code != ErrorCode::Cancelled
+            && let Ok(bytes) = limen_chat::encode_error(
+                &failure.error_json(&lifecycle.request_id),
+                CONTROL_EVENT_BYTES,
+            )
+        {
+            let _sent = self.emit(bytes).await;
+        }
+        self.sender.take();
+        if let Some(drained) = self.drained.take() {
+            let _drained = drained.await;
+        }
+    }
+}
+
+struct StreamBody {
+    receiver: mpsc::Receiver<Bytes>,
+    finished: Option<oneshot::Sender<()>>,
+    cancellation: Cancellation,
+    completed: bool,
+}
+
+impl HttpBody for StreamBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        match self.receiver.poll_recv(cx) {
+            Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
+            Poll::Ready(None) => {
+                self.completed = true;
+                if let Some(finished) = self.finished.take() {
+                    let _sent = finished.send(());
+                }
+                Poll::Ready(None)
+            },
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for StreamBody {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.cancellation.cancel();
+        }
+    }
+}
+
+impl Gateway {
+    pub(super) async fn response_body(
+        &self,
+        provider: &Provider,
+        model: &Model,
+        mut body: Value,
+        lifecycle: &mut Lifecycle,
+    ) -> Result<Value, Failure> {
+        apply_alias(&mut body, lifecycle);
+        for step in provider.pipeline.iter().chain(&model.pipeline) {
+            if let Some(hook) = step.on_response {
+                let mut context = lifecycle.context("onResponse");
+                context["body"] = body;
+                let output = self
+                    .hook(hook, "onResponse", Some(&step.name), context, lifecycle)
+                    .await?;
+                let next_body = require_body(&output)?;
+                commit_state(lifecycle, &output)?;
+                body = next_body;
+            }
+        }
+        if body.to_string().len() > self.server.limits.max_output_bytes {
+            return Err(Failure::new(ErrorCode::HookFailed, "response"));
+        }
+        Ok(body)
+    }
+}
+
+pub(super) fn apply_alias(body: &mut Value, lifecycle: &Lifecycle) {
+    if body.get("model").is_some() {
+        body["model"] = json!(lifecycle.alias);
+    }
+}
+
+#[cfg(test)]
+mod tests;

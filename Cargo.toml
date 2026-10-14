@@ -7,7 +7,7 @@ edition.workspace = true
 publish.workspace = true
 
 [workspace]
-members = [".", "modules/config", "modules/script"]
+members = [".", "modules/config", "modules/script", "modules/chat"]
 default-members = ["."]
 resolver = "3"
 
@@ -21,6 +21,7 @@ axum = { version = "0.8.9", default-features = false }
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage"] }
 limen-config = { path = "modules/config" }
 limen-script = { path = "modules/script" }
+limen-chat = { path = "modules/chat" }
 http = "1.5.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["http1", "server"] }
@@ -31,6 +32,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_path_to_error = "0.1.20"
 serde-saphyr = { version = "2.0.0", default-features = false, features = ["deserialize"] }
+sse-parse = "0.1.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["rt", "sync", "time", "macros", "net", "signal", "io-util"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
@@ -52,6 +54,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 limen-config.workspace = true
 limen-script.workspace = true
+limen-chat.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -62,3 +65,8 @@ url.workspace = true
 
 [lints]
 workspace = true
+
+[profile.release]
+strip = "debuginfo"
+lto = "thin"
+codegen-units = 1

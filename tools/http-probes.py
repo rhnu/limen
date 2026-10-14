@@ -41,6 +41,8 @@ class Upstream(http.server.ThreadingHTTPServer):
         self.hold = threading.Event()
         self.status = 200
         self.media = "application/json"
+        self.response_value = None
+        self.raw_body = None
         self.delay = False
 
 
@@ -74,7 +76,9 @@ class UpstreamHandler(http.server.BaseHTTPRequestHandler):
                     self.server.disconnected.set()
                     return
         response = {"id": "synthetic", "model": "real-model", "choices": [], "echo": json.loads(raw)}
-        body = json.dumps(response).encode()
+        if self.server.response_value is not None:
+            response = self.server.response_value
+        body = self.server.raw_body if self.server.raw_body is not None else json.dumps(response).encode()
         self.send_response(self.server.status)
         self.send_header("Content-Type", self.server.media)
         self.send_header("Content-Length", str(len(body)))
@@ -143,7 +147,10 @@ class Fixture:
         try:
             connection.request(method, path, json.dumps(body) if method == "POST" else None, fields)
             response = connection.getresponse()
-            return response.status, dict(response.getheaders()), json.loads(response.read())
+            media = response.getheader("Content-Type", "").split(";")[0].strip().lower()
+            raw = response.read()
+            body = raw.decode("utf-8") if media == "text/event-stream" else json.loads(raw)
+            return response.status, dict(response.getheaders()), body
         finally:
             connection.close()
 
@@ -249,9 +256,9 @@ def failures(executable):
         item.upstream.status = 200
         item.upstream.media = "text/event-stream"
         status, _, body = item.request()
-        require(status == 502 and body["error"]["code"] == "upstream_protocol", "SSE explicitly refused")
+        require(status == 502 and body["error"]["code"] == "upstream_protocol", "JSON bytes cannot pass the SSE parser")
         status, _, body = item.request({**REQUEST, "stream": True})
-        require(status == 400 and body["error"]["code"] == "invalid_request", "client streaming explicitly refused")
+        require(status == 502 and body["error"]["code"] == "upstream_protocol", "invalid SSE fails before starting downstream SSE")
     config = """export default {providers:{p:{endpoint:ENDPOINT,pipeline:[{name:'invalid-status',afterReceive(ctx){ctx.status=200;}}]}},models:{chat:{provider:'p',upstream:'real-model'}}};"""
     with fixture(executable, config=config) as item:
         item.upstream.status = 500
@@ -438,20 +445,43 @@ def transport_contracts(executable):
           else{ctx.headers.set('X-Original-Media',ctx.meta.upstreamContentType);}}
       }]}},models:{chat:{provider:'p',upstream:'real-model'}}};"""
     with fixture(executable, config=config) as item:
+        item.upstream.response_value = {
+            "id": "synthetic", "object": "chat.completion", "created": 1,
+            "model": "real-model", "choices": [{"index": 0,
+                "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 2},
+        }
         status, _, body = item.request({**REQUEST, "stream": True, "rewrite": True})
-        require(status == 400 and body["error"]["code"] == "invalid_request", "original client stream cannot be rewritten")
+        require(status == 200 and body.endswith("data: [DONE]\n\n"), "original client stream intent survives onRequest rewrite")
+        require(item.upstream.records[-1][2]["stream"] is False, "onRequest selects JSON upstream independently")
         status, _, body = item.request({**REQUEST, "upstreamStream": True})
-        require(status == 400 and body["error"]["code"] == "invalid_request", "beforeSend streaming unsupported")
-        require(not item.upstream.records, "stream rejections never send upstream")
+        require(status == 200 and body["model"] == "chat", "actual JSON response selects JSON parser despite upstream request intent")
+        require(item.upstream.records[-1][2]["stream"] is True, "beforeSend stream is sent without second rewrite")
         item.upstream.status = 500
         status, headers, body = item.request()
         require(status == 409 and body["error"]["code"] == "upstream_failed", "afterReceive maps error status without success classification")
         require(next(value for key, value in headers.items() if key.lower() == "x-mapped") == "failure", "error response preserves committed hook header")
         item.upstream.status = 200
         item.upstream.media = "text/event-stream"
+        events = [
+            {"id": "synthetic", "object": "chat.completion.chunk", "created": 1,
+                "model": "real-model", "choices": [{"index": 0,
+                    "delta": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}]},
+            {"id": "synthetic", "object": "chat.completion.chunk", "created": 1,
+                "model": "real-model", "choices": [], "usage": {"total_tokens": 2}},
+        ]
+        data = b"".join(b"data: " + json.dumps(event).encode() + b"\n\n" for event in events)
+        item.upstream.raw_body = data + b"data: [DONE]\n\n"
         status, headers, body = item.request()
-        require(status == 502 and body["error"]["code"] == "upstream_protocol", "original SSE parser fact remains unsupported")
-        require(next(value for key, value in headers.items() if key.lower() == "x-original-media") == "sse", "original media metadata preserved on failure")
+        require(status == 200 and body["choices"][0]["message"]["content"] == "hello", "SSE aggregates for original JSON client")
+        require(body["usage"] == {"total_tokens": 2}, "usage after finish reason is retained")
+        require(next(value for key, value in headers.items() if key.lower() == "x-original-media") == "sse", "original media metadata is frozen")
+        status, _, body = item.request({**REQUEST, "stream": True})
+        require(status == 200 and body.endswith("data: [DONE]\n\n"), "SSE passes through with one completion marker")
+        require(body.count("[DONE]") == 1 and '"model":"chat"' in body, "SSE applies alias without duplicate DONE")
+        item.upstream.raw_body = data
+        status, _, body = item.request({**REQUEST, "stream": True})
+        require(status == 200 and "event: error\n" in body and "[DONE]" not in body, "truncation after stream start emits error without success marker")
 
 
 def build(workspace):

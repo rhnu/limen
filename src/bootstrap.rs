@@ -218,6 +218,7 @@ fn runtime_options(limits: &ResourceLimits) -> RuntimeOptions {
         job_batch: limits.job_batch,
         max_modules: limits.max_modules,
         max_source_bytes: limits.max_source_bytes,
+        max_output_events: limits.max_output_events,
         json_limits: JsonLimits {
             max_depth: limits.max_json_depth,
             max_nodes: limits.max_json_nodes,

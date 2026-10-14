@@ -1,6 +1,11 @@
 mod error;
+mod events;
+mod lifecycle;
 mod logic;
+mod observe;
 mod pipeline;
+mod response;
+mod upstream;
 
 use std::{
     collections::BTreeSet,
@@ -16,10 +21,11 @@ use axum::{
     http::{HeaderValue, Request, header},
     response::Response,
 };
-use error::Failure;
-use limen_config::{BusinessConfig, ErrorCode, ServerConfig};
+use error::{ErrorCode, Failure};
+use lifecycle::Lifecycle;
+use limen_config::{BusinessConfig, ServerConfig};
 use limen_script::{Cancellation, RuntimeStatus, ScriptRuntime};
-use pipeline::Lifecycle;
+use response::Delivery;
 use tokio::{
     sync::{Mutex, Semaphore, oneshot},
     task::JoinSet,
@@ -85,11 +91,16 @@ impl Gateway {
             let failure = Failure::new(ErrorCode::Busy, "admission");
             // HTTP/1 drivers bound these rejected lifetimes too. Their observations
             // await inline and cannot create an unbounded second task queue.
-            self.observe(&lifecycle, Some(&failure)).await;
+            self.observe(
+                &lifecycle,
+                Some(&failure),
+                Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms),
+            )
+            .await;
             return error_response(&failure, &request_id);
         };
         let cancellation = Cancellation::new();
-        let cancel_on_drop = CancelOnDrop(cancellation.clone());
+        let mut cancel_on_drop = CancelOnDrop(Some(cancellation.clone()));
         let (reply, receive) = oneshot::channel();
         let gateway = Arc::clone(&self);
         let id = request_id.clone();
@@ -98,42 +109,57 @@ impl Gateway {
         while let Some(result) = tasks.try_join_next() {
             report_task(result);
         }
+        let worker_connection_cancel = connection_cancel.clone();
         tasks.spawn(async move {
             let _permit = permit;
             let mut lifecycle = Lifecycle::new(id, cancellation, gateway.server.limits.request_ms);
             let cancellation = lifecycle.cancellation.clone();
             let deadline = lifecycle.deadline;
+            let mut delivery = Delivery::new(reply, cancellation.clone(), lifecycle.request_id.clone());
             let result = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
                 () = gateway.shutdown.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+                () = worker_connection_cancel.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
                 () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase)),
-                result = gateway.process(request, &mut lifecycle) => result,
+                result = gateway.process(request, &mut lifecycle, &mut delivery) => result,
             };
             let result = if lifecycle.cancellation.is_cancelled() || gateway.shutdown.is_cancelled() {
                 Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase))
             } else if Instant::now() >= lifecycle.deadline {
                 Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase))
             } else { result };
-            lifecycle.record(&result);
-            let (response, failure) = match result {
-                Ok(response) => (response, None),
-                Err(failure) => (json_response(failure.http_status(), lifecycle.response_headers.clone(), &failure.error_json(&lifecycle.request_id), &lifecycle.request_id), Some(failure)),
+            let cleanup_deadline = Instant::now() + Duration::from_millis(gateway.server.limits.cleanup_ms);
+            let terminal = match result {
+                Ok(response) => {
+                    if let Some(response) = response { delivery.send_json(response); }
+                    Ok(())
+                },
+                Err(failure) => {
+                    // Terminal writes have a finite budget even after the request
+                    // deadline; a slow or disconnected consumer cannot retain a permit.
+                    let _finished = tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(cleanup_deadline),
+                        delivery.fail(&failure, &lifecycle),
+                    ).await;
+                    delivery.close();
+                    Err(failure)
+                },
             };
-            // Cleanup has its own budget and cannot delay delivery of the fixed result.
-            let _delivered = reply.send(response);
-            gateway.observe(&lifecycle, failure.as_ref()).await;
+            lifecycle.record(&terminal);
+            gateway.observe(&lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
         }.instrument(span));
         drop(tasks);
         let response = tokio::select! {
             biased;
             () = connection_cancel.cancelled() => {
-                cancel_on_drop.0.cancel();
+                if let Some(cancel) = &cancel_on_drop.0 { cancel.cancel(); }
                 error_response(&Failure::new(ErrorCode::Cancelled, "connection"), &request_id)
             },
             result = receive => result.unwrap_or_else(|_| error_response(&Failure::new(ErrorCode::Internal, "request_task"), &request_id)),
         };
-        drop(cancel_on_drop);
+        // Streaming bodies carry their own cancellation guard beyond handle().
+        cancel_on_drop.0.take();
         response
     }
 
@@ -179,10 +205,14 @@ fn upstream_client(max_idle: usize) -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
-struct CancelOnDrop(Cancellation);
+struct CancelOnDrop(Option<Cancellation>);
 
 impl Drop for CancelOnDrop {
-    fn drop(&mut self) { self.0.cancel(); }
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.0 {
+            cancel.cancel();
+        }
+    }
 }
 
 fn report_task(result: Result<(), tokio::task::JoinError>) {

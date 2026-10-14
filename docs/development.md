@@ -4,10 +4,11 @@
 
 ```text
 .
-├── src/                 根包：CLI、bootstrap、JSON gateway、HTTP server、日志与运行时实验入口
+├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server、日志与运行时实验入口
 ├── modules/
 │   ├── config/          limen-config：YAML/业务配置、资源 schema、配置诊断
-│   └── script/          limen-script：ESM、严格 JSON 桥接、专属线程和有界 JS 调度
+│   ├── script/          limen-script：ESM、严格 JSON 桥接、专属线程和有界 JS 调度
+│   └── chat/            limen-chat：SSE 编解码、chunk 校验、四路径转换与有界聚合
 ├── examples/            无真实凭据的基础配置与共享模块
 ├── tools/               有外部超时保护的 JS 与本地 HTTP 实验驱动
 ├── docs/                设计、唯一实施路线图、开发指引
@@ -17,14 +18,15 @@
 └── rusteward.toml       Rusteward 格式与 lint 配置
 ```
 
-应用组合配置和脚本库；配置库不依赖 VM，脚本库不依赖 HTTP 服务框架或配置 schema（使用 http 校验头部）。
+应用组合配置、脚本和 Chat 协议库；配置库不依赖 VM，脚本库不依赖 HTTP 服务框架或配置 schema（使用 http 校验头部）。
+Chat 库仅消费 owned 字节与 JSON，不持有连接，也不依赖配置或 VM。
 根包 `limen` 是默认 workspace 成员，根目录的 `cargo run`、`cargo build` 和 `cargo test` 默认选择它；
 全 workspace 检查与测试继续显式使用 `--workspace`。`runtime_probe` 同属根包，仅由隔离实验驱动运行。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
 根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播。
-短目录名表示职责，Cargo 包名仍为 `limen-config`、`limen-script`；路径依赖由根清单显式指定。
-当前公开错误码与状态映射仍在配置库的 `protocol` 模块中；后续归属与整体拆分建议见
-[设计中的工程边界](design.md#12-workspace-与模块边界)，不预建空 crate。
+短目录名表示职责，Cargo 包名使用 `limen-` 前缀；路径依赖由根清单显式指定。
+公开错误码、状态映射和安全错误对象属于根包 gateway；职责见
+[设计中的工程边界](design.md#12-workspace-与模块边界)。
 单元测试放在被测模块的 `tests.rs` 子模块，禁止 `mod.rs`。
 
 ## 本地检查
@@ -49,7 +51,7 @@ cargo install --git https://github.com/rhnu/rusteward.git --locked rusteward
 
 `cargo dev format` 会修改源码；只读检查使用 `cargo dev format --check --diff --locked`。
 质量规则由 `rusteward.toml` 管理，不以编译或格式通过代替行为验证。
-`--lib --bins` 只运行配置、JSON 输入边界和 CLI 等纯逻辑单元测试，不隐式运行集成或文档测试。
+`--lib --bins` 只运行配置、输入边界、SSE/转换、预算和 CLI 等纯逻辑单元测试，不隐式运行集成或文档测试。
 
 文档修改收尾时仅传本次修改的 Markdown 文件，例如：
 
@@ -71,6 +73,8 @@ python tools/runtime-probes.py
 使用 `python tools/runtime-probes.py --help` 查看单项实验、超时和列表选项。
 不要直接运行失控脚本实验二进制而省略外部超时保护。
 实验只使用临时合成配置；不会连接真实 provider，不属于 Linux、Docker 或 HTTP 端到端验收。
+`context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
+该实验需单独调用，本次仅增加入口，未执行。
 
 检查示例配置：
 
@@ -93,6 +97,7 @@ python tools/http-probes.py
 
 `--list` 查看实验，位置参数选择单项，`--executable PATH` 复用已构建二进制，`--timeout` 设置单项外部上限。
 实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
+`transport-contracts` 已更新为四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，本次未运行。
 Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；当前执行证据只覆盖 Windows。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动均显式调用，不混入普通单元测试或自动 CI。
 日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
@@ -121,6 +126,7 @@ Windows 关闭实验为独立隐藏 console 下的 Ctrl-C，Unix 为 SIGTERM；�
 | tracing             | 0.1.44   | 1.65 | std，无属性宏；应用元数据日志                                                |
 | tracing-subscriber  | 0.3.23   | 1.65 | fmt、json，无环境过滤器；stderr 输出                                         |
 | thiserror           | 2.0.21   | 1.77 | std；库和应用错误保留类型、上下文与 source 链                                |
+| sse-parse           | 0.1.0    | 1.65 | 默认 std；sans-IO 增量解析，项目逐字节推进并将 overflow 转为明确失败         |
 
 上游依据：[clap 发布](https://github.com/clap-rs/clap/releases/tag/v4.6.7)与
 [feature 文档](https://docs.rs/crate/clap/4.6.7/features)、[rquickjs 文档](https://docs.rs/rquickjs/0.14.0/rquickjs/)、
@@ -139,6 +145,12 @@ HTTP 引入时重新核对了注册表及上游发布/feature：
 [reqwest features](https://docs.rs/crate/reqwest/0.13.5/features)。
 reqwest 0.13 的 `rustls` feature 使用平台证书验证与 AWS-LC；Windows 本机构建已验证，CMake 可用，
 Linux 的 C 构建、证书与运行环境仍须部署阶段单独验证。锁文件不代表已执行目标平台或 TLS 真实上游验收。
+
+SSE 解码对照 WHATWG，并调查了 eventsource-stream、sse-codec 与 sse-stream；选用可独立于异步网络层使用的
+[sse-parse 发布](https://github.com/hey-jj/sse-parse/releases/tag/v0.1.0)与
+[发布清单](https://github.com/hey-jj/sse-parse/blob/v0.1.0/Cargo.toml)。
+`limen-chat` 在其上增加输入事件预算、Chat 语义与结束校验，避免依赖丢弃超限块后继续运行掩盖截断。
+JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合累计输入大小和事件数，跨形态未知结构明确拒绝。
 
 ## 错误与日志
 
@@ -162,12 +174,39 @@ Linux 的 C 构建、证书与运行环境仍须部署阶段单独验证。锁�
 - 实际部署配置集中在 `local/`；`examples/` 只放占位值。Git ignore 不能保证其他路径没有秘密。
 - 不从模板推断许可证、GitHub owner、公开性或镜像命名空间；发布前另行确定。
 
-## GitHub CI 与后续部署
+## GitHub CI 与容器构建
 
 CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，只授予 `contents: read`。
 同 ref 新运行取消旧运行；每个 job 有超时；checkout 不持久化凭据。
-Rust job 依次编译检查、格式检查、lint、纯逻辑单元测试；Markdown job 检查仓库文档。
+Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、纯逻辑单元测试；Markdown job 检查仓库文档。
 隔离运行实验当前手动调用，不自动加入普通 CI 测试步骤。
 
 尚未配置远程或运行托管 runner。建立远程后运行一次 CI，再依据实际结果配置分支保护。
-Dockerfile、容器运行检查与镜像发布仍按路线图部署阶段安排；本机成功不代表目标平台通过。
+镜像 job 通过 Buildx 构建 `linux/amd64`，使用 GHA `mode=max` 缓存中间层，不登录 registry、不推送镜像，
+也不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
+Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层只含二进制、CA 与运行依赖，使用非 root 用户。
+release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind 以维持运行时的异常清理边界。
+
+本地可显式调用以下命令（本次未运行）：
+
+```sh
+docker build --platform linux/amd64 -t limen:local .
+docker compose run --rm limen check --config /config/docker/server.yaml
+docker compose up --build -d
+docker compose down
+```
+
+Compose 只读挂载整个 `local/`，配置使用 `/config/docker/server.yaml`，示例重导出 `../basic/config.js`，
+继续使用 `../shared/`。复制整个 `examples/` 到 `local/` 后填写凭据，保持目录关系。
+容器内 `0.0.0.0:8080`，宿主默认仅绑定回环地址；只读根文件系统、移除 capabilities，禁止提权。
+终止宽限时间覆盖 HTTP 与 VM 的有限关闭预算。`.dockerignore` 使用允许清单控制构建上下文，
+不拷贝 `local/`、示例、Git 历史或任意未列入的文件。
+Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量或吞吐承诺；
+配置需允许 UID/GID 10001 读取，尤其留意宿主上仅所有者可读的凭据文件。
+
+构建工具 cargo-chef 固定为 0.1.78，版本来源为
+[官方发布](https://github.com/LukeMathWalker/cargo-chef/releases/tag/v0.1.78)。
+缓存与镜像构建使用 [Rust cache](https://github.com/Swatinem/rust-cache)、
+[Buildx action](https://github.com/docker/setup-buildx-action)和
+[Build push action](https://github.com/docker/build-push-action)。
+容器运行、Linux 构建与 TLS/CA、SIGTERM、慢客户端及流背压仍待独立验收；镜像推送和 release 需先明确发布位置与权限。

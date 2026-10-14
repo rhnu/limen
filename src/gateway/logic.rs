@@ -1,8 +1,8 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
-use limen_config::{BusinessConfig, ClientAuth, ErrorCode, Model, Provider, ResourceLimits};
+use limen_config::{BusinessConfig, ClientAuth, Model, Provider, ResourceLimits};
 use serde_json::{Value, json};
 
-use super::error::Failure;
+use super::error::{ErrorCode, Failure};
 
 pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> {
     let ClientAuth::Bearer(expected) = auth else {

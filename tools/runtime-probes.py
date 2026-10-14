@@ -27,6 +27,7 @@ CASES = (
     "context-headers",
     "context-readonly",
     "context-isolation",
+    "context-stream",
 )
 
 

@@ -27,6 +27,15 @@ jobs:
           persist-credentials: false
       - name: Install the repository toolchain
         run: rustup show
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install C build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential cmake pkg-config
       - name: Install Rusteward
         uses: rhnu/rusteward@main
       - name: Compile check
@@ -52,3 +61,27 @@ jobs:
           command: check
           report-type: annotations
           args: --deny-config-warnings
+
+  image:
+    name: Linux amd64 image
+    runs-on: ubuntu-24.04
+    needs: [rust, markdown]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build the runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          pull: true
+          push: false
+          load: true
+          tags: limen:ci
+          cache-from: type=gha,scope=limen-linux-amd64
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=limen-linux-amd64,mode=max' || '' }}

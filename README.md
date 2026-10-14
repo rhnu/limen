@@ -3,10 +3,12 @@
 Limen 是面向个人与内网使用的 Rust Chat Completions 网关：显式配置 provider 和模型别名，
 通过本地 JavaScript ESM 配置有序请求与响应变换，主要部署目标为 Linux Docker。
 
-`limen check` 加载并校验配置；`limen serve` 启动 HTTP/1 JSON 网关，提供
+`limen check` 加载并校验配置；`limen serve` 启动 HTTP/1 网关，提供
 `GET /v1/models` 和 `POST /v1/chat/completions`。两个接口共用客户端认证，模型只来自显式配置。
-全局 `onRequest` 后仅路由一次，非流请求依次执行 provider → model 的请求与响应 hook。
-当前拒绝客户端流请求、hook 选择的流请求和上游 SSE；流协议与转换仍是后续工作。
+全局 `onRequest` 后仅路由一次，各阶段依次执行 provider → model 的 hook。
+支持 JSON→JSON、JSON→SSE、SSE→JSON 和 SSE→SSE；原始客户端 `stream` 决定下游形态，
+请求 hook 可独立选择上游形态。转换支持文本、refusal、function tool calls、多 choice、finish reason 与 usage；
+跨形态遇到不支持的字段会明确失败，同形态保留合法扩展字段。
 
 ## 检查与运行
 
@@ -43,6 +45,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 上述 curl 为 shell 示例；令牌是占位值，应替换为自己的本地配置值。
+流式调用使用 `curl -N` 并在请求中加入 `"stream":true`。SSE 成功以 `[DONE]` 结束；
+开始发送后失败会收到 `event: error` 并关闭连接，不补成功结束标记。JSON→SSE 需先等上游完整 JSON。
 上游认证与客户端认证相互独立；客户端 Authorization、Cookie 和无关头不会默认转发。
 一次生成至多发送一次，不自动重试或跟随重定向。响应默认使用对外别名，响应 hook 可显式改写。
 
@@ -63,6 +67,23 @@ client_auth:
 退出码：`0` 检查成功、服务正常关闭、帮助或版本输出；`1` 配置、服务、运行时或关闭失败；`2` CLI 参数错误。
 Ctrl-C 会停止监听并取消在途请求；Unix 下也处理 SIGTERM。VM 退役会关闭服务并以失败退出。
 
+## Docker
+
+仓库提供多阶段 Dockerfile 与 Compose 示例，CI 构建 Linux amd64 镜像但不推送。
+将整个 `examples/` 复制到 `local/`，在 `local/basic/config.js` 中填写上游配置，
+在 `local/docker/server.yaml` 中设置客户端令牌。容器配置示例显式监听 `0.0.0.0:8080`。
+
+```sh
+docker compose up --build -d
+docker compose logs -f
+docker compose down
+```
+
+Compose 将 `local/` 整个目录只读挂载到 `/config`，保留共享 ESM 的相对路径，默认仅向宿主
+`127.0.0.1:8080` 发布端口。容器以非 root 用户运行，配置文件需对该用户可读。
+构建上下文只允许源码和构建所需文件，真实配置与秘密不进入镜像层。
+构建、缓存与配置检查命令见[开发指引](docs/development.md)；本次未执行 Docker 或 Linux 运行验收。
+
 ## 开发与边界
 
 - [完整设计](docs/design.md)：配置 schema、管线、运行时与资源契约。
@@ -70,8 +91,9 @@ Ctrl-C 会停止监听并取消在途请求；Unix 下也处理 SIGTERM。VM 退
 - [开发指引](docs/development.md)：构建、Rusteward、单元测试与隔离运行时实验。
 - [工作区约定](AGENTS.md)：代理在本仓库工作时遵循的项目约束。
 
-应用是 workspace 根包，源码位于 `src/`，配置和 JS 运行时库分别位于 `modules/config/` 与 `modules/script/`。
-整体模块拆分建议见[设计中的工程边界](docs/design.md#12-workspace-与模块边界)。依赖由 workspace 根集中管理，
+应用是 workspace 根包，源码位于 `src/`；配置、JS 运行时和 Chat 协议库分别位于
+`modules/config/`、`modules/script/` 与 `modules/chat/`。
+职责见[设计中的工程边界](docs/design.md#12-workspace-与模块边界)。依赖由 workspace 根集中管理，
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
 Linux 构建、Docker、真实上游及 GitHub runner 验证尚未完成，本机验证不能替代这些证据。

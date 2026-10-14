@@ -1,7 +1,8 @@
 # Limen 设计
 
 本文是 Limen 的工作区设计基线，完整承接原始 `Limen-design.md` 的产品与技术约束，后续工作无需访问原始附件。
-配置装载、有界 JS 调度、HTTP/1 JSON 网关与非流管线已经实现；流处理仍是待实施契约。
+配置装载、有界 JS 调度、HTTP/1 网关、JSON/SSE 四路径及容器构建配置已经实现。
+流与容器的运行验收仍须单独取得证据。
 依赖解析以锁文件为准，升级时重新核对上游。
 当前状态与剩余工作见[实施路线图](roadmap.md)，工程操作见[开发指引](development.md)。
 
@@ -86,7 +87,7 @@ token；无认证模式需显式写明。首版不做用户数据库、多租户
 
 资源限制由 Rust 强制执行，业务 hook 不能取消。以下是当前 schema；所有字段可在 `limits` 中覆盖，未知字段报错。
 默认值是面向个人使用的保守初值，用于给内存、队列和执行建立上界，不是测量所得的容量或吞吐保证。
-HTTP 非流路径已接入正文、并发、deadline、hook 和清理限制；事件展开与流聚合字段随流路径实现后接入。
+HTTP 路径接入正文、并发、deadline、hook 和清理限制；流路径另外执行单事件、累计展开与聚合预算。
 
 | 字段                   | 默认值   | 允许范围           | 用途                                   |
 | ---------------------- | -------- | ------------------ | -------------------------------------- |
@@ -388,13 +389,16 @@ JS runtime 中的字节码。
 流 hook 默认修改当前事件并输出一次。丢弃和拆分必须显式表达，不能把漏写
 `return`、`undefined` 或 `null` 当作控制流。
 
-建议只在流事件上下文提供一个输出控制方法：`ctx.replaceEvents(events)`。
+流阶段使用 `ctx.event` 作为可修改或替换的 JSON 事件对象，仅在流事件上下文提供输出控制方法：`ctx.replaceEvents(events)`。
 
 - 未调用时：输出修改后的当前事件一次。
 - `ctx.replaceEvents([])`：明确丢弃当前事件。
 - `ctx.replaceEvents([eventA, eventB])`：按数组顺序替换为多个事件。
 
-同一次调用最多设置一次替代输出，重复设置时报错。替代事件继续交给本阶段后续步骤，不重新从第一步执行。需要给输出事件数量与总大小设上限，避免多步展开造成无界膨胀。
+同一次调用最多设置一次替代输出，重复设置时报错。替代事件继续交给本阶段后续步骤，不重新从第一步执行。
+每个源事件累计所有成功 hook 的输出数量与 JSON 字节，包括默认的一入一出，分别受
+`max_output_events` 与 `max_output_bytes` 限制；每个输出还须满足单事件和 JSON 结构限制。
+VM 在提交时再次检查替代数组数量，防止异步等待期间增长绕过上限。
 
 流 hook 同样遵循 `void | Promise<void>`；异步完成值仍必须为
 `undefined`。`ctx.replaceEvents` 的结果仅在整个 hook
@@ -484,24 +488,25 @@ SSE 内部采用“解码 → 语义处理 → 编码”的职责分离，可参
 JSON → SSE 转换须保留 `onResponse`
 已显式修改的响应模型名，而不是二次套用别名默认。默认值只在对应路径第一次形成对外响应表示时应用。
 
-### 7.5 当前 JSON 适配
+### 7.4 HTTP 适配
 
 当前 HTTP/1 入口使用 Hyper 连接驱动与 Axum body/response 类型。两个 API 共用客户端认证与有界请求处理，
 入口正文限制为 `max_body_bytes`；合并后的上游 body、上游 JSON 和最终 JSON 输出受 `max_output_bytes` 限制。
 初始请求必须为对象，包含非空字符串 `model`、非空对象数组 `messages`；`stream` 只能为布尔值或省略。
 消息内的扩展字段保留，具体消息协议兼容性由上游判断。当前只接受 JSON 媒体类型（忽略大小写及参数）。
 
-客户端原始 `stream: true`、hook 最终选择 `stream: true` 都明确返回 `invalid_request`，且不发送上游。
-上游 2xx 必须为完整 JSON 对象；SSE、无正文状态、非法 JSON、过大正文与读取失败进入错误路径。
+客户端原始 `stream` 决定下游 JSON 或 SSE，hook 最终的 `body.stream` 原样发送上游。
+解析路径由上游原始媒体类型决定，不根据请求猜测。上游 2xx 必须为完整 JSON 对象或合法 Chat SSE；
+无正文状态、非法 JSON、过大正文与读取失败进入错误路径。
 原始 3xx–5xx 默认映射为 502，`afterReceive` 可显式映射到 4xx/5xx；不读取或回显失败正文。
 响应头默认仅保留 content-language、x-request-id 和 retry-after，并排除 Connection 指定的逐跳字段；
-可信 hook 可显式增改普通下游头。最终 Content-Type 由 Rust 设置为 application/json。
+可信 hook 可显式增改普通下游头。最终 Content-Type 由 Rust 根据实际下游路径设置。
 
 reqwest 客户端明确禁用重试、重定向和环境代理，使用 Rustls 与平台证书验证。
 配置中的有限 origin 复用一个连接池，每个 origin 至多保留一个空闲连接，空闲超时为 30 秒。
 hook 选择其他 origin 时使用不保留空闲连接的短期客户端；活动客户端受并发限制，避免长期积累任意目标的连接。
 
-### 7.4 非文本内容与未知字段
+### 7.5 非文本内容与未知字段
 
 建议将“同形态传递”和“跨形态转换”分开承诺：
 
@@ -522,6 +527,9 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
 `data:`。解析以
 [WHATWG SSE 标准](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream)
 为依据；模型 JSON、usage 和 `[DONE]` 属于上层 Chat Completions 协议。
+输入预算覆盖归一化后的事件块，CRLF 的 LF 作为同一换行被忽略；解析缓冲另有同值上限。
+输出数据帧按包含 framing 的编码字节数限制。Rust 的固定错误控制帧使用独立的 1 KiB 上限，
+避免较小的数据事件预算阻止发送约定错误对象。
 
 - `[DONE]` 是协议结束标记，默认要求成功流明确结束；EOF
   未收到结束标记按截断失败处理。
@@ -529,6 +537,8 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
   chunk，不提前关流。
 - 多 choice、tool call 的 index 与分片字段必须正确累积，不把不同 choice
   或调用混在一起。
+- 流的 choice 完成状态最多跟踪 `max_json_nodes` 个不同 index；一个事件可包含多个 choice，
+  不把聚合事件数限制误当成每事件的 choice 数限制。
 - 聚合有最大字节数与事件数，不能因为客户端选择 JSON 就无限缓存上游流。
 - 下游断开时取消上游读取、待执行 hook
   和相关任务，尽快释放本地资源并向上游中止连接；这不能保证 provider
@@ -537,7 +547,7 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
 
 返回头尚未发送时，错误使用 `{"error":{"code":"...","message":"...","request_id":"..."}}`。
 消息由 Rust 提供清理后的固定说明，不包含上游正文、JS 异常文本、token 或源码。
-下表固定对外 code/status 契约；HTTP JSON 适配已实现，SSE 错误适配随流处理实现。
+下表固定 HTTP JSON 与 SSE 流内错误共同的对外 code/status 契约。
 
 | code                                    | HTTP 状态                                 |
 | --------------------------------------- | ----------------------------------------- |
@@ -576,14 +586,17 @@ hook，不修改响应或恢复失败。成功、失败与取消都进入一次�
 侧只记录一次最终 outcome；VM 正常时只调度一次 `onFinish`。若 VM
 已退役无法调用观察函数，则记录未执行原因，不假称 JS 回调已经成功。
 
-当前请求任务在响应结果固定后立即交付 HTTP 层，再顺序调度错误观察（失败或取消时）与结束观察；
-观察失败不会改变已固定结果。两者共享从终态开始的 `cleanup_ms` 绝对预算，耗尽后记录未执行原因。
+JSON 在响应结果固定后立即交付 HTTP 层；SSE 在首次数据帧时交付头部，用容量为 1 的正文队列传递后续帧，
+不因 `onResponse` 缓存整段 SSE。生产任务等待 HTTP body 消费结束或取消，再进入一次终态观察。
+错误写出、错误观察（失败或取消时）与结束观察共享从终态开始的 `cleanup_ms` 绝对预算，耗尽后记录未执行原因。
+慢下游的错误帧只在此预算内尽力交付；DONE 已入队后不追加错误帧。观察失败不会改变已固定结果。
 观察任务保留在请求 JoinSet 中并占用请求并发许可，服务关闭时等待它们；容量拒绝的观察在有界连接任务内等待，
-不另外创建无界任务。JSON 终态表示管线已生成结果，输出字节数表示生成的 JSON 大小，不承诺客户端已经收到全部字节。
+不另外创建无界任务。JSON 终态表示管线已生成结果，输出字节数表示生成的 JSON 大小；
+SSE 字节数累计已入队数据帧，消费完成确认只表示 HTTP 层读取了 body，不承诺客户端已经收到全部字节。
 
 HTTP 连接任务上限为 `concurrency + queue_capacity`，不再创建额外等待队列；请求许可不足时返回 429。
 JS 命令队列与 pending 上限独立执行。连接固定限制 100 个头和 32 KiB 头部/缓冲，并有读取头部的超时。
-每次进入服务时建立 `request_ms + cleanup_ms` 绝对连接期限，覆盖正文读取、管线与 JSON 写出；
+每次进入服务时建立 `request_ms + cleanup_ms` 绝对连接期限，覆盖正文读取、管线与 JSON/SSE 写出；
 随后进入空闲 keepalive 时继续保留该期限，下个请求进入服务时重新计时。超时关闭连接并记录传输失败。
 客户端断开会取消本地请求任务的推进和上游读取，但请求任务保留到有限观察结束。
 该连接期限已有编译和 deadline/关闭接线证据；本机 Windows 写入由系统排队，未获得可靠的阻塞写实验，
@@ -863,19 +876,19 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 目录使用简短职责名，包名保留项目前缀；目录名与 Cargo 包身份不要求相同。
 全部依赖（包括内部路径依赖）由根清单集中声明，成员通过 `workspace = true` 使用。
 
-当前配置库还包含公开错误码与响应状态映射，根包 `gateway/pipeline.rs` 同时承担阶段调度与上游收发。
-以下是面向完整首版的拆分建议，尚未完成这些职责迁移，也尚未建立 `chat` 库。
+`modules/chat/` 对应 `limen-chat`，隔离纯协议状态机与跨形态转换。
+公开错误码与状态映射属于根包，配置库只保留配置职责。
 
-### 12.2 建议的包边界
+### 12.2 包边界
 
-建议保留一个根应用包和三个职责库，在实际进入流阶段时引入第三个库，不提前建立空包。
+保留一个根应用包和三个职责库。
 
-| 位置              | Cargo 包       | 职责                                                                      | 边界                                                                      |
-| ----------------- | -------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 根包 `src/`       | `limen`        | CLI、启动组合、认证、单次路由、hook 顺序、上下游 HTTP、请求与进程生命周期 | 拥有产品策略与资源协调；初始化日志、处理信号并决定退出                    |
-| `modules/config/` | `limen-config` | YAML/业务 schema、默认值、provider/model 引用、资源配置和安全配置诊断     | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线                |
-| `modules/script/` | `limen-script` | 本地 ESM、函数登记、JS context/draft、JSON 桥接、VM 线程、Promise 与预算  | 只提供启动、调用、状态和关闭能力；不选择 provider，不编排请求阶段         |
-| `modules/chat/`   | `limen-chat`   | SSE 增量编解码、Chat chunk 语义、JSON↔SSE 转换、有界聚合与结束条件        | 建议新增的纯逻辑库；不依赖配置、VM、HTTP 客户端或服务框架，不持有网络连接 |
+| 位置              | Cargo 包       | 职责                                                                      | 边界                                                              |
+| ----------------- | -------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 根包 `src/`       | `limen`        | CLI、启动组合、认证、单次路由、hook 顺序、上下游 HTTP、请求与进程生命周期 | 拥有产品策略与资源协调；初始化日志、处理信号并决定退出            |
+| `modules/config/` | `limen-config` | YAML/业务 schema、默认值、provider/model 引用、资源配置和安全配置诊断     | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线        |
+| `modules/script/` | `limen-script` | 本地 ESM、函数登记、JS context/draft、JSON 桥接、VM 线程、Promise 与预算  | 只提供启动、调用、状态和关闭能力；不选择 provider，不编排请求阶段 |
+| `modules/chat/`   | `limen-chat`   | SSE 增量编解码、Chat chunk 语义、JSON↔SSE 转换、有界聚合与结束条件        | 纯逻辑库；不依赖配置、VM、HTTP 客户端或服务框架，不持有网络连接   |
 
 根包是应用组合与策略层，不只保留 `main.rs`。认证、模型表、路由和 provider → model 阶段次序只有当前应用这一调用方，
 拆成独立 crate 会增加接口与跨包协调，却没有独立的依赖或复用收益，先保留为根包内部模块。
@@ -883,28 +896,28 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 这些边界能分别用纯逻辑测试或隔离运行实验验证。
 
 不为认证、provider、model、limits、错误、日志或通用 SSE framing 单独建包，也不建立兜底的 `common`/`core` 包。
-SSE 解码先复用经调查适合的现有库，`chat` 只增加本项目需要的预算、Chat 语义与转换边界。
+SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事件队列，overflow 转为明确失败；
+`chat` 只增加本项目需要的预算、Chat 语义与转换边界。
 只有出现真实的独立调用方或依赖隔离需求，才重新评估更多 crate。
 
 ### 12.3 根包内部职责
 
-保留现有顶层 `cli`、`bootstrap`、`server`、`gateway`、`telemetry` 模块；在对应逻辑实际增长时拆子模块，
-不一次性创建以下所有文件。
+保留顶层 `cli`、`bootstrap`、`server`、`gateway`、`telemetry` 模块，网关按阶段与生命周期拆分。
 
 - `cli`：参数、帮助与参数退出语义。`bootstrap`：配置装载、脚本启动、配置校验、资源选项转换及失败清理。
 - `server`：监听和 HTTP/1 连接驱动、头部与连接预算、断开通知、信号及 VM 退役后的有界关闭。
-- `gateway`：请求许可、ID、任务追踪、请求 deadline 与终态。当前 `Lifecycle` 可随流生命周期调整移入 `gateway/lifecycle.rs`。
+- `gateway`：请求许可、ID、任务追踪、请求 deadline 与终态；`gateway/lifecycle` 保存单请求状态和统计。
 - `gateway/logic`：认证、请求校验、显式模型表、浅层 defaults 和单次路由；规则增长后再按认证、路由、头部拆分。
 - `gateway/pipeline`：全局与 provider → model 的阶段调度、成功 draft/state 提交、四种传输路径选择。
-- `gateway/upstream`：建议从当前管线提取的上游客户端、连接池、单次发送、原始 status/media 与有界 body 读取。
-- `gateway/response`：建议集中 JSON/SSE 下游表示、别名默认、头部策略、状态映射及流开始前后的错误输出。
-- `gateway/observe`：建议集中 `onError`/`onFinish` 与有限清理预算；流路径按实际完成、失败或截断进入终态。
+- `gateway/upstream`：原始 status/media、响应阶段、四路径收取与转换；客户端、连接池与单次发送由 gateway/pipeline 组合。
+- `gateway/response`：JSON/SSE 下游表示、别名默认、完整响应 hook、有界流 body 与流开始前后的错误输出。
+- `gateway/events`：流 hook 顺序、成功输出提交和贯穿两阶段的单源事件展开预算。
+- `gateway/observe`：`onError`/`onFinish` 与有限清理预算；流路径按实际完成、失败或截断进入终态。
 - `gateway/error`：稳定的应用错误码、失败分类、保留来源及安全对外错误对象。
 - `telemetry`：subscriber、panic hook 和应用边界失败报告。`runtime_probe` 继续作为根包实验二进制，显式运行。
 
-当前 `config/protocol.rs` 的 `ErrorCode` 属于网关应用策略，建议连同测试迁入 `gateway/error`；
-`validate_response_status` 建议迁入 `gateway/response`。配置错误继续留在 `config`，脚本错误留在 `script`，
-未来协议/转换错误留在 `chat`，由根包映射为应用失败并保留原始来源；不另设共享错误包。
+`ErrorCode` 和 `validate_response_status` 位于 `gateway/error`。配置错误留在 `config`，脚本错误留在 `script`，
+协议/转换错误留在 `chat`，由根包映射为应用失败并保留原始来源；不另设共享错误包。
 
 ### 12.4 库内模块与依赖方向
 
@@ -912,8 +925,8 @@ SSE 解码先复用经调查适合的现有库，`chat` 只增加本项目需要
 `script` 保留 `loader`、`json`、`context`、`engine`、`error`，`engine/startup` 与 `engine/scheduler` 分工不变。
 `lib.rs` 的公开调用与通道入口只有在职责或维护需要时再移入 `runtime.rs`，不把 VM 内部类型公开给根包。
 
-建议的 `chat` 库内部按 `sse`（分块解码与 framing）、`chunk`（Chat 事件与结束校验）、
-`aggregate`（按 choice/tool index 聚合）、`encode`（完整 JSON 转事件）、`error` 组织。
+`chat` 库内部按 `sse`（分块解码与 framing）、`chunk`（Chat 事件与结束校验）、
+`aggregate`（按 choice/tool index 聚合）、`convert`（完整 JSON 转事件）、`error` 组织。
 同形态保留合法扩展字段；跨形态支持范围仍由第 7 节约束。转换输入、输出和状态均受显式预算约束，
 JSON 转事件采用有界迭代或分批输出，不返回无界事件集合。
 
@@ -924,7 +937,7 @@ hook 的 `replaceEvents` 方法和单次调用约束属于 `script` 的 draft �
 `chat` 只消费 owned 字节/JSON/事件与预算，报告结束或截断；根包决定何时读取、调用 hook、写出、取消和观察。
 
 整个拆分沿用 `foo.rs` 加 `foo/` 子模块，单元测试随被测职责迁移至对应 `tests.rs`。
-目录与操作命令见[开发指引](development.md)，尚未实施的迁移只在[路线图](roadmap.md)中跟踪。
+目录与操作命令见[开发指引](development.md)，剩余工作只在[路线图](roadmap.md)中跟踪。
 
 ## 13. 实施边界与验证清单
 
@@ -936,7 +949,7 @@ hook 的 `replaceEvents` 方法和单次调用约束属于 `script` 的 draft �
 3. 有序变换：provider/model 顺序 await、header draft、异步提交边界、资源预算。
 4. 流处理：SSE 解析、四种传输组合、usage/tool call 边界、取消与截断错误。
 
-HTTP 非流管线已有本机合成上游证据，流处理尚未完成。配置纯逻辑测试、隔离 JS 运行实验与网络实验分开记录，
+HTTP 非流管线已有本机合成上游证据，流处理已有实现，运行证据须单独补齐。纯逻辑测试、隔离 JS 运行实验与网络实验分开记录，
 继续用可独立确定的语义检验契约，例如：
 
 - 同一字段先 provider 后 model 修改，模型后的值最终发送。

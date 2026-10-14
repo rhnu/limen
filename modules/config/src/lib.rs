@@ -1,8 +1,7 @@
-//! Validated startup configuration and shared protocol contracts.
+//! Validated startup configuration.
 
 mod business;
 mod error;
-mod protocol;
 mod server;
 
 pub use business::{
@@ -10,7 +9,6 @@ pub use business::{
     validate_json,
 };
 pub use error::{ConfigError, ConfigErrorKind};
-pub use protocol::{ErrorCode, validate_response_status};
 pub use server::{
     ClientAuth, LogConfig, LogFormat, LogLevel, LogOutput, ResourceLimits, ServerConfig,
     load_server,

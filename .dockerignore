@@ -1,0 +1,22 @@
+# Build inputs are an allowlist. Local configuration and credentials stay out of
+# every stage and exported build cache, even when they are untracked by Git.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!src/**/*.rs
+!modules/*/Cargo.toml
+!modules/*/src/**/*.rs
+# These scripts are embedded with include_str!, not deployment configuration.
+!modules/script/src/context.js
+!modules/script/src/json/bridge.js
+
+# These remain excluded even if placed below an allowed source directory.
+**/local
+**/target
+**/.git
+**/.env
+**/.env.*
+**/secrets.*
+**/*.pem
+**/*.key

@@ -1,4 +1,4 @@
-(function (validateHeader, maxNodes, maxBytes) {
+(function (validateHeader, maxNodes, maxBytes, maxEvents) {
   "use strict";
   // Capture intrinsics before trusted configuration can replace global methods.
   const ownKeys = Reflect.ownKeys;
@@ -94,12 +94,15 @@
     if (meta === null || typeof meta !== "object" || isArray(meta)) fail();
     const phase = read(meta, "phase");
     if (phase !== "onRequest" && phase !== "beforeSend" && phase !== "afterReceive"
-        && phase !== "onResponse" && phase !== "onError" && phase !== "onFinish") fail();
+        && phase !== "onResponse" && phase !== "onUpstreamEvent" && phase !== "onStreamEvent"
+        && phase !== "onError" && phase !== "onFinish") fail();
     const observer = phase === "onError" || phase === "onFinish";
+    const stream = phase === "onUpstreamEvent" || phase === "onStreamEvent";
     const state = read(root, "state");
     if (state === null || typeof state !== "object" || isArray(state)) fail();
     const keys = ownKeys(root);
-    let headers;
+    let headers, events, replaced = false;
+    if (stream && (!descriptor(root, "event") || descriptor(root, "events") || descriptor(root, "replaceEvents"))) fail();
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       let value = read(root, key), writable = false;
@@ -108,6 +111,8 @@
         value = headers.api;
       } else if (key === "body" && !observer && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse")) {
         writable = true;
+      } else if (key === "event" && stream) {
+        writable = true;
       } else if ((key === "url" && phase === "beforeSend") || (key === "status" && phase === "afterReceive")) {
         writable = true;
       } else if (key !== "state" || observer) {
@@ -115,8 +120,20 @@
       }
       define(root, key, { value, enumerable: true, writable, configurable: false });
     }
+    if (stream) {
+      define(root, "replaceEvents", {
+        value: freeze(function (replacement) {
+          if (replaced || !isArray(replacement) || replacement.length > maxEvents) fail();
+          replaced = true;
+          events = replacement;
+        }),
+        enumerable: false, writable: false, configurable: false,
+      });
+    }
     seal(root);
-    weakSet(prepared, root, { keys, headers });
+    weakSet(prepared, root, { keys, headers, stream, events() {
+      return replaced ? events : [read(root, "event")];
+    } });
     return root;
   }
   function project(root) {
@@ -125,7 +142,18 @@
     const output = create(null);
     for (let i = 0; i < info.keys.length; i++) {
       const key = info.keys[i];
+      if (info.stream && key === "event") continue;
       output[key] = key === "headers" ? info.headers.snapshot() : read(root, key);
+    }
+    if (info.stream) {
+      const events = info.events();
+      // Recheck at commit: an async hook may retain and grow the replacement array.
+      if (events.length > maxEvents) fail();
+      for (let i = 0; i < events.length; i++) {
+        const event = read(events, i);
+        if (event === null || typeof event !== "object" || isArray(event)) fail();
+      }
+      output.events = events;
     }
     return output;
   }

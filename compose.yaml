@@ -1,0 +1,26 @@
+services:
+  limen:
+    image: limen:local
+    platform: linux/amd64
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Mount the whole copied example tree so relative ESM imports still work.
+      - type: bind
+        source: ./local
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    # HTTP draining and VM shutdown each have a 5s application budget.
+    stop_grace_period: 15s
+    restart: unless-stopped

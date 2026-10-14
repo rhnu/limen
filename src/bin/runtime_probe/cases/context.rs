@@ -286,3 +286,118 @@ pub(super) async fn isolation(fixture: &mut Fixture) -> ProbeResult {
     )?;
     stop(&runtime).await
 }
+
+const STREAM_CONTEXT_CONFIG: &str = r"
+        let release;
+        export default {
+            async onRequest(ctx) {
+                switch (ctx.meta.operation) {
+                    case 'edit': ctx.event.text += ' edited'; break;
+                    case 'replace': ctx.event = { text: 'replacement' }; break;
+                    case 'drop': ctx.replaceEvents([]); break;
+                    case 'split': ctx.replaceEvents([{text:'a'}, {text:'b'}]); break;
+                    case 'twice': ctx.replaceEvents([]); ctx.replaceEvents([]); break;
+                    case 'invalid': ctx.replaceEvents([null]); break;
+                    case 'sparse': ctx.replaceEvents(new Array(1)); break;
+                    case 'count': ctx.replaceEvents(new Array(65).fill({})); break;
+                    case 'late-count': {
+                        const events = [{}]; ctx.replaceEvents(events);
+                        await Promise.resolve(); events.length = 65; break;
+                    }
+                    case 'readonly': ctx.replaceEvents = () => {}; break;
+                    case 'return': ctx.replaceEvents([]); return {};
+                    case 'reject': ctx.replaceEvents([]); throw new Error('synthetic');
+                    case 'pending':
+                        ctx.replaceEvents([{text:'uncommitted'}]);
+                        await new Promise(resolve => { release = resolve; });
+                        ctx.state.late = true; break;
+                    case 'missing': if (typeof ctx.replaceEvents !== 'undefined') throw new Error(); break;
+                }
+                ctx.state.visited = true;
+            },
+            onFinish() { release(); }
+        };
+    ";
+
+/// Opt-in VM evidence stays outside pure unit tests and requires the timeout driver.
+pub(super) async fn stream(fixture: &mut Fixture) -> ProbeResult {
+    let (runtime, config) = fixture.start(STREAM_CONTEXT_CONFIG).await?;
+    let id = hook(&config, "onRequest")?;
+    for phase in ["onUpstreamEvent", "onStreamEvent"] {
+        for (operation, expected) in [
+            ("edit", json!([{"text":"initial edited"}])),
+            ("replace", json!([{"text":"replacement"}])),
+            ("drop", json!([])),
+            ("split", json!([{"text":"a"}, {"text":"b"}])),
+        ] {
+            let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{"text":"initial"}});
+            let output = runtime.invoke(call(id, 1, input)).await?;
+            ensure(
+                output["events"] == expected && output.get("event").is_none(),
+                "stream projection lost edits, drop or output order",
+            )?;
+            ensure(
+                output["state"]["visited"] == true,
+                "stream state did not commit",
+            )?;
+        }
+        for operation in [
+            "twice",
+            "invalid",
+            "sparse",
+            "count",
+            "late-count",
+            "readonly",
+            "return",
+            "reject",
+        ] {
+            let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{}});
+            ensure(
+                runtime.invoke(call(id, 2, input)).await.is_err(),
+                "invalid stream output committed",
+            )?;
+        }
+    }
+    let output = runtime
+        .invoke(call(
+            id,
+            3,
+            json!({"meta":{"phase":"onRequest","operation":"missing"},"state":{},"body":{}}),
+        ))
+        .await?;
+    ensure(
+        output.get("events").is_none(),
+        "non-stream context exposed event output",
+    )?;
+    let pending = call(
+        id,
+        4,
+        json!({"meta":{"phase":"onStreamEvent","operation":"pending"},"state":{},"event":{}}),
+    );
+    let cancellation = pending.cancellation.clone();
+    let waiting_runtime = runtime.clone();
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    cancellation.cancel();
+    ensure(
+        waiting
+            .await?
+            .is_err_and(|error| error.kind() == ScriptErrorKind::Cancelled),
+        "cancelled replacement escaped its draft",
+    )?;
+    runtime
+        .invoke(call(hook(&config, "onFinish")?, 5, json!({})))
+        .await?;
+    let output = runtime
+        .invoke(call(
+            id,
+            6,
+            json!({"meta":{"phase":"onStreamEvent","operation":"drop"},"state":{},"event":{}}),
+        ))
+        .await?;
+    ensure(
+        output["events"] == json!([]) && output["state"].get("late").is_none(),
+        "late stream output polluted a later call",
+    )?;
+    stop(&runtime).await
+}

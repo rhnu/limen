@@ -110,7 +110,7 @@ pub(crate) async fn run(
     };
     budget.arm(startup_deadline.min(Instant::now() + options.execution_timeout));
     let bridge = match context
-        .with(|ctx| json::bridge(&ctx, options.json_limits))
+        .with(|ctx| json::bridge(&ctx, options.json_limits, options.max_output_events))
         .await
     {
         Ok(value) => value,

@@ -34,6 +34,7 @@ pub struct RuntimeOptions {
     pub job_batch: usize,
     pub max_modules: usize,
     pub max_source_bytes: usize,
+    pub max_output_events: usize,
     pub json_limits: JsonLimits,
 }
 
@@ -50,6 +51,7 @@ impl Default for RuntimeOptions {
             job_batch: 32,
             max_modules: 64,
             max_source_bytes: 1024 * 1024,
+            max_output_events: 64,
             json_limits: JsonLimits::default(),
         }
     }
@@ -331,6 +333,7 @@ fn valid_options(o: &RuntimeOptions) -> bool {
         && o.job_batch > 0
         && o.max_modules > 0
         && o.max_source_bytes > 0
+        && o.max_output_events > 0
         && o.json_limits.max_depth > 0
         && o.json_limits.max_depth <= 128
         && o.json_limits.max_nodes > 0

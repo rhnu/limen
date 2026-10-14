@@ -72,7 +72,11 @@ pub(crate) struct Bridge {
     oom: Persistent<Function<'static>>,
 }
 
-pub(crate) fn bridge(ctx: &Ctx<'_>, limits: JsonLimits) -> Result<Bridge, ScriptError> {
+pub(crate) fn bridge(
+    ctx: &Ctx<'_>,
+    limits: JsonLimits,
+    max_output_events: usize,
+) -> Result<Bridge, ScriptError> {
     let factory: Function = ctx
         .eval(include_str!("json/bridge.js"))
         .map_err(|e| failure(ctx, e))?;
@@ -92,7 +96,12 @@ pub(crate) fn bridge(ctx: &Ctx<'_>, limits: JsonLimits) -> Result<Bridge, Script
     )
     .map_err(|e| failure(ctx, e))?;
     let context: Object = context_factory
-        .call((validate_header, limits.max_nodes, limits.max_bytes))
+        .call((
+            validate_header,
+            limits.max_nodes,
+            limits.max_bytes,
+            max_output_events,
+        ))
         .map_err(|e| failure(ctx, e))?;
     Ok(Bridge {
         prepare: Persistent::save(

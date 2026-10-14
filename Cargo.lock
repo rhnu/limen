@@ -768,6 +768,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "limen-chat",
  "limen-config",
  "limen-script",
  "reqwest",
@@ -777,6 +778,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "limen-chat"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sse-parse",
+ "thiserror",
 ]
 
 [[package]]
@@ -1380,6 +1390,17 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sse-parse"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f02c075d99cc63d55f5497d598accf30bb440b629af082d03429ad2863247c34"
+dependencies = [
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
 ]
 
 [[package]]

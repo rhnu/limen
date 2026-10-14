@@ -1,0 +1,8 @@
+listen: 0.0.0.0:8080
+client_auth:
+  bearer: example-limen-client-token
+limits:
+  shutdown_ms: 5000
+log:
+  level: info
+  format: json

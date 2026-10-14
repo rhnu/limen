@@ -81,6 +81,7 @@ pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
         "context-headers" => context::headers(&mut fixture).await,
         "context-readonly" => context::readonly(&mut fixture).await,
         "context-isolation" => context::isolation(&mut fixture).await,
+        "context-stream" => context::stream(&mut fixture).await,
         _ => Err("unknown experiment".into()),
     }
 }
