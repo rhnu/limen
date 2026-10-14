@@ -1,8 +1,8 @@
 # Limen 设计
 
 本文是 Limen 的工作区设计基线，完整承接原始 `Limen-design.md` 的产品与技术约束，后续工作无需访问原始附件。
-功能契约仍是实现前设计，不代表功能已经开发完成。原稿中的库与源码调查是设计依据，实施时仍须重新核对实际采用版本。
-仓库已有最小 Rust scaffold；当前状态与剩余工作见[实施路线图](roadmap.md)，工程操作见[开发指引](development.md)。
+配置装载与 JS 调度基础已经实现；HTTP、请求管线与流处理仍是待实施契约。依赖解析以锁文件为准，升级时重新核对上游。
+当前状态与剩余工作见[实施路线图](roadmap.md)，工程操作见[开发指引](development.md)。
 
 “已确认”是产品边界，“建议默认”是实施起点，“待验证”必须以实现证据关闭。本文中的示例和验证清单是项目资料，
 不代表已经执行，也不自行授权发布、真实上游调用或外部操作。设计变更维护在本文件中，不再依赖附件副本。
@@ -35,7 +35,8 @@
 
 上述异步与平台选择已经确定，运行时与平台能力仍需实施验证。
 
-- **实施时验证：**Rust 与 QuickJS 的生命周期、Promise 调度与取消、预算中断、数字边界及 SSE 转换。
+- **已有本机证据：**Rust 与 QuickJS 引用关闭顺序、Promise 调度与取消、执行/内存预算和数字边界已通过隔离实验；已知限制见第 9 节。
+- **实施时验证：**完整 HTTP 请求生命周期、SSE 转换、慢客户端与关闭传播。
 - **实施时验证：**Linux Docker 中的构建、启动、配置挂载、端口绑定与关闭行为。
 - **实施时验证：**依赖最新稳定版本、MSRV、平台及 feature 兼容性；本文不把网页上的 `latest` 快照作为锁定版本。
 
@@ -81,8 +82,40 @@ log:
 bearer
 token；无认证模式需显式写明。首版不做用户数据库、多租户、密钥分组或额度管理。
 
-资源限制由 Rust 服务强制执行，业务 hook
-不能取消。具体默认数值在实现阶段依据目标平台和预期请求大小确定，不在设计阶段伪造性能依据。
+资源限制由 Rust 强制执行，业务 hook 不能取消。以下是当前 schema；所有字段可在 `limits` 中覆盖，未知字段报错。
+默认值是面向个人使用的保守初值，用于给内存、队列和执行建立上界，不是测量所得的容量或吞吐保证。
+HTTP 与流相关字段目前完成解析校验，随对应处理路径实现后接入。
+
+| 字段                   | 默认值   | 允许范围           | 用途                                   |
+| ---------------------- | -------- | ------------------ | -------------------------------------- |
+| `startup_ms`           | 5000     | 1–300000           | 模块求值、提取与静态校验的总等待预算   |
+| `hook_ms`              | 5000     | 1–300000           | 单 hook 排队到结果转换的 wall deadline |
+| `request_ms`           | 120000   | 1–3600000          | 请求总预算                             |
+| `execution_ms`         | 100      | 1–10000            | 每次进入 JS 的统一执行时间上限         |
+| `vm_work_ms`           | 1000     | 1–60000            | VM 持续可运行 job 的总工作上限         |
+| `cleanup_ms`           | 100      | 1–10000            | 终态观察预算                           |
+| `shutdown_ms`          | 5000     | 1–300000           | 应用等待 runtime 关闭的上限            |
+| `memory_bytes`         | 67108864 | 1048576–1073741824 | QuickJS 分配预算                       |
+| `stack_bytes`          | 524288   | 65536–8388608      | QuickJS 栈预算                         |
+| `concurrency`          | 32       | 1–4096             | HTTP 在途请求上限                      |
+| `queue_capacity`       | 64       | 1–65536            | JS 命令队列容量                        |
+| `max_pending`          | 128      | 1–65536            | 未完成 hook 上限                       |
+| `job_batch`            | 32       | 1–1024             | 每轮最多执行的微任务数                 |
+| `max_body_bytes`       | 4194304  | 1–268435456        | 请求正文上限                           |
+| `max_event_bytes`      | 1048576  | 1–67108864         | 单 SSE 事件上限                        |
+| `max_output_events`    | 64       | 1–4096             | 单事件管线累计展开数量上限             |
+| `max_output_bytes`     | 4194304  | 1–268435456        | JSON 桥接及事件展开输出上限            |
+| `max_aggregate_bytes`  | 16777216 | 1–1073741824       | SSE 聚合字节上限                       |
+| `max_aggregate_events` | 100000   | 1–1000000          | SSE 聚合事件数上限                     |
+| `max_modules`          | 128      | 1–4096             | ESM 模块数上限，包含入口               |
+| `max_source_bytes`     | 4194304  | 1–67108864         | ESM 模块图总源码字节上限               |
+| `max_json_depth`       | 64       | 1–128              | JS/JSON 对象嵌套上限                   |
+| `max_json_nodes`       | 100000   | 1–1000000          | JS/JSON 值节点上限                     |
+
+基础 YAML 文件另外固定限制为 1 MiB、单文档和 16 层嵌套，拒绝重复键、merge key、anchor 和 alias。
+认证必须明确写成 `{bearer: "..."}` 或 `{none: true}`，不能同时提供两者；令牌必须符合 bearer token 字符集。
+`listen` 为非零端口的 IP socket 地址。`log.level` 接受 `error/warn/info/debug/trace`，
+`log.format` 接受 `text/json`，`log.output` 当前仅接受 `stderr`，默认分别为 `info/text/stderr`。
 
 ### 3.2 `config.js`：路由与变换
 
@@ -200,6 +233,13 @@ userinfo 中。需要静态 query 参数时保留，但日志不输出原始 que
 模型通过引用复用 provider 的连接配置，不做 `extends`
 链或隐式多重继承。需要静态配置不同 endpoint 或上游认证时定义另一个
 provider；可用普通 JS 常量、函数或对象展开复用重复配置。
+
+当前 schema 要求 1–1024 个 provider、1–4096 个 model；每条 pipeline 最多 256 步，步名在该数组内唯一。
+provider 名、模型别名与步名为 1–128 字节的 ASCII 字母、数字或 `-._/`；`upstream` 为 1–1024 字节且不含控制字符。
+endpoint 最多 8192 字节，显式使用小写 `http://` 或 `https://` 前缀，拒绝空白、反斜杠、userinfo 和 fragment，
+保留原始完整路径与 query。静态 `headers` 是字符串到字符串的对象，拒绝大小写重复的头名及 Rust 管理的传输头。
+可选字段通过省略表达缺失，显式 `null` 不能代替 auth、hook 或其他配置记录；defaults 内的 JSON `null` 保留。
+所有结构记录要求对象，不接受按字段位置排列的数组。bearer 最多 8192 字节，不允许空值或控制字符。
 
 ### 4.3 覆盖规则
 
@@ -412,7 +452,7 @@ SSE → SSE 不因为配置了 `onResponse` 就自动缓存整段流。`onRespon
 status、content-type 等事实，用于错误判断和 parser 选择；改 draft
 不会让失败响应进入成功路径，也不会使 JSON body 被当成 SSE
 解析。建议允许显式映射失败响应的下游错误状态码，禁止把原始失败映射到 `2xx`
-成功类别。具体可映射状态范围在实现前固定，不由各 hook 自行定义错误分类。
+成功类别。当前契约固定为：原始 2xx 仅可映射到 2xx，且下游不得为无正文的 204/205；原始 3xx–5xx 仅可映射到 4xx/5xx。1xx 与其他非法状态拒绝，不由各 hook 自行定义错误分类。
 
 JSON → SSE 只是兼容性分段，不会降低上游完整生成所需的首包延迟。
 
@@ -469,8 +509,26 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
   已开始的生成或计费立即停止。
 - 排队、慢客户端和 VM 执行都有背压，不创建无限任务或无界缓冲。
 
-返回头尚未发送时，错误可使用正常 HTTP 状态码和统一 JSON 错误结构。开始发送 SSE
-后无法更改 HTTP 状态，使用约定的流内错误处理并关闭连接，不能伪造成功完成。
+返回头尚未发送时，错误使用 `{"error":{"code":"...","message":"...","request_id":"..."}}`。
+消息由 Rust 提供清理后的固定说明，不包含上游正文、JS 异常文本、token 或源码。
+下表固定对外 code/status 契约；HTTP/SSE 适配将在后续实现。
+
+| code                                    | HTTP 状态                                 |
+| --------------------------------------- | ----------------------------------------- |
+| `invalid_request` / `unknown_model`     | 400                                       |
+| `unauthorized`                          | 401                                       |
+| `payload_too_large`                     | 413                                       |
+| `busy`                                  | 429                                       |
+| `cancelled`                             | 499（内部归类；客户端已断开时不尝试发送） |
+| `hook_failed` / `internal_error`        | 500                                       |
+| `upstream_failed` / `upstream_protocol` | 502                                       |
+| `unavailable`                           | 503                                       |
+| `deadline_exceeded`                     | 504                                       |
+
+内部错误另外保留阶段、调用/请求 ID、清理是否执行及退役原因，不直接序列化给客户端。
+开始发送 SSE 后无法更改 HTTP 状态；发送一个 `event: error` 事件，其 `data` 为相同错误对象 JSON，随后关闭连接，
+不追加 `[DONE]`。SSE 媒体类型匹配忽略大小写并容忍参数，仅接受 `text/event-stream`；
+JSON 与 SSE 跨形态转换遇到未支持结构必须拒绝，不能静默丢失字段。
 
 首版没有自动重试，并关闭自动上游重定向。网络错误、上游失败或跳转不隐式重新提交生成请求，以免产生重复费用、重复输出或跨目标传递凭据。
 
@@ -500,6 +558,8 @@ Rust HTTP 服务使用 Tokio；独立 OS 线程运行 current-thread Tokio
 executor，并拥有一个 rquickjs `AsyncRuntime`、`AsyncContext` 及持久化 hook
 表。启用 `futures`、`loader` 所需能力，不依赖实验性 `parallel` feature。HTTP
 侧只传 hook ID、请求/调用 ID 和 owned 数据，不跨线程传 JS 句柄。
+当前命令包含 owned JSON context、绝对 `Instant` deadline 与取消句柄；一次性结果通道关联原调用，
+只交付通过校验的 owned JSON。取消调用 future 会关闭结果通道并唤醒 actor，从而撤销提交资格。
 
 一个共享 VM 保留“每次进程启动求值一次配置”的语义。首版不建立多 VM
 池，也不为每个请求重新执行模块。不同请求可以在等待 Promise 时交错推进，但 JS
@@ -507,7 +567,7 @@ executor，并拥有一个 rquickjs `AsyncRuntime`、`AsyncContext` 及持久化
 
 入口队列与等待中的 hook 数分别有界。调度器必须同时处理调用、完成、取消与
 deadline，不能在收件 actor 中直接 `await` 某个可能永不完成的
-Promise。建议采用显式、有限批次的 job pump：
+Promise。当前采用显式、有限批次的 job pump：
 
 1. 接收有界调用命令，创建该调用独立的 draft 和状态快照；在短
    `AsyncContext::with` 中调用函数。
@@ -533,8 +593,8 @@ I/O。以后不能只轮询 `is_job_pending`：内部 Rust future
 该结构依据
 [rquickjs AsyncRuntime 单步 job API](https://docs.rs/rquickjs/latest/rquickjs/struct.AsyncRuntime.html#method.execute_pending_job)、[AsyncContext 短调用 API](https://docs.rs/rquickjs/latest/rquickjs/struct.AsyncContext.html#method.with)
 和
-[Promise 状态 API](https://docs.rs/rquickjs/latest/rquickjs/struct.Promise.html#method.result)；实际
-job 公平性、唤醒与取消仍需实现验证，不能仅凭启用了 async feature 宣称成立。
+[Promise 状态 API](https://docs.rs/rquickjs/latest/rquickjs/struct.Promise.html#method.result)。
+本机调度、唤醒与取消的行为证据见第 9.4 节，不把启用了 async feature 当作调度或隔离保证。
 
 配置中的全局变量和闭包会跨请求存活，并可能在 `await`
 边界发生逻辑交错。单线程不等于请求隔离；请求数据只放在独立 draft / `ctx.state`
@@ -561,8 +621,9 @@ await，但默认导出本身仍须为配置对象。不能误以为任意求值
 
 ### 9.3 ESM 与宿主能力
 
-rquickjs 提供自定义 resolver/loader，可复用其脚本加载器并只增加路径归一化和
-`.mjs` 支持。不要重写 JavaScript parser 或实现 Node 兼容层。
+rquickjs 提供 resolver/loader 接口；当前适配器增加路径归一化、`.mjs`、普通文件检查、模块数量与总源码预算，
+通过 `Module::declare` 交给 QuickJS 解析和缓存。内建文件加载器不能承担这些资源边界，因此仅替换文件解析与读取层，
+不重写 JavaScript parser，也不实现 Node 兼容层。
 
 QuickJS 是 JavaScript 引擎，并不自动提供
 Node.js、`fetch`、定时器或浏览器标准库。首版不承诺这些能力；配置复用依靠本地模块和普通
@@ -592,16 +653,26 @@ CPU 预算与 wall deadline 分开：引擎中断处理器限制每次实际 JS
 JS job。每次 JS 执行采用统一预算，各调用 wall deadline
 则由调度器独立处理；不宣称首版已实现精确的每请求 JS CPU 计费或隔离。
 
-同步执行被中断、内存耗尽，或持续微任务工作超过 VM 级失控阈值时，才将共享 VM
+同步执行被中断、传播到宿主的内存耗尽错误，或持续微任务工作超过 VM 级失控阈值时，将共享 VM
 标记为不可继续使用：停止接受新调用、失败依赖它的未完成调用、记录原因并退出进程，交由
 Docker
 的部署重启策略恢复。其他在途请求可能因此失败；不得自动重新提交它们的上游生成请求。
 
-不能可靠检测任意“全局污染”，也不以看似正常的 Promise 完成来证明 runtime
-已恢复。中断后的可用性、持续微任务超预算检测及退出清理均是实施验证项。内存限制还需核对实际
-allocator feature 是否使限制 API 生效。
+不能可靠检测任意“全局污染”，也不以看似正常的 Promise 完成来证明 runtime 已恢复。
+当前使用 QuickJS 内建 allocator，不启用 `rust-alloc`，`set_memory_limit` 在隔离实验中触发未捕获 OOM 并退役。
+rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并消化 OOM，宿主不能可靠得知发生过分配失败，
+因此不能承诺此时必然退役。内存上限仍然生效；配置脚本不得把捕获 OOM 后继续执行当作支持的恢复策略。
+改变此限制需要重新评估 allocator 接口与工作区 `unsafe_code = forbid` 约束。
+
+当前进程实验验证了同步/异步 void、悬挂 Promise 下的调用与取消推进、deadline 后迟到结果不提交、
+同步中断、持续微任务预算、未捕获 OOM 和 pending 引用关闭路径。无 job 时通过通知、命令或最近 deadline 唤醒，
+没有固定间隔轮询；这属于代码与行为证据，不是 CPU 占用或公平性吞吐测量。Linux 运行证据仍待部署阶段补充。
 
 ### 9.5 JSON 边界
+
+当前静态导出与 hook 输出只接受普通对象（含 null prototype）及普通数组；拒绝 accessor、Proxy、Symbol 键、
+额外数组属性和非枚举数据，避免转换过程中执行 getter 或静默丢值。JSON 桥接按最坏转义长度保守计入字节预算，
+可能在实际编码达到上限前拒绝；节点、深度和源码图也分别有界。
 
 - 区分属性缺失、`undefined` 和 JSON `null`。删除字段用
   `delete`；把字段或数组元素赋为 `undefined`
@@ -661,7 +732,10 @@ provider，也不执行请求阶段 hook。
 默认不记录完整请求体、响应体、消息文本、原始头、令牌、Cookie 或 URL
 query。错误、调试日志和 JS 日志同样需要处理秘密，不能只在 INFO 级别遮蔽。
 
-配置加载错误应给出文件、字段路径和行列；不打印携带令牌的完整配置快照。脚本堆栈优先输出文件和位置，不原样回显源码行。
+YAML 诊断提供清理后的 schema 字段路径以及解析器确实提供的行列；缺少位置时不伪造坐标。
+任意用户键名以 `*` 代替，避免把携密键名带入错误。求值生成的 JS 对象只报告静态 schema 路径，
+不假定对象属性有可靠源码映射。JS 异常目前输出阶段/固定分类，不回显 message、stack 或源码；
+不会为了位置而输出可能携密的异常文本。应用提供逻辑配置文件类别，不打印整份配置。
 
 首版不增加管理后台、远程修改配置接口或配置监控。修改配置后先
 `check`，再重启进程。
@@ -730,7 +804,7 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 3. 有序变换：provider/model 顺序 await、header draft、异步提交边界、资源预算。
 4. 流处理：SSE 解析、四种传输组合、usage/tool call 边界、取消与截断错误。
 
-上述业务实现尚未完成。优先用纯逻辑单元测试验证可独立确定的语义，例如：
+HTTP 与完整请求管线尚未完成。配置纯逻辑测试、隔离 JS 运行实验与后续网络验收分开记录，优先验证可独立确定的语义，例如：
 
 - 同一字段先 provider 后 model 修改，模型后的值最终发送。
 - 客户端 bearer 不泄漏到上游；认证与普通头冲突能定位。
