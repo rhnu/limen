@@ -89,7 +89,7 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 父进程监听 Ctrl-C 和 Unix SIGTERM，停止并回收进程树后再删除目录；实验失败以非零退出码汇总。
 退出码为 `0` 全部通过或列表/帮助成功，`1` 实验、构建或清理失败，`2` 参数错误。
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
-17 个 VM 实验（包含 `context-stream`）已通过 Linux 隔离运行验证。
+17 个 VM 实验（包含 `context-stream`）已通过 Linux 与 Windows 隔离运行验证。
 
 检查示例配置：
 
@@ -109,6 +109,7 @@ cargo run --locked -- check --config examples/basic/server.yaml
 ```sh
 cargo xtask probe http
 cargo xtask probe http transport-contracts
+cargo xtask probe http request-overrides pipeline stream-transforms
 cargo xtask probe http --executable target/debug/limen
 ```
 
@@ -119,12 +120,18 @@ Unix 使用独立进程 session，Windows 使用 Job Object；超时、失败及
 VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixture 子目录。
 合成上游复用 Hyper，客户端复用 reqwest；客户端断开实验另外持有原始 TCP socket。
 实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
+`request-overrides` 检查上游实际收到的参数、URL 和请求头，覆盖 provider/model/client/hook 优先级、
+对象与数组的浅层替换、显式 null、字段删除、多模态/工具/扩展字段保留，以及改写 model 后不重新路由。
+`pipeline` 以客户端最终文本、状态码、响应头和上游请求检查异步响应改写、请求状态隔离与失败后恢复；
+异常、Promise rejection、非 void 完成值和循环 draft 都必须返回安全错误且不发送上游请求。
+`stream-transforms` 检查 SSE 丢弃与拆分后的实际片段、聚合文本、usage 和对外模型名，
+也覆盖完整 JSON 响应改写后转换为 SSE。上述断言不依赖内部调用轨迹或执行计数。
 `transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误。
-10 个 Rust HTTP 实验（包含 `transport-contracts` 和 SIGTERM 关闭）已通过 Linux 隔离运行验证。
-Windows 关闭实验由两个短命 helper 隔离控制台和 Ctrl-C，避免向用户终端广播；
-新 Rust 实现的 Windows 运行验证仍待补齐，历史 Windows 证据来自原驱动。
-Windows 原生进程模块已通过 GNU 目标的交叉编译与严格 Clippy；静态检查不替代控制台与信号的运行证据。
-纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动均显式调用，不混入普通单元测试或自动 CI。
+全部 12 个 Rust HTTP 实验已通过 Windows 隔离运行验证；原有 10 个实验（包含 `transport-contracts` 和 SIGTERM 关闭）
+已有 Linux 证据。新增覆盖与 CI 高级测试步骤的 Linux 运行结果仍待取得。
+Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创建或连接网关私有控制台，隔离 Ctrl-C 广播。
+正常实验清理与独立控制台 Ctrl-C 已有运行证据；Job Object 在外部超时和父进程中断时的回收仍待单独验证。
+纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动作为独立高级测试执行，CI 中固定排在单元测试之后。
 日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
 
 ## 当前依赖选择
@@ -216,8 +223,9 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，默认只授予 `contents: read`，
 镜像 job 另授予 `packages: write`。同 ref 运行串行排队，`queue: max` 最多容纳 100 个等待运行，
 超过 GitHub 队列上限的运行会被取消；新运行不取消正在执行的构建与发布。每个 job 有超时；checkout 不持久化凭据。
-Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、纯逻辑单元测试；Markdown job 检查仓库文档。
-隔离运行实验当前手动调用，不自动加入普通 CI 测试步骤。
+Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、纯逻辑单元测试、
+`cargo xtask probe runtime` 与 `cargo xtask probe http`；Markdown job 检查仓库文档。
+两组高级测试各自使用 worker 进程与单项外部超时，任一失败都会阻止后续镜像构建与发布。
 
 GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支保护可依据现有 CI 配置。
 镜像 job 等待 Rust 与 Markdown 检查通过，使用 Buildx 构建 `linux/amd64` 和 GHA `mode=max` 中间层缓存。

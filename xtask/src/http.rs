@@ -3,7 +3,9 @@
 mod fixture;
 mod lifecycle;
 mod observations;
+mod overrides;
 mod routing;
+mod streams;
 mod transport;
 mod upstream;
 
@@ -15,6 +17,8 @@ use fixture::Laboratory;
 pub const CASES: &[&str] = &[
     "auth-routing",
     "pipeline",
+    "request-overrides",
+    "stream-transforms",
     "failures",
     "deadline",
     "disconnect",
@@ -31,6 +35,8 @@ pub async fn run(case: &str, executable: &Path, directory: &Path) -> Result<()> 
     let result = match case {
         "auth-routing" => routing::auth_routing(&mut laboratory).await,
         "pipeline" => routing::pipeline(&mut laboratory).await,
+        "request-overrides" => overrides::run(&mut laboratory).await,
+        "stream-transforms" => streams::run(&mut laboratory).await,
         "failures" => routing::failures(&mut laboratory).await,
         "deadline" => lifecycle::deadline(&mut laboratory).await,
         "disconnect" => lifecycle::disconnect(&mut laboratory).await,

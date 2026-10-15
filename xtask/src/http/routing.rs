@@ -105,22 +105,25 @@ pub async fn auth_routing(laboratory: &mut Laboratory<'_>) -> Result<()> {
         .await
 }
 
-const PIPELINE: &str = r"let finishes = 0, failures = 0, observed = null;
-export default {
- onRequest(ctx) { ctx.body.model = 'chat'; ctx.state.order = ['request']; },
- onError(ctx) { failures++; observed = ctx.state.order; },
- onFinish(ctx) { finishes++; if (!Object.isFrozen(ctx.state)) throw new Error('readonly'); },
+const PIPELINE: &str = r"export default {
+ onRequest(ctx) { ctx.body.model = 'chat'; ctx.state.suffix = ctx.body.suffix || ''; },
  providers: {p: {endpoint: ENDPOINT, auth: {bearer: 'synthetic-upstream-secret'}, pipeline: [{name: 'provider',
-  async beforeSend(ctx) { ctx.state.order.push('provider-before'); ctx.body.model = 'hook-model'; ctx.headers.delete('Authorization'); ctx.headers.append('X-Multiple','one'); ctx.headers.append('x-multiple','two'); ctx.url = ctx.url.replace('/custom/completion', '/modified'); },
-  afterReceive(ctx) { ctx.state.order.push('provider-after'); ctx.status = 201; ctx.headers.set('X-Draft','provider'); },
-  onResponse(ctx) { ctx.state.order.push('provider-response'); ctx.body.order = ctx.state.order; }}]}},
+  async beforeSend(ctx) { await Promise.resolve(); ctx.body.model = 'hook-model'; ctx.headers.delete('Authorization'); ctx.headers.append('X-Multiple','one'); ctx.headers.append('x-multiple','two'); ctx.url = ctx.url.replace('/custom/completion', '/modified'); },
+  afterReceive(ctx) { ctx.status = 201; ctx.headers.set('X-Draft','provider'); },
+  onResponse(ctx) { ctx.body.choices[0].message.content = 'hello ' + ctx.body.choices[0].message.content; }}]}},
  models: {chat: {provider: 'p', upstream: 'real-model', pipeline: [{name: 'model',
-  beforeSend(ctx) { if (ctx.body.fail) { ctx.state.order.push('discard'); throw new Error('synthetic-body-secret'); } ctx.state.order.push('model-before'); },
-  afterReceive(ctx) { ctx.state.order.push('model-after'); ctx.headers.set('X-Draft','model'); },
-  onResponse(ctx) { ctx.state.order.push('model-response'); ctx.body.order = ctx.state.order; ctx.body.counters = [finishes,failures]; ctx.body.observed = observed; ctx.body.model = 'explicit-alias'; }}]}}
+  async beforeSend(ctx) {
+   if (ctx.body.fail) ctx.body.temperature = 99;
+   if (ctx.body.fail === 'throw') throw new Error('synthetic-body-secret');
+   if (ctx.body.fail === 'reject') await Promise.reject(new Error('synthetic-body-secret'));
+   if (ctx.body.fail === 'return') return {temperature: 99};
+   if (ctx.body.fail === 'cycle') ctx.body.cycle = ctx.body;
+  },
+  afterReceive(ctx) { ctx.headers.set('X-Draft','model'); },
+  async onResponse(ctx) { await Promise.resolve(); ctx.body = {...ctx.body, model: 'explicit-alias', choices: [{...ctx.body.choices[0], message: {...ctx.body.choices[0].message, content: ctx.body.choices[0].message.content.toUpperCase() + ctx.state.suffix}}]}; }}]}}
 };";
 
-/// Verify provider/model ordering and discarded failed drafts without rerouting.
+/// Check transformed client responses, failed-request isolation and final upstream requests.
 pub async fn pipeline(laboratory: &mut Laboratory<'_>) -> Result<()> {
     laboratory
         .with_fixture(
@@ -129,25 +132,25 @@ pub async fn pipeline(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 ..Options::default()
             },
             async |item| {
+                item.upstream.controls.lock().await.response = Some(json!({
+                    "id":"synthetic", "object":"chat.completion", "created":1,
+                    "model":"real-model", "choices":[{"index":0,
+                        "message":{"role":"assistant","content":"world"},"finish_reason":"stop"}],
+                    "usage":{"total_tokens":3}, "vendor_extension":{"preserved":true}
+                }));
                 let reply = item
-                    .request(request(&[("model", json!("reroute-once"))]))
+                    .request(request(&[("model", json!("reroute-once")), ("suffix", json!("!"))]))
                     .await?;
                 ensure!(
                     reply.status == 201 && reply.body["model"] == "explicit-alias",
                     "status and explicit response model"
                 );
                 ensure!(
-                    reply.body["order"]
-                        == json!([
-                            "request",
-                            "provider-before",
-                            "model-before",
-                            "provider-after",
-                            "model-after",
-                            "provider-response",
-                            "model-response"
-                        ]),
-                    "provider then model in each stage"
+                    reply.body["choices"][0]["message"]["content"] == "HELLO WORLD!"
+                        && reply.body["choices"][0]["finish_reason"] == "stop"
+                        && reply.body["usage"]["total_tokens"] == 3
+                        && reply.body["vendor_extension"] == json!({"preserved":true}),
+                    "response transformations preserve completion metadata and extensions"
                 );
                 ensure!(reply.header("x-draft")? == "model", "later draft wins");
                 {
@@ -171,28 +174,27 @@ pub async fn pipeline(laboratory: &mut Laboratory<'_>) -> Result<()> {
                         .context("read multivalue upstream headers")?;
                     ensure!(values == ["one", "two"], "header multivalue preserved");
                 }
-                item.request(request(&[("fail", json!(true))]))
-                    .await?
-                    .error(500, "hook_failed", "failed hook aborts")?;
-                ensure!(
-                    item.upstream.controls.lock().await.records.len() == 1,
-                    "failed hook never sends"
+                for mode in ["throw", "reject", "return", "cycle"] {
+                    let reply = item.request(request(&[("fail", json!(mode))])).await?;
+                    reply.error(500, "hook_failed", "invalid hook result rejects the request")?;
+                    ensure!(reply.body["error"]["request_id"].as_str().is_some_and(|id| !id.is_empty()),
+                        "hook errors include a client-visible request identifier");
+                    ensure!(!reply.body.to_string().contains("synthetic-body-secret"),
+                        "hook exception text stays out of the public error");
+                    ensure!(item.upstream.controls.lock().await.records.len() == 1,
+                        "failed hook sends no partial upstream request ({mode})");
+                }
+                let (first, second) = tokio::join!(
+                    item.request(request(&[("suffix", json!(" first"))])),
+                    item.request(request(&[("suffix", json!(" second"))]))
                 );
+                for (reply, expected) in [(first?, "HELLO WORLD first"), (second?, "HELLO WORLD second")] {
+                    ensure!(reply.status == 201 && reply.body["choices"][0]["message"]["content"] == expected,
+                        "concurrent requests retain their own response policy state after a failed request");
+                }
                 let reply = item.request(request(&[])).await?;
-                ensure!(
-                    reply.status == 201 && reply.body["counters"] == json!([2, 1]),
-                    "each terminal outcome observed once"
-                );
-                ensure!(
-                    reply.body["observed"] == json!(["request", "provider-before"]),
-                    "failed draft not committed to observer"
-                );
-                ensure!(
-                    reply.body["order"]
-                        .as_array()
-                        .is_some_and(|order| order.len() == 7),
-                    "state independently initialized"
-                );
+                ensure!(reply.status == 201 && reply.body["choices"][0]["message"]["content"] == "HELLO WORLD",
+                    "later requests do not inherit an earlier response suffix");
                 Ok(())
             },
         )

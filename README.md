@@ -99,6 +99,7 @@ Compose 将 `local/` 整个目录只读挂载到 `/config`，保留共享 ESM �
 `Cargo.lock` 纳入版本控制。纯逻辑单元测试与有外部超时保护的运行时实验分开执行。
 
 容器启动、Linux 运行行为及真实上游验收按部署阶段单独安排。
-Windows 本机已有纯逻辑测试和原驱动的隔离实验；Rust xtask 的 17 个 VM 与 10 个本地 HTTP 实验已在 Linux 通过，
-覆盖顺序、认证、取消、预算、流转换与 SIGTERM 关闭。新驱动的 Windows 运行验证仍待补齐。
+Rust xtask 的 17 个 VM 与 12 个本地 HTTP 实验已在 Windows 通过，覆盖参数覆写、响应改写、认证、取消、
+预算、流转换与独立控制台 Ctrl-C 关闭；原有 17 个 VM 与 10 个 HTTP 实验已有 Linux 证据。
+CI 在纯逻辑单元测试之后固定执行两组 xtask 高级测试。
 GitHub 远程为 `rhnu/limen`；项目尚未决定分发许可证，Cargo 包设置为不发布。

@@ -1,5 +1,8 @@
 //! Native console operations stay isolated in short-lived helper processes.
-#![allow(unsafe_code)]
+#![allow(
+    unsafe_code,
+    reason = "isolated helpers require the Windows console API"
+)]
 
 use std::{
     io,
@@ -27,7 +30,9 @@ pub fn gateway(executable: &Path, config: &Path) -> Result<ExitCode> {
     // SAFETY: GetStdHandle only queries process-owned handles; they remain open
     // for this helper's lifetime and are not dereferenced or transferred here.
     let handles = identifiers.map(|identifier| unsafe { GetStdHandle(identifier) });
-    // SAFETY: This helper has CREATE_NO_WINDOW and no caller console. AllocConsole
+    // Detach explicitly: startup can attach a console despite CREATE_NO_WINDOW.
+    detach_console().context("detach inherited gateway console")?;
+    // SAFETY: This helper has detached from any caller console. AllocConsole
     // creates an independent console and takes no pointers or borrowed resources.
     let allocated = unsafe { AllocConsole() };
     ensure!(
@@ -83,8 +88,9 @@ pub fn gateway(executable: &Path, config: &Path) -> Result<ExitCode> {
 
 /// Attach only to the gateway helper's private console before broadcasting Ctrl-C.
 pub fn signal(pid: u32) -> Result<()> {
-    // SAFETY: The signal helper starts with CREATE_NO_WINDOW, so it cannot be
-    // attached to the user's terminal. The PID identifies our gateway helper.
+    detach_console().context("detach inherited signal-helper console")?;
+    // SAFETY: This helper has detached from any caller console. The PID identifies
+    // our gateway helper, whose private console is the only broadcast target.
     let attached = unsafe { AttachConsole(pid) };
     ensure!(
         attached != 0,
@@ -108,15 +114,18 @@ pub fn signal(pid: u32) -> Result<()> {
         io::Error::last_os_error()
     );
     std::thread::sleep(Duration::from_millis(100));
-    // SAFETY: Detach this short-lived helper from the console it attached above;
-    // FreeConsole does not close the gateway's independent console attachment.
-    let detached = unsafe { FreeConsole() };
-    ensure!(
-        detached != 0,
-        "detach gateway console: {}",
-        io::Error::last_os_error()
-    );
-    Ok(())
+    detach_console().context("detach gateway console")
+}
+
+/// Detach only this helper, leaving every other process's console attachment intact.
+fn detach_console() -> io::Result<()> {
+    // SAFETY: FreeConsole takes no pointers and affects only the calling helper.
+    // It also succeeds when this helper has no console attached.
+    if unsafe { FreeConsole() } == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn signal_helper(pid: u32) -> Result<()> {
