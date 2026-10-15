@@ -1,6 +1,31 @@
 use std::{error::Error, fmt, io};
 
-use super::{ScriptError, ScriptErrorKind, ThreadFailure};
+use super::{
+    ScriptError, ScriptErrorKind, ThreadFailure,
+    exception::{ExceptionDiagnostic, ExceptionKind, Location},
+};
+
+#[test]
+fn exception_metadata_survives_reclassification_without_replacing_the_source() {
+    let error = ScriptError::with_source(ScriptErrorKind::JavaScript, rquickjs::Error::Exception)
+        .with_exception(ExceptionDiagnostic {
+            kind: ExceptionKind::ReferenceError,
+            location: Some(Location {
+                module: 1,
+                line: 4,
+                column: Some(3),
+            }),
+        });
+    let copy = error.clone().reclassify(ScriptErrorKind::Module);
+    assert!(std::ptr::eq(
+        error.source().unwrap(),
+        copy.source().unwrap()
+    ));
+    assert!(copy.source().unwrap().is::<rquickjs::Error>());
+    let diagnostic = copy.diagnostic().to_string();
+    assert!(diagnostic.contains("exception=ReferenceError, module=import#1, line=4, column=3"));
+    assert!(diagnostic.contains("quickjs=Exception"));
+}
 
 #[test]
 fn classification_and_clones_keep_the_original_cause() {

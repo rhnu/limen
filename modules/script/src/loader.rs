@@ -13,7 +13,10 @@ use rquickjs::{
     module::Declared,
 };
 
-use crate::{ScriptError, ScriptErrorKind};
+use crate::{
+    ScriptError, ScriptErrorKind,
+    error::exception::{self, Location},
+};
 
 pub(crate) fn module_path(path: &Path) -> Result<PathBuf, ScriptError> {
     if !matches!(
@@ -59,12 +62,29 @@ pub(crate) fn source(path: &Path, remaining: usize) -> Result<Vec<u8>, ScriptErr
 
 /// Loader callbacks must return `QuickJS` errors; retain their owned I/O causes separately.
 #[derive(Clone, Default)]
-pub(crate) struct ModuleDiagnostics(Rc<RefCell<Option<ScriptError>>>);
+pub(crate) struct ModuleDiagnostics(Rc<RefCell<ModuleState>>);
+
+#[derive(Default)]
+struct ModuleState {
+    failure: Option<ScriptError>,
+    names: Vec<String>,
+}
 
 impl ModuleDiagnostics {
-    pub fn take(&self) -> Option<ScriptError> { self.0.borrow_mut().take() }
+    pub fn take(&self) -> Option<ScriptError> { self.0.borrow_mut().failure.take() }
 
-    fn retain(&self, error: ScriptError) { *self.0.borrow_mut() = Some(error); }
+    fn retain(&self, error: ScriptError) { self.0.borrow_mut().failure = Some(error); }
+
+    pub fn register(&self, name: &str) {
+        let mut state = self.0.borrow_mut();
+        if !state.names.iter().any(|known| known == name) {
+            state.names.push(name.to_owned());
+        }
+    }
+
+    pub fn locate(&self, stack: &str) -> Option<Location> {
+        exception::locate(stack, &self.0.borrow().names)
+    }
 }
 
 pub(crate) struct LocalResolver(pub ModuleDiagnostics);
@@ -126,6 +146,7 @@ impl Loader for LocalLoader {
         })?;
         self.remaining -= bytes.len();
         self.loaded.insert(path);
+        self.diagnostics.register(name);
         Module::declare(ctx.clone(), name, bytes)
     }
 }

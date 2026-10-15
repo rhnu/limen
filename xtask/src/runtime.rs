@@ -11,6 +11,7 @@ use limen_script::{
 use serde_json::{Value, json};
 
 mod context;
+mod diagnostics;
 pub(crate) mod environment;
 
 type ProbeResult = Result<(), Box<dyn Error + Send + Sync>>;
@@ -79,7 +80,7 @@ pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
         "pending-fairness" => pending_fairness(&fixture).await,
         "late-completion" => late_completion(&fixture).await,
         "invalid-return" => invalid_return(&fixture).await,
-        "rejection" => rejection(&fixture).await,
+        "rejection" => diagnostics::rejection(&fixture).await,
         "top-level-await" => top_level_await(&fixture).await,
         "strict-json" => strict_json(&fixture).await,
         "modules" => modules(&fixture).await,
@@ -277,33 +278,6 @@ async fn invalid_return(fixture: &Fixture) -> ProbeResult {
             "non-void completion or thenable was accepted",
         )?;
     }
-    stop(&runtime).await
-}
-
-async fn rejection(fixture: &Fixture) -> ProbeResult {
-    let (runtime, config) = fixture.start(
-        "export default { onRequest(ctx) { if (ctx.async) return Promise.reject(new Error('synthetic')); throw new Error('synthetic'); }, onFinish(ctx) { ctx.ok = true; } };",
-    ).await?;
-    for asynchronous in [false, true] {
-        let output = runtime
-            .invoke(call(
-                hook(&config, "onRequest")?,
-                u64::from(asynchronous),
-                json!({"async": asynchronous}),
-            ))
-            .await;
-        ensure(
-            output.is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
-            "throw/rejection was not reported",
-        )?;
-    }
-    let output = runtime
-        .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
-        .await?;
-    ensure(
-        output == json!({"ok": true}),
-        "ordinary JS failure poisoned the VM",
-    )?;
     stop(&runtime).await
 }
 

@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use super::{Hooks, Vm, conversion_error, module_error};
 use crate::{
     ScriptError, ScriptErrorKind,
-    loader::{self, LocalLoader, LocalResolver, ModuleDiagnostics},
+    loader::{self, LocalLoader, LocalResolver},
 };
 
 pub(super) async fn load(
@@ -28,7 +28,8 @@ pub(super) async fn load(
     let name = path
         .to_str()
         .ok_or(ScriptError::new(ScriptErrorKind::Module))?;
-    let diagnostics = ModuleDiagnostics::default();
+    let diagnostics = bridge.modules.clone();
+    diagnostics.register(name);
     runtime
         .set_loader(
             LocalResolver(diagnostics.clone()),

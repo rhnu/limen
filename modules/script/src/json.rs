@@ -1,6 +1,10 @@
 use rquickjs::{Ctx, Error, Function, Object, Persistent, Value};
 
-use crate::{JsonLimits, ScriptError, ScriptErrorKind};
+use crate::{
+    JsonLimits, ScriptError, ScriptErrorKind,
+    error::exception::{ExceptionDiagnostic, ExceptionKind},
+    loader::ModuleDiagnostics,
+};
 
 struct Bounded {
     bytes: Vec<u8>,
@@ -71,6 +75,8 @@ pub(crate) struct Bridge {
     pub prepare: Persistent<Function<'static>>,
     pub project: Persistent<Function<'static>>,
     oom: Persistent<Function<'static>>,
+    exception: Persistent<Function<'static>>,
+    pub modules: ModuleDiagnostics,
 }
 
 pub(crate) fn bridge(
@@ -129,11 +135,18 @@ pub(crate) fn bridge(
                 .get::<_, Function>("oom")
                 .map_err(|e| failure(ctx, e))?,
         ),
+        exception: Persistent::save(
+            ctx,
+            result
+                .get::<_, Function>("exception")
+                .map_err(|e| failure(ctx, e))?,
+        ),
+        modules: ModuleDiagnostics::default(),
     })
 }
 
 impl Bridge {
-    /// Inspect only an own data descriptor; exception getters must never execute.
+    /// Captured intrinsics inspect metadata without executing script accessors or traps.
     pub fn failure(&self, ctx: &Ctx<'_>, error: Error) -> ScriptError {
         if matches!(error, Error::Allocation) {
             return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
@@ -144,7 +157,7 @@ impl Bridge {
                 .oom
                 .clone()
                 .restore(ctx)
-                .and_then(|f| f.call::<_, bool>((value,)))
+                .and_then(|f| f.call::<_, bool>((value.clone(),)))
             {
                 Ok(oom) => oom,
                 // An unusable classifier cannot establish VM safety; retain its failure.
@@ -155,6 +168,24 @@ impl Bridge {
             if oom {
                 return ScriptError::with_source(ScriptErrorKind::MemoryLimit, error);
             }
+            let diagnostic = self.exception.clone().restore(ctx).and_then(|function| {
+                let info: Object = function.call((value,))?;
+                let name: String = info.get("kind")?;
+                let stack: Option<String> = info.get("stack")?;
+                Ok(ExceptionDiagnostic {
+                    kind: ExceptionKind::from_name(&name),
+                    location: stack
+                        .as_deref()
+                        .and_then(|stack| self.modules.locate(stack)),
+                })
+            });
+            return match diagnostic {
+                Ok(diagnostic) => ScriptError::with_source(ScriptErrorKind::JavaScript, error)
+                    .with_exception(diagnostic),
+                Err(inspection) => {
+                    ScriptError::with_source(ScriptErrorKind::MemoryLimit, inspection)
+                },
+            };
         }
         ScriptError::with_source(ScriptErrorKind::JavaScript, error)
     }

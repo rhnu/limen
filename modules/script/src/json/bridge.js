@@ -15,6 +15,19 @@
   const toNumber = Number;
   const testIndex = Function.prototype.call.bind(RegExp.prototype.test, /^(0|[1-9][0-9]*)$/);
   const ErrorType = TypeError;
+  const isError = Error.isError;
+  const errorPrototypes = setProto([
+    Error.prototype, EvalError.prototype, RangeError.prototype, ReferenceError.prototype,
+    SyntaxError.prototype, TypeError.prototype, URIError.prototype, AggregateError.prototype,
+    InternalError.prototype,
+  ], null);
+  const errorNames = setProto([
+    "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError",
+    "URIError", "AggregateError", "InternalError",
+  ], null);
+  // QuickJS's native getter reads [[ErrorData]], bypassing user stack accessors.
+  const errorStack = Function.prototype.call.bind(descriptor(Error.prototype, "stack").get);
+  const wellFormed = Function.prototype.call.bind(String.prototype.isWellFormed);
   const WeakMapType = WeakMap;
   const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
   const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
@@ -123,5 +136,27 @@
     const d = descriptor(value, "message");
     return !!d && !!descriptor(d, "value") && d.value === "out of memory";
   }
-  return { convert, oom };
+  function exception(value) {
+    const info = create(null);
+    info.kind = "ThrownValue";
+    info.stack = null;
+    if (typeof value !== "object" || value === null || isProxy(value) || !isError(value)) return info;
+    info.kind = "Error";
+    let parent = proto(value);
+    for (let depth = 0; parent !== null && depth < 8 && !isProxy(parent); depth++) {
+      for (let index = 0; index < errorPrototypes.length; index++) {
+        if (parent === errorPrototypes[index]) {
+          info.kind = errorNames[index];
+          parent = null;
+          break;
+        }
+      }
+      if (parent !== null) parent = proto(parent);
+    }
+    const stack = errorStack(value);
+    // Only this bounded, temporary string reaches the parser on the VM thread.
+    if (typeof stack === "string" && stack.length <= 4096 && wellFormed(stack)) info.stack = stack;
+    return info;
+  }
+  return { convert, oom, exception };
 })

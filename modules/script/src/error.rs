@@ -1,5 +1,9 @@
 use std::{error::Error, fmt, sync::Arc};
 
+pub(crate) mod exception;
+
+use exception::ExceptionDiagnostic;
+
 /// Stable policy categories; diagnostic sources do not participate in classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScriptErrorKind {
@@ -24,6 +28,7 @@ pub enum ScriptErrorKind {
 pub struct ScriptError {
     kind: ScriptErrorKind,
     source: Option<Arc<dyn Error + Send + Sync>>,
+    exception: Option<ExceptionDiagnostic>,
 }
 
 impl fmt::Display for ScriptError {
@@ -44,7 +49,13 @@ impl Error for ScriptError {
 
 impl ScriptError {
     #[must_use]
-    pub const fn new(kind: ScriptErrorKind) -> Self { Self { kind, source: None } }
+    pub const fn new(kind: ScriptErrorKind) -> Self {
+        Self {
+            kind,
+            source: None,
+            exception: None,
+        }
+    }
 
     #[must_use]
     pub fn with_source<E>(kind: ScriptErrorKind, source: E) -> Self
@@ -54,7 +65,13 @@ impl ScriptError {
         Self {
             kind,
             source: Some(Arc::new(source)),
+            exception: None,
         }
+    }
+
+    pub(crate) fn with_exception(mut self, exception: ExceptionDiagnostic) -> Self {
+        self.exception = Some(exception);
+        self
     }
 
     #[must_use]
@@ -81,6 +98,9 @@ struct Diagnostic<'a>(&'a ScriptError);
 impl fmt::Display for Diagnostic<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self.0, f)?;
+        if let Some(exception) = &self.0.exception {
+            write!(f, "; {exception}")?;
+        }
         let mut source = self.0.source();
         for _ in 0..8 {
             let Some(error) = source else {
