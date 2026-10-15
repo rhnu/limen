@@ -5,6 +5,17 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn hook_lookup_rejects_zero_and_unregistered_ids() {
+    let hooks = ["first", "second"];
+    assert_eq!(lookup_hook(&hooks, 1), Some(&"first"));
+    assert_eq!(lookup_hook(&hooks, 2), Some(&"second"));
+    for hook_id in [0, 3, u64::MAX] {
+        assert_eq!(lookup_hook(&hooks, hook_id), None);
+    }
+    assert_eq!(lookup_hook::<()>(&[], 1), None);
+}
+
+#[test]
 fn completion_rechecks_cancellation_and_deadline_before_delivering_a_result() {
     for (cancelled, expired, expected) in [
         (false, false, None),

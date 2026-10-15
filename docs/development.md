@@ -27,6 +27,8 @@ Chat 库仅消费 owned 字节与 JSON，不持有连接，也不依赖配置或
 全 workspace 检查与测试继续显式使用 `--workspace`。`limen-xtask` 是独立开发工具包，
 通过 `cargo xtask` 显式调用；应用与职责库不依赖它。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
+请求身份位于 `context.meta.requestId`，`HookCall` 仅另带诊断用的调用 ID 与选择函数的 hook ID。
+hook ID 在启动时按顺序分配，VM 用只读顺序表持有函数引用，拒绝零值和越界 ID。
 脚本公开宿主能力在 `modules/script/src/host.rs` 的 `install` 中统一注册、冻结并发布到 `limen`；
 `host/env.rs` 只构造环境读取函数，单元测试随模块保存在 `host/env/tests.rs`。
 根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播。

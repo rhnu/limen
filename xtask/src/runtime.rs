@@ -103,7 +103,6 @@ fn hook(config: &Value, name: &str) -> Result<u64, Box<dyn Error + Send + Sync>>
 
 fn call(hook_id: u64, call_id: u64, context: Value) -> HookCall {
     HookCall {
-        request_id: format!("synthetic-{call_id}"),
         call_id,
         hook_id,
         context,

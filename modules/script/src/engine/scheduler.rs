@@ -11,7 +11,9 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
-use crate::{Cancellation, Command, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge};
+use crate::{
+    Cancellation, Command, HookId, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
+};
 
 /// Only settlement authority survives after the input becomes a private VM draft.
 struct Completion {
@@ -215,7 +217,7 @@ async fn begin(
         let _sent = completion.response.send(Err(error));
         return Ok(None);
     }
-    let Some(hook) = hooks.get(&hook_id) else {
+    let Some(hook) = lookup_hook(hooks, hook_id) else {
         let _sent = completion
             .response
             .send(Err(ScriptError::new(ScriptErrorKind::UnknownHook)));
@@ -268,6 +270,12 @@ async fn begin(
             if fatal(&error) { Err(error) } else { Ok(None) }
         },
     }
+}
+
+/// Captured hooks receive contiguous one-based IDs in the bridge's array order.
+fn lookup_hook<T>(hooks: &[T], hook_id: HookId) -> Option<&T> {
+    let index = usize::try_from(hook_id.checked_sub(1)?).ok()?;
+    hooks.get(index)
 }
 
 fn output<'js>(

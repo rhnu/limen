@@ -59,7 +59,6 @@ impl Gateway {
             let result = self
                 .runtime
                 .invoke(HookCall {
-                    request_id: lifecycle.request_id.clone(),
                     call_id: self.next_call(),
                     hook_id,
                     context,

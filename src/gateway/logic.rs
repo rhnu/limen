@@ -53,6 +53,12 @@ pub fn validate_body(body: &Value, limits: &ResourceLimits) -> Result<(), Failur
     let invalid = || Failure::new(ErrorCode::InvalidRequest, "request_body");
     limen_config::validate_json(body, limits.max_json_depth, limits.max_json_nodes)
         .map_err(|source| invalid().with_source(source))?;
+    validate_body_shape(body)
+}
+
+/// Check Chat fields after the caller has established the generic JSON boundary.
+pub fn validate_body_shape(body: &Value) -> Result<(), Failure> {
+    let invalid = || Failure::new(ErrorCode::InvalidRequest, "request_body");
     let object = body.as_object().ok_or_else(invalid)?;
     let model = object
         .get("model")

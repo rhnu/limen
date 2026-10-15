@@ -122,7 +122,6 @@ impl Cancellation {
 
 /// The draft remains private until successful completion, validation and deadline checks.
 pub struct HookCall {
-    pub request_id: String,
     pub call_id: u64,
     pub hook_id: HookId,
     pub context: Value,
@@ -259,12 +258,9 @@ impl ScriptRuntime {
             hook_id = call.hook_id
         );
         async move {
-        let HookCall { request_id, hook_id, context, deadline, cancellation, .. } = call;
+        let HookCall { hook_id, context, deadline, cancellation, .. } = call;
         let bytes = json::encode_owned(&context, self.limits)?;
         drop(context);
-        if request_id.len() > 128 {
-            return Err(ScriptError::new(ScriptErrorKind::Contract));
-        }
         if cancellation.is_cancelled() {
             return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }

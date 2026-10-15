@@ -84,9 +84,9 @@ impl Gateway {
             let mut output = self
                 .hook(hook, "onRequest", None, context, lifecycle)
                 .await?;
-            logic::validate_body(require_body(&output)?, &self.server.limits).map_err(
-                |source| Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source),
-            )?;
+            logic::validate_body_shape(require_body(&output)?).map_err(|source| {
+                Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source)
+            })?;
             commit_state(lifecycle, &mut output)?;
             body = output["body"].take();
         }
@@ -113,7 +113,6 @@ impl Gateway {
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
         logic::validate_body(&body, &self.server.limits)?;
-        logic::validate_url(&url)?;
         let bytes = json::encode(
             &body,
             self.server.limits.max_output_bytes,
@@ -159,7 +158,7 @@ impl Gateway {
                 let mut output = self
                     .hook(hook, "beforeSend", Some(&step.name), context, lifecycle)
                     .await?;
-                logic::validate_body(require_body(&output)?, &self.server.limits)
+                logic::validate_body_shape(require_body(&output)?)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_url = output
                     .get("url")
@@ -193,7 +192,6 @@ impl Gateway {
         lifecycle.step = step.map(str::to_owned);
         self.runtime
             .invoke(HookCall {
-                request_id: lifecycle.request_id.clone(),
                 call_id: self.next_call(),
                 hook_id,
                 context,

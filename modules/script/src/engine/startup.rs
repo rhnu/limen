@@ -195,10 +195,7 @@ async fn extract(
                 let function = functions
                     .get::<Function>(index)
                     .map_err(|e| bridge.failure(&ctx, e))?;
-                let id = u64::try_from(index)
-                    .map_err(|error| ScriptError::with_source(ScriptErrorKind::Contract, error))?
-                    + 1;
-                hooks.insert(id, Persistent::save(&ctx, function));
+                hooks.push(Persistent::save(&ctx, function));
             }
             Ok((hooks, config))
         })

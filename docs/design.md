@@ -642,6 +642,8 @@ executor，并拥有一个 rquickjs `AsyncRuntime`、`AsyncContext` 及持久化
 入队前校验 JSON context 的结构与数字边界，并在字节预算内编码一次；命令包含该 owned JSON 字节、
 绝对 `Instant` deadline 与取消句柄，VM 直接解析这些字节。一次性结果通道关联原调用，
 只交付通过校验的 owned JSON。取消调用 future 会关闭结果通道并唤醒 actor，从而撤销提交资格。
+hook 输出的完整 context 已由桥接统一校验 JSON 深度、节点与安全整数；根包继续检查 Chat 形状、单事件字节与展开预算。
+入站与上游解析、默认值合并后的请求、完整聚合结果仍分别建立整体 JSON 保证。
 编码入队后不再保留原始输入 JSON 树；VM draft 建立后释放输入字节，pending 仅保留 deadline、取消信号、
 结果通道和 VM 内的 draft/Promise 引用。取消与 deadline 在入队及提交边界仍分别检查。
 
@@ -783,6 +785,7 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
   的路径无需为了统一流程而进入 JS。原始值保留可后续单独设计。
   当前 HTTP JSON 路径统一采用该安全整数范围和深度/节点限制，即使没有 hook 也明确拒绝越界整数。
 - 不声明“Rust → JS → Rust 对所有 JSON 数字完全无损”。
+- JSON 文本解析同时受 serde_json 默认递归预算约束；提高 `max_json_depth` 不会放宽解析器自身限制。
 - Promise 是 hook 完成协议的一部分，不是 JSON 数据；先等待其完成值为
   `undefined`，再验证并转换 draft 和 `ctx.state`。检查完成值时先读取 JS `Value`
   并明确判断 `undefined`；不能依靠 Rust `()` 转换，因为该转换可能忽略实际值。

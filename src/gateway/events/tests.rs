@@ -74,9 +74,9 @@ fn event_size_respects_single_and_cumulative_limits() {
 }
 
 #[test]
-fn event_validation_still_rejects_malformed_chunks() {
+fn hook_output_events_still_reject_malformed_chunks() {
     assert_eq!(
-        validate_event(
+        validate_event_payload(
             &json!({}),
             &ResourceLimits::default(),
             ErrorCode::HookFailed,
@@ -85,5 +85,44 @@ fn event_validation_still_rejects_malformed_chunks() {
         .unwrap_err()
         .code,
         ErrorCode::HookFailed
+    );
+}
+
+#[test]
+fn source_events_keep_generic_json_bounds() {
+    let event = json!({"id":"c1", "object":"chat.completion.chunk", "created":1,
+        "model":"alias", "choices":[], "extension":{"value":1}});
+    for limits in [
+        ResourceLimits {
+            max_json_depth: 1,
+            ..ResourceLimits::default()
+        },
+        ResourceLimits {
+            max_json_nodes: 3,
+            ..ResourceLimits::default()
+        },
+    ] {
+        assert_eq!(
+            validate_event(
+                &event,
+                &limits,
+                ErrorCode::UpstreamProtocol,
+                "onUpstreamEvent"
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::UpstreamProtocol
+        );
+    }
+    let mut unsafe_number = event;
+    unsafe_number["extension"]["value"] = json!(9_007_199_254_740_992_u64);
+    assert!(
+        validate_event(
+            &unsafe_number,
+            &ResourceLimits::default(),
+            ErrorCode::UpstreamProtocol,
+            "onUpstreamEvent",
+        )
+        .is_err()
     );
 }

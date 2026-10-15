@@ -3,7 +3,6 @@ mod startup;
 
 use std::{
     cell::Cell,
-    collections::HashMap,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
@@ -15,11 +14,11 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::{
-    Command, HookId, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, host,
+    Command, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, host,
     json::{self, Bridge},
 };
 
-type Hooks = HashMap<HookId, Persistent<Function<'static>>>;
+type Hooks = Vec<Persistent<Function<'static>>>;
 
 #[derive(Clone, Copy)]
 struct Vm<'a> {
