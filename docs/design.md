@@ -39,7 +39,8 @@
 
 - **已有本机证据：**Rust 与 QuickJS 引用关闭顺序、Promise 调度与取消、执行/内存预算和数字边界已通过隔离实验；已知限制见第 9 节。
 - **已有运行证据：**Rust xtask 的 17 个 VM 与 12 个本地合成 HTTP 实验在 Windows 和 Linux CI 通过，
-  覆盖参数覆写、JSON/SSE 管线、认证隔离、单次发送、超时、客户端断开、Windows Ctrl-C 与 Linux SIGTERM 关闭。
+  覆盖参数覆写、JSON/SSE 管线、认证隔离、单次发送、超时、客户端断开、启动就绪发布、DONE 分块一致性、
+  OOM 保守退役边界、Windows Ctrl-C 与 Linux SIGTERM 关闭。
 - **已有 CI 证据：**Linux CI 与 Docker 镜像构建已跑通。
 - **实施时验证：**目标部署环境的流背压、慢客户端与关闭传播。
 - **实施时验证：**Linux Docker 中的启动、配置挂载、端口绑定与关闭行为。
@@ -725,8 +726,8 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
 因此不能承诺此时必然退役。内存上限仍然生效；配置脚本不得把捕获 OOM 后继续执行当作支持的恢复策略。
 异常识别采用保守退役策略：抛出的值为 `null`，或非 Proxy 对象自身的数据属性 `message` 恰为
 `"out of memory"` 时，也按 OOM 处理；普通脚本主动抛出相同值会触发误判并使共享 VM 退役。
-异常分类器自身失败也按无法保证 VM 可继续使用处理。真实未捕获 OOM 及同步异常、Promise rejection
-中的上述误判边界均已有 Windows 隔离运行证据；当前修订的 Linux 验证状态见路线图。
+异常分类器自身失败也按无法保证 VM 可继续使用处理。`memory-limit` 隔离实验已在 Windows 与 Linux CI
+验证真实未捕获 OOM，以及同步异常、Promise rejection 中的上述误判边界。
 改变此限制需要重新评估 allocator 接口与工作区默认拒绝 `unsafe` 的约束。
 
 当前进程实验验证了同步/异步 void、悬挂 Promise 下的调用与取消推进、deadline 后迟到结果不提交、

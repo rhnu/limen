@@ -91,7 +91,7 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
 17 个 VM 实验（包含 `context-stream`）已通过 Linux 与 Windows 隔离运行验证。
 启动实验在成功返回后立即检查 `Ready`；`memory-limit` 另外覆盖同步抛出或 Promise rejection 携带
-`null` / 自身 `message: "out of memory"` 的保守退役边界，新增场景已通过 Windows 隔离运行。
+`null` / 自身 `message: "out of memory"` 的保守退役边界；这些场景已通过 Windows 与 Linux CI 隔离运行。
 
 检查示例配置：
 
@@ -130,10 +130,10 @@ VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixt
 也覆盖完整 JSON 响应改写后转换为 SSE。上述断言不依赖内部调用轨迹或执行计数。
 `transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，
 并检查首个 DONE 后的错误事件位于同一块或延迟尾块时，JSON/SSE 下游均保持成功终结。
-该终结回归已在 Windows 通过；临时恢复旧的块尾终结逻辑时，实验会拒绝其错误结果。
-全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，包含新增参数覆写、流变换和调整后的管线实验。
-Linux 的单元测试、17 个 VM 实验与 12 个 HTTP 实验均通过，证据见
-[`04875e1` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38658155498/job/116172750034)。
+该终结回归已在 Windows 与 Linux CI 通过；Windows 负向对照中临时恢复旧的块尾终结逻辑时，实验会拒绝其错误结果。
+全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，覆盖参数覆写、流变换、管线与终结分块一致性。
+Linux 的 127 项单元测试、17 个 VM 实验与 12 个 HTTP 实验均通过，证据见
+[`90a4cc9` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38661065836/job/116182161036)。
 Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创建或连接网关私有控制台，隔离 Ctrl-C 广播。
 正常实验清理与独立控制台 Ctrl-C 已有运行证据；Job Object 在外部超时和父进程中断时的回收仍待单独验证。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动作为独立高级测试执行，CI 中固定排在单元测试之后。
