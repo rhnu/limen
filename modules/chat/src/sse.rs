@@ -114,8 +114,8 @@ impl Decoder {
 /// # Errors
 /// Rejects malformed chunks or encoded output exceeding the event limit.
 pub fn encode_chunk(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Error> {
-    let size = chunk_size(value, max_event_bytes)?;
-    encode(value, b"data: ", size)
+    validate_chunk(value)?;
+    encode(value, b"data: ", max_event_bytes)
 }
 
 /// Checks framing and JSON size without allocating a frame for conversion trials.
@@ -129,9 +129,7 @@ pub(crate) fn chunk_size(value: &Value, max_event_bytes: usize) -> Result<usize,
 /// # Errors
 /// Rejects encoded output exceeding the event limit or JSON serialization failures.
 pub fn encode_error(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Error> {
-    let prefix = b"event: error\ndata: ";
-    let size = encoded_size(value, prefix, max_event_bytes)?;
-    encode(value, prefix, size)
+    encode(value, b"event: error\ndata: ", max_event_bytes)
 }
 
 fn encoded_size(value: &Value, prefix: &[u8], limit: usize) -> Result<usize, Error> {
@@ -142,10 +140,12 @@ fn encoded_size(value: &Value, prefix: &[u8], limit: usize) -> Result<usize, Err
     Ok(prefix.len() + json_size + 2)
 }
 
-fn encode(value: &Value, prefix: &[u8], size: usize) -> Result<Vec<u8>, Error> {
-    let mut bytes = Vec::with_capacity(size);
-    bytes.extend_from_slice(prefix);
-    serde_json::to_writer(&mut bytes, value).map_err(Error::Json)?;
+fn encode(value: &Value, prefix: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
+    let json_limit = limit
+        .checked_sub(prefix.len() + 2)
+        .ok_or(Error::EventLimit)?;
+    let (mut bytes, _) =
+        crate::bounded::write_json(prefix.to_vec(), value, json_limit)?.ok_or(Error::EventLimit)?;
     bytes.extend_from_slice(b"\n\n");
     Ok(bytes)
 }

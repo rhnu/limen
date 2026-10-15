@@ -65,7 +65,33 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
         let reply = item.request(request(&[("stream", json!(true))])).await?;
         ensure!(reply.status == 200 && reply.text()?.ends_with("data: [DONE]\n\n"), "SSE passes through with one completion marker");
         ensure!(reply.text()?.matches("[DONE]").count() == 1 && reply.text()?.contains("\"model\":\"chat\""), "SSE applies alias without duplicate DONE");
-        item.upstream.controls.lock().await.raw = Some(data);
+        let mut completed = data.clone();
+        completed.extend_from_slice(b"data: [DONE]\n\n");
+        let done_end = completed.len();
+        completed.extend_from_slice(b"event: error\ndata: {}\n\n");
+        for split_at in [None, Some(done_end)] {
+            {
+                let mut upstream = item.upstream.controls.lock().await;
+                upstream.raw = Some(completed.clone());
+                upstream.split_at = split_at;
+            }
+            for stream in [false, true] {
+                let reply = item.request(request(&[("stream", json!(stream))])).await?;
+                ensure!(reply.status == 200, "first DONE terminates both JSON and SSE paths regardless of network splitting");
+                if stream {
+                    let text = reply.text()?;
+                    ensure!(text.ends_with("data: [DONE]\n\n") && !text.contains("event: error"), "trailing upstream error after DONE must not enter downstream SSE");
+                    ensure!(text.matches("[DONE]").count() == 1, "terminator is emitted only once");
+                } else {
+                    ensure!(reply.body["choices"][0]["message"]["content"] == "hello" && reply.body["usage"] == json!({"total_tokens":2}), "trailing upstream error after DONE must not invalidate JSON aggregation");
+                }
+            }
+        }
+        {
+            let mut upstream = item.upstream.controls.lock().await;
+            upstream.raw = Some(data);
+            upstream.split_at = None;
+        }
         let reply = item.request(request(&[("stream", json!(true))])).await?;
         ensure!(reply.status == 200 && reply.text()?.contains("event: error\n") && !reply.text()?.contains("[DONE]"), "truncation after stream start emits error without success marker");
         Ok(())

@@ -173,8 +173,7 @@ impl Gateway {
         let mut downstream_tracker = ChunkTracker::new(limits.max_json_nodes);
         let mut aggregate = (!client_stream)
             .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events));
-        let mut done = false;
-        while let Some(chunk) = response
+        'upstream: while let Some(chunk) = response
             .chunk()
             .await
             .map_err(|source| Failure::upstream(source, "upstream_receive"))?
@@ -188,9 +187,9 @@ impl Gateway {
                     continue;
                 };
                 match event {
-                    Event::Done => {
-                        done = true;
-                    },
+                    // Stop at the terminator itself so trailing bytes cannot make
+                    // success depend on how the network divided the response.
+                    Event::Done => break 'upstream,
                     Event::Chunk(event) => {
                         upstream_tracker
                             .push(&event)
@@ -227,10 +226,6 @@ impl Gateway {
                         }
                     },
                 }
-            }
-            // DONE is a protocol terminator; do not await an upstream socket EOF.
-            if done {
-                break;
             }
             lifecycle.phase = "upstream_receive";
             lifecycle.step = None;

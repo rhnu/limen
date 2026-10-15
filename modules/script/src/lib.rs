@@ -130,7 +130,10 @@ pub struct HookCall {
 }
 
 pub(crate) struct Command {
-    call: HookCall,
+    hook_id: HookId,
+    context: Vec<u8>,
+    deadline: Instant,
+    cancellation: Cancellation,
     response: oneshot::Sender<Result<Value, ScriptError>>,
 }
 
@@ -255,12 +258,12 @@ impl ScriptRuntime {
             hook_id = call.hook_id
         );
         async move {
-        json::validate_owned(&call.context, self.limits)?;
-        if call.request_id.len() > 128 {
+        let HookCall { request_id, hook_id, context, deadline, cancellation, .. } = call;
+        let bytes = json::encode_owned(&context, self.limits)?;
+        drop(context);
+        if request_id.len() > 128 {
             return Err(ScriptError::new(ScriptErrorKind::Contract));
         }
-        let cancellation = call.cancellation.clone();
-        let deadline = call.deadline;
         if cancellation.is_cancelled() {
             return Err(ScriptError::new(ScriptErrorKind::Cancelled));
         }
@@ -270,7 +273,7 @@ impl ScriptRuntime {
         let _wake_on_drop = WakeOnDrop(Arc::clone(&self.wake));
         let (response, mut receive) = oneshot::channel();
         self.commands
-            .try_send(Command { call, response })
+            .try_send(Command { hook_id, context: bytes, deadline, cancellation: cancellation.clone(), response })
             .map_err(|error| {
                 let kind = match &error {
                     mpsc::error::TrySendError::Full(_) => ScriptErrorKind::Busy,

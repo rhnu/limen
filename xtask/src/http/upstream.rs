@@ -1,12 +1,19 @@
 //! Hyper owns HTTP framing; this fixture records requests and controls synthetic responses.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    convert::Infallible,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context as TaskContext, Poll, ready},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, ensure};
 use http::{HeaderMap, Response};
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use hyper::{
-    body::{Bytes, Incoming},
+    body::{Body, Bytes, Frame, Incoming},
     server::conn::http1,
     service::service_fn,
 };
@@ -16,7 +23,7 @@ use tokio::{
     net::TcpListener,
     sync::{Mutex, watch},
     task::{JoinHandle, JoinSet},
-    time::{Instant, sleep},
+    time::{Instant, Sleep, sleep},
 };
 
 #[derive(Clone)]
@@ -34,6 +41,7 @@ pub struct Controls {
     pub media: &'static str,
     pub response: Option<Value>,
     pub raw: Option<Vec<u8>>,
+    pub split_at: Option<usize>,
     pub delay: bool,
     errors: Vec<anyhow::Error>,
 }
@@ -49,6 +57,7 @@ impl Default for Controls {
             media: "application/json",
             response: None,
             raw: None,
+            split_at: None,
             delay: false,
             errors: Vec::new(),
         }
@@ -96,7 +105,7 @@ impl Upstream {
                             let result = http1::Builder::new().half_close(false)
                                 .serve_connection(TokioIo::new(stream), service).await;
                             if *delayed.lock().await {
-                                // Hyper detects EOF while the response future is pending.
+                                // Cancellation or DONE may abandon a pending response or delayed tail.
                                 state.lock().await.disconnected = true;
                             } else if let Err(error) = result {
                                 state.lock().await.errors.push(anyhow::Error::new(error)
@@ -178,7 +187,7 @@ async fn respond(
     request: hyper::Request<Incoming>,
     state: Arc<Mutex<Controls>>,
     delayed: Arc<Mutex<bool>>,
-) -> Result<Response<Full<Bytes>>> {
+) -> Result<Response<ResponseBody>> {
     let (parts, body) = request.into_parts();
     let raw = body
         .collect()
@@ -215,7 +224,53 @@ async fn respond(
     if controls.status == 307 {
         builder = builder.header("Location", "/redirect-target");
     }
+    let mut first = Bytes::from(raw);
+    let tail = if let Some(split) = controls.split_at {
+        ensure!(
+            split > 0 && split < first.len(),
+            "invalid synthetic body split"
+        );
+        // DONE may make the gateway close before the deliberately delayed tail.
+        *delayed.lock().await = true;
+        Some(first.split_off(split))
+    } else {
+        None
+    };
     builder
-        .body(Full::new(Bytes::from(raw)))
+        .body(ResponseBody {
+            first: Some(first),
+            tail,
+            pause: None,
+        })
         .context("construct synthetic upstream response")
+}
+
+/// An optional delayed tail exposes terminator handling across distinct reads.
+struct ResponseBody {
+    first: Option<Bytes>,
+    tail: Option<Bytes>,
+    pause: Option<Pin<Box<Sleep>>>,
+}
+
+impl Body for ResponseBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        if let Some(first) = self.first.take() {
+            if self.tail.is_some() {
+                self.pause = Some(Box::pin(sleep(Duration::from_millis(50))));
+            }
+            return Poll::Ready(Some(Ok(Frame::data(first))));
+        }
+        if let Some(pause) = &mut self.pause {
+            ready!(pause.as_mut().poll(cx));
+        }
+        Poll::Ready(self.tail.take().map(|tail| Ok(Frame::data(tail))))
+    }
+
+    fn is_end_stream(&self) -> bool { self.first.is_none() && self.tail.is_none() }
 }

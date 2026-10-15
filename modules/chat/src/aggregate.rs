@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    ChunkTracker, Error,
+    Error,
     chunk::{index, known_keys, object},
+    validate_chunk,
 };
 
 const ROOT_KEYS: &[&str] = &[
@@ -36,8 +37,8 @@ struct Choice {
 /// Accumulates supported Chat deltas, with cumulative input and result byte bounds.
 pub struct Aggregator {
     root: Map<String, Value>,
+    // Each distinct choice consumes input JSON bytes, so the cumulative byte cap also bounds this map.
     choices: BTreeMap<u64, Choice>,
-    tracker: ChunkTracker,
     bytes: usize,
     events: usize,
     max_bytes: usize,
@@ -50,7 +51,6 @@ impl Aggregator {
         Self {
             root: Map::new(),
             choices: BTreeMap::new(),
-            tracker: ChunkTracker::new(max_bytes),
             bytes: 0,
             events: 0,
             max_bytes,
@@ -85,7 +85,19 @@ impl Aggregator {
         let len = crate::bounded::json_size(&chunk, remaining)?.ok_or(Error::AggregateBytes)?;
         let bytes = self.bytes + len;
         conversion_root(&chunk)?;
-        self.tracker.push(&chunk)?;
+        validate_chunk(&chunk)?;
+        // Check the whole event before merging fields, preserving the completion
+        // error even when the same event also contains conflicting metadata.
+        for choice in chunk["choices"].as_array().ok_or(Error::InvalidChunk)? {
+            let index = index(&choice["index"])?;
+            if self
+                .choices
+                .get(&index)
+                .is_some_and(|choice| choice.finish.is_some())
+            {
+                return Err(Error::ChoiceFinished);
+            }
+        }
         self.events += 1;
         self.bytes = bytes;
         let Value::Object(mut root) = chunk else {
@@ -161,7 +173,9 @@ impl Aggregator {
         if self.failed {
             return Err(Error::InvalidChunk);
         }
-        self.tracker.finish()?;
+        if self.choices.is_empty() || self.choices.values().any(|choice| choice.finish.is_none()) {
+            return Err(Error::UnfinishedChoices);
+        }
         let mut choices = Vec::with_capacity(self.choices.len());
         for (index, choice) in self.choices {
             let mut message = Map::new();

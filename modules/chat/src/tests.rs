@@ -369,3 +369,78 @@ fn error_frames_are_separate_and_never_include_success_done() {
     assert!(!text.contains("[DONE]"));
     assert!(matches!(encode_error(&error, 10), Err(Error::EventLimit)));
 }
+
+#[test]
+fn bounded_encoders_count_utf8_escapes_and_sse_framing() {
+    let source =
+        r#"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"世\n","choices":[]}"#;
+    let value = serde_json::from_str(source).unwrap();
+    let frame_size = source.len() + b"data: \n\n".len();
+    assert_eq!(encode_chunk(&value, frame_size).unwrap().len(), frame_size);
+    assert!(matches!(
+        encode_chunk(&value, frame_size - 1),
+        Err(Error::EventLimit)
+    ));
+    assert!(matches!(
+        encode_chunk(&value, source.len()),
+        Err(Error::EventLimit)
+    ));
+
+    let error = json!({"error":"世\n"});
+    let expected = "event: error\ndata: {\"error\":\"世\\n\"}\n\n".as_bytes();
+    assert_eq!(encode_error(&error, expected.len()).unwrap(), expected);
+    assert!(matches!(
+        encode_error(&error, expected.len() - 1),
+        Err(Error::EventLimit)
+    ));
+}
+
+#[test]
+fn aggregation_rejects_empty_unfinished_and_duplicate_choices() {
+    assert!(matches!(
+        Aggregator::new(4096, 10).finish(),
+        Err(Error::UnfinishedChoices)
+    ));
+    let mut aggregate = Aggregator::new(4096, 10);
+    aggregate.push(chunk(json!([]))).unwrap();
+    assert!(matches!(aggregate.finish(), Err(Error::UnfinishedChoices)));
+
+    let mut aggregate = Aggregator::new(4096, 10);
+    aggregate
+        .push(chunk(json!([
+            {"index":0,"delta":{"role":"assistant"},"finish_reason":"stop"},
+            {"index":1,"delta":{"role":"assistant"},"finish_reason":null}
+        ])))
+        .unwrap();
+    assert!(matches!(aggregate.finish(), Err(Error::UnfinishedChoices)));
+
+    let duplicate = json!({"index":0,"delta":{"role":"assistant"},"finish_reason":null});
+    let mut aggregate = Aggregator::new(4096, 10);
+    assert!(matches!(
+        aggregate.push(chunk(json!([duplicate, duplicate]))),
+        Err(Error::InvalidChunk)
+    ));
+    assert!(matches!(
+        aggregate.push(chunk(json!([]))),
+        Err(Error::InvalidChunk)
+    ));
+}
+
+#[test]
+fn aggregation_uses_choice_finish_before_conflicting_data_and_keeps_failure_terminal() {
+    let mut aggregate = Aggregator::new(4096, 10);
+    aggregate
+        .push(one(0, json!({"role":"assistant"}), json!("stop")))
+        .unwrap();
+    let mut after_finish = one(0, json!({"content":"late"}), Value::Null);
+    after_finish["id"] = json!("conflicting-id");
+    assert!(matches!(
+        aggregate.push(after_finish),
+        Err(Error::ChoiceFinished)
+    ));
+    assert!(matches!(
+        aggregate.push(chunk(json!([]))),
+        Err(Error::InvalidChunk)
+    ));
+    assert!(matches!(aggregate.finish(), Err(Error::InvalidChunk)));
+}

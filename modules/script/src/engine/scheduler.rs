@@ -11,9 +11,7 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
-use crate::{
-    Cancellation, Command, HookCall, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
-};
+use crate::{Cancellation, Command, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge};
 
 /// Only settlement authority survives after the input becomes a private VM draft.
 struct Completion {
@@ -201,14 +199,13 @@ async fn begin(
     command: Command,
     options: &RuntimeOptions,
 ) -> Result<Option<Pending>, ScriptError> {
-    let Command { call, response } = command;
-    let HookCall {
+    let Command {
         hook_id,
         context: input,
         deadline,
         cancellation,
-        ..
-    } = call;
+        response,
+    } = command;
     let completion = Completion {
         cancellation,
         deadline,
@@ -230,10 +227,7 @@ async fn begin(
                 .clone()
                 .restore(&ctx)
                 .map_err(|e| bridge.failure(&ctx, e))?;
-            let bytes = serde_json::to_vec(&input)
-                .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
-            let draft = ctx.json_parse(bytes).map_err(|e| bridge.failure(&ctx, e))?;
-            drop(input);
+            let draft = ctx.json_parse(input).map_err(|e| bridge.failure(&ctx, e))?;
             let prepare = bridge
                 .prepare
                 .clone()

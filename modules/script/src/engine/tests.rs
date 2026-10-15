@@ -1,7 +1,59 @@
-use std::{cell::Cell, error::Error, io};
+use std::{
+    cell::Cell,
+    error::Error,
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::{Context, Poll, Wake, Waker},
+};
 
-use super::{Budget, conversion_error, fatal, module_error};
-use crate::{ScriptError, ScriptErrorKind};
+use serde_json::json;
+use tokio::sync::{oneshot, watch};
+
+use super::{Budget, conversion_error, fatal, module_error, publish_ready};
+use crate::{RuntimeStatus, ScriptError, ScriptErrorKind};
+
+struct ReadyOnWake {
+    status: watch::Receiver<RuntimeStatus>,
+    woke: AtomicBool,
+}
+
+impl Wake for ReadyOnWake {
+    fn wake(self: Arc<Self>) { self.wake_by_ref(); }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        assert!(matches!(*self.status.borrow(), RuntimeStatus::Ready));
+        self.woke.store(true, Ordering::Release);
+    }
+}
+
+#[test]
+fn startup_notification_observes_ready_before_the_receiver_is_woken() {
+    let (status, changes) = watch::channel(RuntimeStatus::Starting);
+    let (ready, mut receive) = oneshot::channel();
+    let observer = Arc::new(ReadyOnWake {
+        status: changes,
+        woke: AtomicBool::new(false),
+    });
+    let waker = Waker::from(Arc::clone(&observer));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(
+        Pin::new(&mut receive).poll(&mut context),
+        Poll::Pending
+    ));
+
+    assert!(publish_ready(&status, ready, json!({"loaded": true})));
+
+    assert!(observer.woke.load(Ordering::Acquire));
+    assert_eq!(
+        receive.try_recv().unwrap().unwrap(),
+        json!({"loaded": true})
+    );
+}
 
 #[test]
 fn context_reclassification_preserves_owned_causes_and_resource_failures() {

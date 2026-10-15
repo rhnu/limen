@@ -25,21 +25,17 @@ impl EventBudget {
 
     fn charge(
         &mut self,
-        events: &[Value],
+        events: usize,
+        bytes: usize,
         limits: &ResourceLimits,
         phase: &'static str,
     ) -> Result<(), Failure> {
-        let bytes = events.iter().try_fold(0_usize, |sum, event| {
-            let size = json::size(event, limits.max_output_bytes, ErrorCode::HookFailed, phase)?;
-            sum.checked_add(size)
-                .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
-        })?;
-        if events.len() > limits.max_output_events.saturating_sub(self.events)
+        if events > limits.max_output_events.saturating_sub(self.events)
             || bytes > limits.max_output_bytes.saturating_sub(self.bytes)
         {
             return Err(Failure::new(ErrorCode::HookFailed, phase));
         }
-        self.events += events.len();
+        self.events += events;
         self.bytes += bytes;
         Ok(())
     }
@@ -55,7 +51,12 @@ impl Gateway {
         budget: &mut EventBudget,
         lifecycle: &mut Lifecycle,
     ) -> Result<Vec<Value>, Failure> {
-        self.validate_event(&event, ErrorCode::UpstreamProtocol, phase)?;
+        validate_event(
+            &event,
+            &self.server.limits,
+            ErrorCode::UpstreamProtocol,
+            phase,
+        )?;
         let mut events = vec![event];
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             let hook = match phase {
@@ -77,10 +78,13 @@ impl Gateway {
                     .get("events")
                     .and_then(Value::as_array)
                     .ok_or_else(|| hook_invalid(phase, &step.name))?;
-                for event in produced {
-                    self.validate_event(event, ErrorCode::HookFailed, phase)?;
-                }
-                budget.charge(produced, &self.server.limits, phase)?;
+                let bytes = produced.iter().try_fold(0_usize, |sum, event| {
+                    let size =
+                        validate_event(event, &self.server.limits, ErrorCode::HookFailed, phase)?;
+                    sum.checked_add(size)
+                        .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
+                })?;
+                budget.charge(produced.len(), bytes, &self.server.limits, phase)?;
                 commit_state(lifecycle, &mut output)?;
                 let Value::Array(produced) = output["events"].take() else {
                     return Err(hook_invalid(phase, &step.name));
@@ -91,24 +95,19 @@ impl Gateway {
         }
         Ok(events)
     }
+}
 
-    fn validate_event(
-        &self,
-        event: &Value,
-        code: ErrorCode,
-        phase: &'static str,
-    ) -> Result<(), Failure> {
-        limen_config::validate_json(
-            event,
-            self.server.limits.max_json_depth,
-            self.server.limits.max_json_nodes,
-        )
+fn validate_event(
+    event: &Value,
+    limits: &ResourceLimits,
+    code: ErrorCode,
+    phase: &'static str,
+) -> Result<usize, Failure> {
+    limen_config::validate_json(event, limits.max_json_depth, limits.max_json_nodes)
         .map_err(|source| Failure::new(code, phase).with_source(source))?;
-        limen_chat::validate_chunk(event)
-            .map_err(|source| Failure::new(code, phase).with_source(source))?;
-        json::size(event, self.server.limits.max_event_bytes, code, phase)?;
-        Ok(())
-    }
+    limen_chat::validate_chunk(event)
+        .map_err(|source| Failure::new(code, phase).with_source(source))?;
+    json::size(event, limits.max_event_bytes, code, phase)
 }
 
 #[cfg(test)]

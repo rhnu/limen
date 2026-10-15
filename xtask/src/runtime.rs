@@ -41,7 +41,12 @@ impl Fixture {
         source: &str,
     ) -> Result<(ScriptRuntime, Value), Box<dyn Error + Send + Sync>> {
         let path = self.write("config.js", source)?;
-        Ok(ScriptRuntime::start(path, RuntimeOptions::default()).await?)
+        let started = ScriptRuntime::start(path, RuntimeOptions::default()).await?;
+        ensure(
+            matches!(started.0.status(), RuntimeStatus::Ready),
+            "successful startup did not publish Ready",
+        )?;
+        Ok(started)
     }
 }
 
@@ -430,22 +435,26 @@ async fn modules(fixture: &Fixture) -> ProbeResult {
 }
 
 async fn retirement(fixture: &Fixture, case: &str) -> ProbeResult {
-    let (body, expected) = match case {
-        "sync-loop" => ("while (true) {}", ScriptErrorKind::ExecutionBudget),
+    let (bodies, expected): (&[&str], _) = match case {
+        "sync-loop" => (&["while (true) {}"], ScriptErrorKind::ExecutionBudget),
         "microtask-loop" => (
-            "function spin() { Promise.resolve().then(spin); } spin(); return new Promise(() => {});",
+            &[
+                "function spin() { Promise.resolve().then(spin); } spin(); return new Promise(() => {});",
+            ],
             ScriptErrorKind::ExecutionBudget,
         ),
         "memory-limit" => (
-            "const retained = []; while (true) retained.push(new Array(8192).fill(1));",
+            &[
+                "const retained = []; while (true) retained.push(new Array(8192).fill(1));",
+                "throw null;",
+                "throw { message: 'out of memory' };",
+                "return Promise.reject(null);",
+                "return Promise.reject({ message: 'out of memory' });",
+            ],
             ScriptErrorKind::MemoryLimit,
         ),
         _ => return Err("invalid retirement experiment".into()),
     };
-    let path = fixture.write(
-        "config.js",
-        &format!("export default {{ onRequest() {{ {body} }} }};"),
-    )?;
     let mut options = RuntimeOptions {
         execution_timeout: Duration::from_millis(40),
         continuous_work_timeout: Duration::from_millis(160),
@@ -456,29 +465,36 @@ async fn retirement(fixture: &Fixture, case: &str) -> ProbeResult {
         options.execution_timeout = Duration::from_secs(2);
         options.continuous_work_timeout = Duration::from_secs(3);
     }
-    let (runtime, config) = ScriptRuntime::start(path, options).await?;
-    let mut changes = runtime.status_changes();
-    changes.borrow_and_update();
-    let result = runtime
-        .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
-        .await;
-    ensure(
-        result.is_err_and(|error| error.kind() == expected),
-        "rogue script did not report its resource limit",
-    )?;
-    // Retiring the VM must wake an HTTP server even when there is no next request.
-    while !matches!(*changes.borrow_and_update(), RuntimeStatus::Retired(_)) {
-        changes.changed().await?;
+    for body in bodies {
+        let path = fixture.write(
+            "config.js",
+            &format!("export default {{ onRequest() {{ {body} }} }};"),
+        )?;
+        let (runtime, config) = ScriptRuntime::start(path, options.clone()).await?;
+        let mut changes = runtime.status_changes();
+        changes.borrow_and_update();
+        let result = runtime
+            .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
+            .await;
+        ensure(
+            result.is_err_and(|error| error.kind() == expected),
+            "resource failure or conservative OOM signal had the wrong classification",
+        )?;
+        // Retiring the VM must wake an HTTP server even when there is no next request.
+        while !matches!(*changes.borrow_and_update(), RuntimeStatus::Retired(_)) {
+            changes.changed().await?;
+        }
+        let status = runtime.shutdown().await;
+        ensure(
+            matches!(status, RuntimeStatus::Retired(error) if error.kind() == expected),
+            "resource failure did not retire the VM",
+        )?;
+        let later = runtime
+            .invoke(call(hook(&config, "onRequest")?, 2, json!({})))
+            .await;
+        ensure(later.is_err(), "retired VM accepted a new call")?;
     }
-    let status = runtime.shutdown().await;
-    ensure(
-        matches!(status, RuntimeStatus::Retired(error) if error.kind() == expected),
-        "resource failure did not retire the VM",
-    )?;
-    let later = runtime
-        .invoke(call(hook(&config, "onRequest")?, 2, json!({})))
-        .await;
-    ensure(later.is_err(), "retired VM accepted a new call")
+    Ok(())
 }
 
 async fn shutdown_pending(fixture: &Fixture) -> ProbeResult {

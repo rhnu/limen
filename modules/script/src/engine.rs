@@ -139,11 +139,10 @@ pub(crate) async fn run(
         let _sent = ready.send(Err(ScriptError::new(ScriptErrorKind::Deadline)));
         return Err(ScriptError::new(ScriptErrorKind::Deadline));
     }
-    let outcome = if ready.send(Ok(config)).is_err() {
-        Ok(())
-    } else {
-        let _sent = status.send(RuntimeStatus::Ready);
+    let outcome = if publish_ready(status, ready, config) {
         scheduler::serve(&vm, &hooks, &mut commands, stop, wake).await
+    } else {
+        Ok(())
     };
     commands.close();
     while let Some(command) = commands.recv().await {
@@ -160,6 +159,16 @@ pub(crate) async fn run(
     drop(context);
     drop(runtime);
     outcome
+}
+
+/// Publish readiness before waking the starter, which can inspect status immediately.
+fn publish_ready(
+    status: &watch::Sender<RuntimeStatus>,
+    ready: oneshot::Sender<Result<Json, ScriptError>>,
+    config: Json,
+) -> bool {
+    let _sent = status.send(RuntimeStatus::Ready);
+    ready.send(Ok(config)).is_ok()
 }
 
 fn module_error(error: ScriptError) -> ScriptError {

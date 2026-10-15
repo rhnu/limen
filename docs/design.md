@@ -530,11 +530,12 @@ SSE 按事件而非 TCP 分块解析，支持跨分块 UTF-8、CRLF、LF、CR �
 [WHATWG SSE 标准](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream)
 为依据；模型 JSON、usage 和 `[DONE]` 属于上层 Chat Completions 协议。
 输入预算覆盖归一化后的事件块，CRLF 的 LF 作为同一换行被忽略；解析缓冲另有同值上限。
-输出数据帧按包含 framing 的编码字节数限制。Rust 的固定错误控制帧使用独立的 1 KiB 上限，
+输出数据帧单次有界编码，按包含 framing 的编码字节数限制；转换拆分的尺寸试探仍采用无输出缓冲的计数。
+Rust 的固定错误控制帧使用独立的 1 KiB 上限，
 避免较小的数据事件预算阻止发送约定错误对象。
 
-- `[DONE]` 是协议结束标记，默认要求成功流明确结束；EOF
-  未收到结束标记按截断失败处理。
+- `[DONE]` 是协议结束标记，默认要求成功流明确结束；读到首个完整结束标记后立即停止上游读取与解析，
+  不等待 socket EOF，也不再处理同一网络块的剩余字节。EOF 未收到结束标记按截断失败处理。
 - `finish_reason` 不等于流已结束。其后可能还有 `choices: []` 的 usage
   chunk，不提前关流。
 - 多 choice、tool call 的 index 与分片字段必须正确累积，不把不同 choice
@@ -613,9 +614,11 @@ Rust HTTP 服务使用 Tokio；独立 OS 线程运行 current-thread Tokio
 executor，并拥有一个 rquickjs `AsyncRuntime`、`AsyncContext` 及持久化 hook
 表。启用 `futures`、`loader` 所需能力，不依赖实验性 `parallel` feature。HTTP
 侧只传 hook ID、请求/调用 ID 和 owned 数据，不跨线程传 JS 句柄。
-当前命令包含 owned JSON context、绝对 `Instant` deadline 与取消句柄；一次性结果通道关联原调用，
+入队前校验 JSON context 的结构与数字边界，并在字节预算内编码一次；命令包含该 owned JSON 字节、
+绝对 `Instant` deadline 与取消句柄，VM 直接解析这些字节。一次性结果通道关联原调用，
 只交付通过校验的 owned JSON。取消调用 future 会关闭结果通道并唤醒 actor，从而撤销提交资格。
-VM draft 建立后释放原始输入 JSON；pending 仅保留 deadline、取消信号、结果通道和 VM 内的 draft/Promise 引用。
+编码入队后不再保留原始输入 JSON 树；VM draft 建立后释放输入字节，pending 仅保留 deadline、取消信号、
+结果通道和 VM 内的 draft/Promise 引用。取消与 deadline 在入队及提交边界仍分别检查。
 
 一个共享 VM 保留“每次进程启动求值一次配置”的语义。首版不建立多 VM
 池，也不为每个请求重新执行模块。不同请求可以在等待 Promise 时交错推进，但 JS
@@ -675,6 +678,8 @@ await，但默认导出本身仍须为配置对象。不能误以为任意求值
 调用/宿主 future 的取消，清理持久化 Promise 与请求对象，再释放函数引用、context
 和 runtime。
 
+运行时先发布 `Ready`，再通知调用方启动成功，避免成功返回后仍可观察到 `Starting`。
+
 ### 9.3 ESM 与宿主能力
 
 rquickjs 提供 resolver/loader 接口；当前适配器增加路径归一化、`.mjs`、普通文件检查、模块数量与总源码预算，
@@ -718,7 +723,11 @@ Docker
 当前使用 QuickJS 内建 allocator，不启用 `rust-alloc`，`set_memory_limit` 在隔离实验中触发未捕获 OOM 并退役。
 rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并消化 OOM，宿主不能可靠得知发生过分配失败，
 因此不能承诺此时必然退役。内存上限仍然生效；配置脚本不得把捕获 OOM 后继续执行当作支持的恢复策略。
-改变此限制需要重新评估 allocator 接口与工作区 `unsafe_code = forbid` 约束。
+异常识别采用保守退役策略：抛出的值为 `null`，或非 Proxy 对象自身的数据属性 `message` 恰为
+`"out of memory"` 时，也按 OOM 处理；普通脚本主动抛出相同值会触发误判并使共享 VM 退役。
+异常分类器自身失败也按无法保证 VM 可继续使用处理。真实未捕获 OOM 及同步异常、Promise rejection
+中的上述误判边界均已有 Windows 隔离运行证据；当前修订的 Linux 验证状态见路线图。
+改变此限制需要重新评估 allocator 接口与工作区默认拒绝 `unsafe` 的约束。
 
 当前进程实验验证了同步/异步 void、悬挂 Promise 下的调用与取消推进、deadline 后迟到结果不提交、
 同步中断、持续微任务预算、未捕获 OOM 和 pending 引用关闭路径。无 job 时通过通知、命令或最近 deadline 唤醒，
@@ -937,6 +946,8 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 `aggregate`（按 choice/tool index 聚合）、`convert`（完整 JSON 转事件）、`error` 组织。
 同形态保留合法扩展字段；跨形态支持范围仍由第 7 节约束。转换输入、输出和状态均受显式预算约束，
 JSON 转事件采用有界迭代或分批输出，不返回无界事件集合。
+聚合器以已有 choice 的 finish reason 作为完成状态的唯一来源；根包对原始流与 hook 变换后流的验证仍各自保留，
+不跨越 hook 修改边界共用完成状态。
 
 依赖方向为根包 → `config`、`script`、`chat`，三个职责库之间保持独立，也不反向依赖根包。
 根包将 `ResourceLimits` 转为各库实际需要的选项；各库执行自身队列、VM、解析或聚合边界，

@@ -103,7 +103,6 @@ jobs:
           platforms: linux/amd64
           pull: true
           push: ${{ env.PUBLISH_IMAGE == 'true' }}
-          load: ${{ env.PUBLISH_IMAGE != 'true' }}
           tags: ${{ steps.image-name.outputs.name }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

@@ -3,6 +3,7 @@ use rquickjs::{Ctx, Error, Function, Object, Persistent, Value};
 use crate::{JsonLimits, ScriptError, ScriptErrorKind};
 
 struct Bounded {
+    bytes: Vec<u8>,
     remaining: usize,
 }
 
@@ -12,16 +13,17 @@ impl std::io::Write for Bounded {
             .remaining
             .checked_sub(bytes.len())
             .ok_or_else(|| std::io::Error::other("JSON size limit"))?;
+        self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
 }
 
-pub(crate) fn validate_owned(
+pub(crate) fn encode_owned(
     value: &serde_json::Value,
     limits: JsonLimits,
-) -> Result<(), ScriptError> {
+) -> Result<Vec<u8>, ScriptError> {
     fn walk(
         v: &serde_json::Value,
         depth: usize,
@@ -54,15 +56,14 @@ pub(crate) fn validate_owned(
         Ok(())
     }
     walk(value, 0, &mut 0, limits)?;
-    // Serialize to a counting sink, never a second potentially huge owned buffer.
-    serde_json::to_writer(
-        Bounded {
-            remaining: limits.max_bytes,
-        },
-        value,
-    )
-    .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
-    Ok(())
+    // Queue the bounded encoding itself so the VM need not serialize the same tree again.
+    let mut bounded = Bounded {
+        bytes: Vec::new(),
+        remaining: limits.max_bytes,
+    };
+    serde_json::to_writer(&mut bounded, value)
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
+    Ok(bounded.bytes)
 }
 
 pub(crate) struct Bridge {

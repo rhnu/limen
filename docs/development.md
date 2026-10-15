@@ -90,6 +90,8 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 退出码为 `0` 全部通过或列表/帮助成功，`1` 实验、构建或清理失败，`2` 参数错误。
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
 17 个 VM 实验（包含 `context-stream`）已通过 Linux 与 Windows 隔离运行验证。
+启动实验在成功返回后立即检查 `Ready`；`memory-limit` 另外覆盖同步抛出或 Promise rejection 携带
+`null` / 自身 `message: "out of memory"` 的保守退役边界，新增场景已通过 Windows 隔离运行。
 
 检查示例配置：
 
@@ -126,7 +128,9 @@ VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixt
 异常、Promise rejection、非 void 完成值和循环 draft 都必须返回安全错误且不发送上游请求。
 `stream-transforms` 检查 SSE 丢弃与拆分后的实际片段、聚合文本、usage 和对外模型名，
 也覆盖完整 JSON 响应改写后转换为 SSE。上述断言不依赖内部调用轨迹或执行计数。
-`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误。
+`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，
+并检查首个 DONE 后的错误事件位于同一块或延迟尾块时，JSON/SSE 下游均保持成功终结。
+该终结回归已在 Windows 通过；临时恢复旧的块尾终结逻辑时，实验会拒绝其错误结果。
 全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，包含新增参数覆写、流变换和调整后的管线实验。
 Linux 的单元测试、17 个 VM 实验与 12 个 HTTP 实验均通过，证据见
 [`04875e1` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38658155498/job/116172750034)。
@@ -231,7 +235,7 @@ Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格�
 GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支保护可依据现有 CI 配置。
 镜像 job 等待 Rust 与 Markdown 检查通过，使用 Buildx 构建 `linux/amd64` 和 GHA `mode=max` 中间层缓存。
 仅 `main` push 使用 `GITHUB_TOKEN` 登录 GHCR 并推送 `ghcr.io/<小写 owner>/<小写 repo>:latest`，
-当前仓库为 `ghcr.io/rhnu/limen:latest`。PR 和手动触发只构建并加载到 runner，不登录、不推送、不清理。
+当前仓库为 `ghcr.io/rhnu/limen:latest`。PR 和手动触发使用 `cacheonly` 完成构建，不登录、不推送、不清理。
 CI 不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
 Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层只含二进制、CA 与运行依赖，使用非 root 用户。
 release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind 以维持运行时的异常清理边界。
