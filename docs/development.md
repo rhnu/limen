@@ -127,8 +127,9 @@ VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixt
 `stream-transforms` 检查 SSE 丢弃与拆分后的实际片段、聚合文本、usage 和对外模型名，
 也覆盖完整 JSON 响应改写后转换为 SSE。上述断言不依赖内部调用轨迹或执行计数。
 `transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误。
-全部 12 个 Rust HTTP 实验已通过 Windows 隔离运行验证；原有 10 个实验（包含 `transport-contracts` 和 SIGTERM 关闭）
-已有 Linux 证据。新增覆盖与 CI 高级测试步骤的 Linux 运行结果仍待取得。
+全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，包含新增参数覆写、流变换和调整后的管线实验。
+Linux 的单元测试、17 个 VM 实验与 12 个 HTTP 实验均通过，证据见
+[`04875e1` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38658155498/job/116172750034)。
 Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创建或连接网关私有控制台，隔离 Ctrl-C 广播。
 正常实验清理与独立控制台 Ctrl-C 已有运行证据；Job Object 在外部超时和父进程中断时的回收仍待单独验证。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动作为独立高级测试执行，CI 中固定排在单元测试之后。
