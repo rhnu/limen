@@ -32,18 +32,15 @@ local/
 ├── basic/
 │   ├── server.yaml
 │   └── config.js
-├── docker/
-│   ├── server.yaml
-│   └── config.js
 └── shared/
     └── rules.mjs
 ```
 
 `--config local/basic/server.yaml` 会定位 `local/basic/config.js`；文件名必须为 `config.js`。
 模块中的相对导入以导入者为基准，允许 `../shared/rules.mjs`。
-复制仓库示例时应复制整个 `examples/`，保留 `basic/`、`docker/` 与 `shared/` 的相对关系。
+本机示例需保留 `basic/` 与 `shared/` 的相对关系；Docker 示例独立使用，复制方式见[部署说明](#docker-部署)。
 
-配置脚本作为可信本地代码执行。真实令牌可直接放在 `local/` 的配置文件或本地导入模块中，
+配置脚本作为可信本地代码执行。真实令牌可直接放在 `local/`（Docker 使用 `data/`）的配置文件或本地导入模块中，
 也可通过 `limen.env(name)` 读取进程环境。限制秘密文件读取权限并排除版本控制。
 无需 `package.json`，不支持 npm 包解析、远程 URL 导入、
 Node.js、`fetch`、定时器、进程或任意文件读写 API。本地模块导入会读取对应文件。
@@ -519,19 +516,27 @@ Ctrl-C 和 Unix SIGTERM 停止监听并取消在途请求；关闭超过预算�
 
 ## Docker 部署
 
-仓库提供 Linux `amd64` 多阶段镜像构建与 Compose 配置。先复制整个 `examples/` 到 `local/`，
-填写 `local/basic/config.js` 中的上游配置和 `local/docker/server.yaml` 中的客户端令牌：
+Compose 直接使用已发布的 Linux `amd64` 镜像 `ghcr.io/rhnu/limen:latest`。
+先将独立的 Docker 示例复制到 `data/`：
 
 ```sh
-docker compose build
-docker compose run --rm limen check --config /config/docker/server.yaml
+cp -R examples/docker data
+```
+
+PowerShell 使用 `Copy-Item -LiteralPath examples/docker -Destination data -Recurse`。
+在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌，然后执行：
+
+```sh
+docker compose pull
+docker compose run --rm limen check
 docker compose up -d
 docker compose logs -f
 docker compose down
 ```
 
-`local/docker/config.js` 重导出 `../basic/config.js`，后者可以继续导入 `../shared/rules.mjs`。
-Compose 将整个 `local/` 只读挂载到 `/config`，配置入口为 `/config/docker/server.yaml`。
+Compose 使用 `./data:/data:ro` 挂载，容器工作目录为 `/data`，默认配置为 `/data/server.yaml`，
+同目录加载 `config.js`。Docker 示例不依赖 `basic/` 或 `shared/`；自行添加的本地模块也应放在 `data/` 中并保留相对导入关系。
+启动前先复制并填写配置；短挂载语法会在源目录缺失时自动创建空目录，缺少 `server.yaml` 或 `config.js` 会导致检查或启动失败。
 容器内显式监听 `0.0.0.0:8080`，宿主默认仅发布 `127.0.0.1:8080`。
 需要内网访问时同时考虑宿主端口绑定和客户端认证。
 
@@ -551,7 +556,8 @@ Compose 的变量替换发生在容器启动之前；宿主 `.env` 文件不会�
 真实配置不会进入允许清单控制的构建上下文，运行镜像保留 `/usr/share/doc/limen/LICENSE`。
 
 CI 在 main push 检查通过后构建并推送 `ghcr.io/rhnu/limen:latest`；PR 与手动 CI 只构建。
-包可见性与访问权限由 GHCR 设置决定，当前 Compose 默认从源码构建本地镜像。
+包可见性与访问权限由 GHCR 设置决定；私有包需先用具备读取权限的凭据执行 `docker login ghcr.io`。
+更新镜像时先运行 `docker compose pull`，再运行 `docker compose up -d`。
 镜像发布、缓存和历史版本清理细节见[开发指引](development.md#github-ci-与容器构建)。
 
 ## 当前支持边界

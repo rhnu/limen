@@ -16,6 +16,7 @@
 
 # These remain excluded even if placed below an allowed source directory.
 **/local
+**/data
 **/target
 **/.git
 **/.env

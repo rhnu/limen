@@ -41,15 +41,14 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates libgcc-s1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 limen \
-    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin limen \
-    && mkdir /config
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin limen
 
 COPY --from=builder /build/target/release/limen /usr/local/bin/limen
 COPY LICENSE /usr/share/doc/limen/LICENSE
 
-WORKDIR /config
+WORKDIR /data
 USER 10001:10001
 EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/limen"]
-CMD ["serve", "--config", "/config/docker/server.yaml"]
+CMD ["serve"]

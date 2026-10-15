@@ -93,21 +93,28 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 ## Docker
 
 需要 Docker Engine 或启用 Linux 容器的 Docker Desktop，以及 Docker Compose。
-仓库提供的构建目标为 Linux `amd64`。
+Compose 使用已发布的 Linux `amd64` 镜像 `ghcr.io/rhnu/limen:latest`。
 
-将整个 `examples/` 复制到 `local/` 后，在 `local/basic/config.js` 中填写上游配置，
-在 `local/docker/server.yaml` 中设置客户端令牌，然后执行：
+将独立的 Docker 示例复制到 `data/`（PowerShell 使用
+`Copy-Item -LiteralPath examples/docker -Destination data -Recurse`）：
 
 ```sh
-docker compose build
-docker compose run --rm limen check --config /config/docker/server.yaml
+cp -R examples/docker data
+```
+
+在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌，然后执行：
+
+```sh
+docker compose pull
+docker compose run --rm limen check
 docker compose up -d
 docker compose logs -f
 ```
 
-使用 `docker compose down` 停止服务。Compose 将整个 `local/` 只读挂载到 `/config`，
-仅向宿主的 `127.0.0.1:8080` 发布端口。容器配置监听 `0.0.0.0:8080`，
-挂载文件需要允许 UID/GID `10001` 读取。真实配置与凭据不进入镜像构建上下文。
+使用 `docker compose down` 停止服务。Compose 将 `data/` 只读挂载到容器工作目录 `/data`，
+检查与启动默认读取 `/data/server.yaml`。仅向宿主的 `127.0.0.1:8080` 发布端口，
+容器配置监听 `0.0.0.0:8080`。挂载文件需要允许 UID/GID `10001` 读取，真实配置与凭据不进入镜像构建上下文。
+GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 详细说明见[部署指南](docs/features.md#docker-部署)。
 
 ## 配置与运行

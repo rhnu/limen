@@ -98,23 +98,32 @@ bearer token, and a configured model alias. Select their Chat Completions mode.
 
 ## Docker
 
-Docker Engine or Docker Desktop with Linux containers and Docker Compose is required. The supplied
-build targets Linux `amd64`.
+Docker Engine or Docker Desktop with Linux containers and Docker Compose is required. Compose uses
+the published `ghcr.io/rhnu/limen:latest` image for Linux `amd64`.
 
-After copying `examples/` to `local/`, fill in the provider settings in `local/basic/config.js` and
-the client bearer token in `local/docker/server.yaml`. Then run:
+Copy the standalone Docker example to `data/` (`Copy-Item -LiteralPath examples/docker -Destination data -Recurse`
+in PowerShell):
 
 ```sh
-docker compose build
-docker compose run --rm limen check --config /config/docker/server.yaml
+cp -R examples/docker data
+```
+
+Fill in the provider settings in `data/config.js` and the client bearer token in `data/server.yaml`.
+Then run:
+
+```sh
+docker compose pull
+docker compose run --rm limen check
 docker compose up -d
 docker compose logs -f
 ```
 
-Stop the service with `docker compose down`. Compose mounts the whole `local/` tree read-only at
-`/config` and publishes `127.0.0.1:8080` on the host. The container configuration listens on
-`0.0.0.0:8080`; mounted files must be readable by UID/GID `10001`. Local credentials are excluded
-from the image build context. See the [deployment guide](docs/features.md#docker-部署) for details.
+Stop the service with `docker compose down`. Compose mounts `data/` read-only at `/data`, the container's
+working directory. Both commands use `/data/server.yaml` by default. The host port is bound to
+`127.0.0.1:8080`; the container configuration listens on `0.0.0.0:8080`. Mounted files must be readable
+by UID/GID `10001`. Local credentials are excluded from the image build context. GHCR package access
+depends on its visibility and your registry credentials. See the [deployment guide](docs/features.md#docker-部署)
+for details.
 
 ## Configuration and operation
 

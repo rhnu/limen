@@ -231,7 +231,7 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 - 默认分支为 `main`；保持仓库 LF 换行约定，不修改全局 Git 身份或配置。
 - 提交遵循 Conventional Commits，描述具体行为或职责变化，不使用路线图阶段编号作为提交主题。
 - 保留 `Cargo.lock`。提交前检查暂存区，确保无真实配置、令牌、Cookie、携密源码或原始请求正文。
-- 实际部署配置集中在 `local/`；`examples/` 只放占位值。Git ignore 不能保证其他路径没有秘密。
+- 本机真实配置集中在 `local/`，Docker 部署配置放 `data/`；`examples/` 只放占位值。Git ignore 不能保证其他路径没有秘密。
 - 项目许可证为 `AGPL-3.0-only`，完整条款来自 [GNU 官方文本](https://www.gnu.org/licenses/agpl-3.0.txt)，保存于根目录 [LICENSE](../LICENSE)。
   `workspace.package.license` 集中声明许可证，根包、职责库和 xtask 均通过 `license.workspace = true` 继承，Cargo 包继续设置为不发布。
 - 不从模板推断 GitHub owner、公开性或镜像命名空间；发布前另行确定。
@@ -269,22 +269,29 @@ workflow 发布的包自动关联仓库，并带 `org.opencontainers.image.sourc
 [Packages REST API](https://docs.github.com/en/rest/packages/packages)；队列行为见
 [Actions concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
 
-本地可显式调用以下命令（本次未运行）：
+Compose 使用已发布的 `ghcr.io/rhnu/limen:latest`。首次将 `examples/docker/` 复制为 `data/`，
+填写 `data/server.yaml` 和 `data/config.js`，再执行：
 
 ```sh
-docker build --platform linux/amd64 -t limen:local .
-docker compose run --rm limen check --config /config/docker/server.yaml
-docker compose up --build -d
+docker compose config
+docker compose pull
+docker compose run --rm limen check
+docker compose up -d
 docker compose down
 ```
 
-Compose 只读挂载整个 `local/`，配置使用 `/config/docker/server.yaml`，示例重导出 `../basic/config.js`，
-继续使用 `../shared/`。复制整个 `examples/` 到 `local/` 后填写凭据，保持目录关系。
+需要从源码构建镜像时单独执行 `docker build --platform linux/amd64 -t limen:local .`；Compose 没有本地构建段。
+镜像默认工作目录或启动命令调整后，部署环境需先等待 CI 发布更新后的镜像，再执行 `docker compose pull`。
+
+Compose 用 `./data:/data:ro` 只读挂载部署目录，容器工作目录为 `/data`；`CMD ["serve"]` 与检查命令均默认读取 `server.yaml`。
+Docker 示例独立提供 `server.yaml` 与 `config.js`，无需复制本机示例或共享规则；自行导入的模块需一同放入 `data/`。
+短挂载语法在宿主目录缺失时会创建空目录，启动前必须完成示例复制和配置填写。
 容器内 `0.0.0.0:8080`，宿主默认仅绑定回环地址；只读根文件系统、移除 capabilities，禁止提权。
 终止宽限时间覆盖 HTTP 与 VM 的有限关闭预算。`.dockerignore` 使用允许清单控制构建上下文，
-不拷贝 `local/`、示例、Git 历史或任意未列入的文件。
+不拷贝 `local/`、`data/`、示例、Git 历史或任意未列入的文件。
 Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量或吞吐承诺；
 配置需允许 UID/GID 10001 读取，尤其留意宿主上仅所有者可读的凭据文件。
+挂载和 `security_opt` 的简写规则见 [Compose 官方服务配置参考](https://docs.docker.com/reference/compose-file/services/)。
 
 构建工具 cargo-chef 固定为 0.1.78，版本来源为
 [官方发布](https://github.com/LukeMathWalker/cargo-chef/releases/tag/v0.1.78)。
