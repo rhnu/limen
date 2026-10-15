@@ -19,6 +19,8 @@ Limen 将显式配置的模型别名映射到上游 Chat Completions 服务，�
 | 流式变换       | `onUpstreamEvent`、`onStreamEvent` | 修改、丢弃或展开合法 Chat SSE JSON 事件        |
 | 配置复用       | 本地 `.js` / `.mjs` ESM            | 相对导入、共享规则、同步或异步 hook            |
 | 脚本验证       | JSDoc、`limen check`、`limen test` | 类型提示、配置装载检查与合成响应离线用例       |
+| 业务拒绝       | `ctx.reject()`                     | 请求阶段明确拒绝为 400、403 或 422             |
+| 客户端上下文   | `script_context.client_headers`    | 白名单、多值、只读头视图；不自动转发           |
 | 运行保护       | `limits`                           | 限制并发、队列、VM 执行、正文、流事件和聚合    |
 | 部署与诊断     | CLI、日志、Docker Compose          | 配置检查、安全错误、非 root 服务进程和信号关闭 |
 
@@ -51,6 +53,7 @@ TOML 读取、解析或校验失败会直接报错；成功后不读取 YAML，�
 无需 `package.json`，不支持 npm 包解析、远程 URL 导入、
 Node.js、`fetch`、定时器、进程或任意文件读写 API。本地模块导入会读取对应文件。
 模块图每次启动求值一次；修改配置后需要检查并重启服务。
+可复用已发布的纯 JS ESM，或在开发时将 npm 库打包为本地入口；见[库接入示例](#第三方库接入)。
 
 ### 服务配置：TOML 与 YAML
 
@@ -334,6 +337,62 @@ onRequest({ body, state }) {
 
 这是默认导出对象中的属性片段，`chat` 必须已在 `models` 中定义；它不会自动在模型列表中增加 `default`。
 请求数据放在 `state` 中，不放入跨请求存活的全局变量或闭包。
+
+### 显式业务拒绝
+
+全局 `onRequest` 与 provider/model 的 `beforeSend` 可调用 `ctx.reject()`，默认选择 400；
+也可显式传入 403 或 422。例如，以下函数可作为顶层 `onRequest`：
+
+```javascript
+onRequest(ctx) {
+  if (ctx.body.logprobs !== undefined) return ctx.reject(400);
+  if (ctx.client.headers.getAll("x-client-profile")[0] === "blocked") {
+    return ctx.reject(403);
+  }
+}
+```
+
+拒绝方法只记录意图，返回 `undefined`，不会中断函数；需要提前结束时使用 `return`。
+仍须遵守 `void | Promise<void>`：异步 hook 会等待正常完成，才处理拒绝。
+完成值非法、异常、Promise rejection、非法 JSON、body/URL/header 校验失败、取消或超时仍作为原失败处理。
+重复调用或传入其他状态、字符串、对象、额外参数均报错。
+
+成功拒绝会提交当前 state，然后停止后续步骤，不发送上游请求。返回的错误 code 为 `request_rejected`，
+message 固定为 `The request was rejected by script policy`，不接受自定义正文或异常文本。
+原请求即使为 `stream: true`，发送前拒绝仍返回 HTTP JSON 错误。
+`afterReceive`、响应、流与终态观察阶段均不提供 `reject`。
+`onError`、`onFinish` 继续按 `failed` 观察安全错误及已提交 state，不恢复请求。
+
+### 白名单客户端头
+
+客户端头默认不可见。服务配置中显式开放需要读取的名称：
+
+```toml
+[script_context]
+client_headers = ["x-client-profile", "x-client-tags"]
+```
+
+YAML 对应为：
+
+```yaml
+script_context:
+  client_headers: [x-client-profile, x-client-tags]
+```
+
+所有 hook 都可通过 `ctx.client.headers.getAll("X-Client-Profile")` 查询只读快照，名称大小写无关，
+返回保留顺序的多值数组；缺失或未开放的名称返回 `[]`。返回值是副本，修改数组不改变快照。
+`client`、`client.headers` 和方法均不可替换，视图不提供 `set`、`append`、`delete`。
+读取不会转发头部；需要上游某个普通头时，在 `beforeSend` 中通过独立的 `ctx.headers` 明确设置。
+客户端自定义头仍由客户端控制，不是可信认证身份。
+
+白名单最多 32 个名称，每项最多 256 字节，拒绝非法名称及大小写无关的重复项。
+`authorization`、`proxy-authorization`、`cookie`、`set-cookie`、`proxy-authenticate` 禁止开放；
+`host`、`content-length`、`transfer-encoding`、`connection`、`content-encoding`、`content-type`、
+`proxy-connection`、`keep-alive`、`te`、`trailer`、`upgrade` 等传输字段也禁止开放。
+请求中 `Connection` 指定的逐跳字段即使位于白名单，也不会进入快照。
+选中的非 UTF-8 头值返回 `invalid_request`，不静默改写。
+快照限制为 100 项、32 KiB 名值字节，并继续受 context JSON 和 VM 预算限制。
+认证或准入失败时还没有可公开快照，观察 hook 读取到空视图。
 所有异步工作都应纳入 hook 返回的 Promise，不启动脱离请求生命周期的后台任务。
 超时或取消会停止等待并拒绝迟到结果，但不保证 Promise 本身或已发生的全局副作用已经停止。
 
@@ -426,7 +485,8 @@ SSE → SSE 不因配置了 `onResponse` 而缓存整段流，该路径不会执
 ### 终态观察
 
 可在默认导出顶层配置 `onError(ctx)` 与 `onFinish(ctx)`，二者支持相同的 void/Promise 契约，
-但整个 context 深度只读。提供 `meta`、最终 `state`、`outcome` 与 `stats`，失败时还有安全错误及阶段信息。
+但整个 context 深度只读。提供 `meta`、`client`、最终 `state`、`outcome` 与 `stats`，
+失败时还有安全错误的 `code`、`status`、`message`、`request_id`、`phase`、`step`。
 `stats` 包含输入、上游与输出字节数、耗时、最终上游模型及去除路径/query 的目标。
 
 失败或取消时先尝试 `onError`，随后尝试 `onFinish`；观察失败只记录诊断，不恢复请求、不改响应、
@@ -501,17 +561,18 @@ VM 内存、栈、执行与微任务工作量、命令队列、pending hook、�
 
 `request_id` 是示意值。错误消息采用固定安全说明，不包含原始上游正文、脚本异常文本或令牌。
 
-| code                                    | 默认 HTTP 状态 | 排查方向                                         |
-| --------------------------------------- | -------------- | ------------------------------------------------ |
-| `invalid_request` / `unknown_model`     | 400            | 请求 JSON、messages、stream 与模型别名           |
-| `unauthorized`                          | 401            | 客户端 bearer token 与重复 Authorization         |
-| `payload_too_large`                     | 413            | 客户端正文大小                                   |
-| `busy`                                  | 429            | 请求并发或脚本队列容量                           |
-| `hook_failed` / `internal_error`        | 500            | 阶段诊断、hook 完成值与 JSON 输出                |
-| `upstream_failed` / `upstream_protocol` | 502            | 上游连接、状态、媒体类型、响应形状、预算或流截断 |
-| `unavailable`                           | 503            | 服务关闭或 VM 状态                               |
-| `deadline_exceeded`                     | 504            | 请求、hook 或等待预算                            |
-| `cancelled`                             | 499            | 内部取消分类；客户端断开后不尝试回送             |
+| code                                    | 默认 HTTP 状态  | 排查方向                                         |
+| --------------------------------------- | --------------- | ------------------------------------------------ |
+| `invalid_request` / `unknown_model`     | 400             | 请求 JSON、messages、stream 与模型别名           |
+| `unauthorized`                          | 401             | 客户端 bearer token 与重复 Authorization         |
+| `request_rejected`                      | 400 / 403 / 422 | 请求 hook 显式业务拒绝，不是脚本故障             |
+| `payload_too_large`                     | 413             | 客户端正文大小                                   |
+| `busy`                                  | 429             | 请求并发或脚本队列容量                           |
+| `hook_failed` / `internal_error`        | 500             | 阶段诊断、hook 完成值与 JSON 输出                |
+| `upstream_failed` / `upstream_protocol` | 502             | 上游连接、状态、媒体类型、响应形状、预算或流截断 |
+| `unavailable`                           | 503             | 服务关闭或 VM 状态                               |
+| `deadline_exceeded`                     | 504             | 请求、hook 或等待预算                            |
+| `cancelled`                             | 499             | 内部取消分类；客户端断开后不尝试回送             |
 
 原始上游 3xx–5xx 默认映射为 502；`afterReceive` 可以在允许范围内显式改下游错误状态。
 Limen 不跟随上游重定向、不自动重试、不使用环境代理，也不回显上游失败正文。
@@ -561,6 +622,24 @@ export const countRequests = {
 类型检查不运行脚本，也不能验证循环引用、安全整数、URL/header 内容、流结束条件或资源限制；
 部署前仍使用 `check`，用合成输入验证 hook 时使用下文 `test`。
 
+### 第三方库接入
+
+[`examples/libraries/`](../examples/libraries) 提供 Valibot 库接入：源码在 `src/config.js`，
+开发工具将依赖与源码打包为同目录的 `config.js`。构建步骤和命令见
+[开发指引](development.md#第三方库示例构建)。运行时仍为 QuickJS，不需要 Node.js 或 npm。
+
+该示例通过白名单 `x-example-policy: allow` 选择兼容策略，检查可选的 `temperature` 和
+`max_completion_tokens`，拒绝错误参数或不支持的 `logprobs`，限制输出 token 并删除 `store`。
+校验只检查结果，不用 schema 输出替换原始 body，因此保留未知扩展字段。
+客户端头不自动转发；上游 `X-Policy: validated` 由步骤显式设置。
+随附五个离线用例覆盖接受、参数省略、422 校验拒绝、400 参数拒绝和 403 客户端头拒绝。
+
+可以不使用 bundler，直接通过相对路径导入发布后的本地 `.js` / `.mjs` 文件。
+裸包名和 package exports 解析仍不支持；打包不会补齐 `URL`、`TextEncoder`、DOM、Node 或网络 API。
+示例只验证所用的普通校验函数，不承诺 Valibot 的全部功能可用。库对象、typed array 和错误实例也不能直接
+作为 JSON draft/state 输出；需要显式提取普通 JSON 数据。
+生成文件不纳入版本控制，分发或部署时须连同依赖许可证一起保留。
+
 ### 命令行与配置检查
 
 ```sh
@@ -598,8 +677,13 @@ Ctrl-C 和 Unix SIGTERM 停止监听并取消在途请求；关闭超过预算�
 用例中的 `request` 进入生产校验和单次路由，`upstream` 替代发送后的响应；
 无需发送上游请求的预期失败仍须提供 `upstream` 记录。
 
-用例顶层要求 `name`、`request`、`upstream`、`expect`，未知 schema 字段会被拒绝。
+用例顶层要求 `name`、`request`、`upstream`、`expect`，可另提供 `clientHeaders`；未知 schema 字段会被拒绝。
 `name` 为 1–128 字节的 ASCII 标识符，允许字母、数字及 `-._/`；用例报告只显示该名称和固定结果类别。
+
+`clientHeaders` 为可选的 `{ "x-name": ["value1", "value2"] }`，默认空对象。
+名称大小写无关、每项值数组非空；它通过生产请求头入口进入白名单选择，不绕过 context 规则。
+不能覆盖 runner 管理的 `Authorization` 或 `Content-Type`。
+构造后的全部客户端头（含 runner 添加的字段）最多 100 项与 32 KiB 编码头字节，超限 fixture 直接失败。
 
 | 字段                       | 类型与含义                                                                                 |
 | -------------------------- | ------------------------------------------------------------------------------------------ |

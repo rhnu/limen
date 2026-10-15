@@ -1,0 +1,83 @@
+{
+  "name": "request-default",
+  "request": {
+    "model": "unconfigured",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "mode": "request-default",
+    "stream": true
+  },
+  "clientHeaders": {
+    "X-Profile": [
+      "editor"
+    ],
+    "x-tags": [
+      "one",
+      "two"
+    ],
+    "cookie": [
+      "synthetic-cookie-secret"
+    ],
+    "x-private": [
+      "synthetic-private-value"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "state": {
+      "client": {
+        "profiles": [
+          "editor"
+        ],
+        "tags": [
+          "one",
+          "two"
+        ]
+      },
+      "mode": "request-default"
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "code": "request_rejected",
+          "message": "The request was rejected by script policy",
+          "request_id": "limen-1"
+        }
+      }
+    },
+    "error": {
+      "code": "request_rejected",
+      "status": 400,
+      "phase": "onRequest"
+    }
+  }
+}

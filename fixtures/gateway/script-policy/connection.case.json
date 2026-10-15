@@ -1,0 +1,85 @@
+{
+  "name": "connection",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "mode": "connection"
+  },
+  "clientHeaders": {
+    "X-Profile": [
+      "editor"
+    ],
+    "x-tags": [
+      "one",
+      "two"
+    ],
+    "cookie": [
+      "synthetic-cookie-secret"
+    ],
+    "x-private": [
+      "synthetic-private-value"
+    ],
+    "Connection": [
+      "x-tags"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "state": {
+      "client": {
+        "profiles": [
+          "editor"
+        ],
+        "tags": []
+      },
+      "mode": "connection",
+      "provider": true,
+      "model": true
+    },
+    "response": {
+      "status": 200
+    },
+    "outbound": {
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer synthetic-upstream-secret"
+        ],
+        "content-type": [
+          "application/json"
+        ]
+      }
+    }
+  }
+}

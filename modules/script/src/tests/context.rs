@@ -3,6 +3,9 @@ use serde_json::{Value, json};
 use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
 use crate::{RuntimeStatus, ScriptErrorKind};
 
+mod client;
+mod rejection;
+
 fn draft(phase: &str) -> Value {
     let mut value = json!({
         "meta": {"phase": phase, "requestId": "synthetic", "clientStream": false},
@@ -13,6 +16,7 @@ fn draft(phase: &str) -> Value {
             value["body"] = json!({"model": "synthetic", "nested": {"value": 1}});
         },
         "afterReceive" => value["status"] = json!(200),
+        "onUpstreamEvent" | "onStreamEvent" => value["event"] = json!({"text": "synthetic"}),
         "onError" | "onFinish" => {
             value["outcome"] = json!("success");
             value["stats"] = json!({"outputBytes": 0});

@@ -1,5 +1,7 @@
 use super::*;
 
+mod script_context;
+
 fn parse_yaml_config(source: &str) -> Result<ServerConfig, ConfigError> {
     ServerConfig::parse(source, ServerFormat::Yaml)
 }

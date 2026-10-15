@@ -1,0 +1,34 @@
+{
+  "name": "library-validation-allows-omitted-options",
+  "clientHeaders": { "x-example-policy": ["allow"] },
+  "request": {
+    "model": "chat",
+    "messages": [{ "role": "user", "content": "Hello" }]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": { "content-type": ["application/json"] },
+    "body": {
+      "id": "demo",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [{
+        "index": 0,
+        "message": { "role": "assistant", "content": "hello" },
+        "finish_reason": "stop"
+      }]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "state": { "policy": "allowed" },
+    "outbound": {
+      "body": {
+        "model": "demo-model",
+        "messages": [{ "role": "user", "content": "Hello" }]
+      }
+    },
+    "response": { "status": 200 }
+  }
+}

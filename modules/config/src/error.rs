@@ -226,6 +226,8 @@ fn schema_name(key: &str) -> &str {
     match key {
         "listen"
         | "client_auth"
+        | "script_context"
+        | "client_headers"
         | "none"
         | "bearer"
         | "log"

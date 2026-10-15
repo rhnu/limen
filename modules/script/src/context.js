@@ -28,7 +28,7 @@
     }
     return value;
   }
-  function headerDraft(input, writable) {
+  function headerDraft(input, writable, readOnly = false) {
     if (!isArray(input)) fail();
     let fields = setProto([], null), bytes = 0;
     function normalized(name, value, mutation) {
@@ -62,7 +62,7 @@
       if (!writable) fail();
       return normalized(name, value, true);
     }
-    const api = freeze({
+    const api = {
       getAll(name) {
         name = normalized(name, "", false);
         const values = [];
@@ -71,13 +71,16 @@
         }
         return values;
       },
-      append(name, value) { appendField(mutation(name, value), value); },
-      set(name, value) {
+    };
+    if (!readOnly) {
+      api.append = function (name, value) { appendField(mutation(name, value), value); };
+      api.set = function (name, value) {
         name = mutation(name, value);
         remove(name); appendField(name, value);
-      },
-      delete(name) { remove(mutation(name, "")); },
-    });
+      };
+      api.delete = function (name) { remove(mutation(name, "")); };
+    }
+    freeze(api);
     // Prevent changes to method function objects from becoming shared mutable state.
     const methods = ownKeys(api);
     for (let i = 0; i < methods.length; i++) freeze(api[methods[i]]);
@@ -88,6 +91,7 @@
     } };
   }
   function prepare(root) {
+    if (descriptor(root, "reject") || descriptor(root, "rejection")) fail();
     // Older standalone scheduler experiments use plain JSON drafts.
     if (!descriptor(root, "meta")) return root;
     const meta = read(root, "meta");
@@ -101,7 +105,7 @@
     const state = read(root, "state");
     if (state === null || typeof state !== "object" || isArray(state)) fail();
     const keys = ownKeys(root);
-    let headers, events, replaced = false;
+    let headers, client, events, rejection, replaced = false;
     if (stream && (!descriptor(root, "event") || descriptor(root, "events") || descriptor(root, "replaceEvents"))) fail();
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
@@ -109,6 +113,10 @@
       if (key === "headers") {
         headers = headerDraft(value, !observer && (phase === "beforeSend" || phase === "afterReceive"));
         value = headers.api;
+      } else if (key === "client") {
+        if (value === null || typeof value !== "object" || isArray(value)) fail();
+        client = deepFreeze(value);
+        value = freeze({ headers: headerDraft(read(client, "headers"), false, true).api });
       } else if (key === "body" && !observer && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse")) {
         writable = true;
       } else if (key === "event" && stream) {
@@ -119,6 +127,15 @@
         deepFreeze(value);
       }
       define(root, key, { value, enumerable: true, writable, configurable: false });
+    }
+    if (phase === "onRequest" || phase === "beforeSend") {
+      define(root, "reject", {
+        value: freeze(function (status = 400) {
+          if (arguments.length > 1 || rejection || (status !== 400 && status !== 403 && status !== 422)) fail();
+          rejection = freeze({ status });
+        }),
+        enumerable: false, writable: false, configurable: false,
+      });
     }
     if (stream) {
       define(root, "replaceEvents", {
@@ -131,7 +148,7 @@
       });
     }
     seal(root);
-    weakSet(prepared, root, { keys, headers, stream, events() {
+    weakSet(prepared, root, { keys, headers, client, stream, rejection() { return rejection; }, events() {
       return replaced ? events : [read(root, "event")];
     } });
     return root;
@@ -143,8 +160,10 @@
     for (let i = 0; i < info.keys.length; i++) {
       const key = info.keys[i];
       if (info.stream && key === "event") continue;
-      output[key] = key === "headers" ? info.headers.snapshot() : read(root, key);
+      output[key] = key === "headers" ? info.headers.snapshot() : key === "client" ? info.client : read(root, key);
     }
+    const rejection = info.rejection();
+    if (rejection) output.rejection = rejection;
     if (info.stream) {
       const events = info.events();
       // Recheck at commit: an async hook may retain and grow the replacement array.

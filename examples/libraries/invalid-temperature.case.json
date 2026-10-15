@@ -1,0 +1,16 @@
+{
+  "name": "library-validation-rejects-invalid-temperature",
+  "clientHeaders": { "x-example-policy": ["allow"] },
+  "request": {
+    "model": "chat",
+    "messages": [{ "role": "user", "content": "Hello" }],
+    "temperature": "warm"
+  },
+  "upstream": { "status": 200, "body": {} },
+  "expect": {
+    "sent": false,
+    "state": {},
+    "response": { "status": 422 },
+    "error": { "code": "request_rejected", "status": 422, "phase": "onRequest" }
+  }
+}

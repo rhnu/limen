@@ -14,6 +14,7 @@ pub(super) struct Lifecycle {
     pub step: Option<String>,
     pub started: Instant,
     pub state: Value,
+    pub client: Value,
     pub client_stream: Option<bool>,
     pub alias: Option<String>,
     pub provider: Option<String>,
@@ -41,6 +42,7 @@ impl Lifecycle {
             step: None,
             started,
             state: json!({}),
+            client: json!({"headers": []}),
             client_stream: None,
             alias: None,
             provider: None,
@@ -63,7 +65,7 @@ impl Lifecycle {
     }
 
     pub fn context(&self, phase: &'static str) -> Value {
-        json!({"meta":self.meta(phase),"state":self.state})
+        json!({"meta":self.meta(phase),"state":self.state,"client":self.client})
     }
 
     pub fn record(&self, result: &Result<(), Failure>) {
@@ -109,6 +111,7 @@ impl Lifecycle {
             if matches!(
                 failure.code,
                 ErrorCode::InvalidRequest
+                    | ErrorCode::RequestRejected
                     | ErrorCode::Unauthorized
                     | ErrorCode::UnknownModel
                     | ErrorCode::PayloadTooLarge

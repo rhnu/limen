@@ -13,6 +13,7 @@ Limen 是使用 Rust 编写的 Chat Completions 网关，面向个人和内网�
 - provider → model 有序管线，可修改请求体、URL、请求头、响应和流事件。
 - 同步与异步 JavaScript hook、本地 ESM 导入和请求独立状态。
 - 可选的 JSDoc 类型检查，以及使用合成 JSON/SSE 响应的离线脚本测试。
+- 显式业务拒绝，以及对白名单客户端头的只读访问。
 - 通过 `limen.env(name)` 从进程环境变量读取上游凭据。
 - 上下游 JSON/SSE 四种组合；跨形态转换支持文本、refusal、function tool calls、
   多 choice、finish reason 和 usage。
@@ -73,7 +74,8 @@ curl 示例使用 POSIX 换行与引号语法，在 PowerShell 中需要调整�
 
 每个用例使用全新 VM，通过生产管线处理合成上游响应。用例字段与断言规则见
 [离线测试指南](docs/features.md#离线脚本测试)。编辑器提示和 JavaScript 静态检查见
-[开发指引](docs/development.md#脚本静态检查)；Node.js 仅用于该开发检查。
+[开发指引](docs/development.md#脚本静态检查)；Node.js 仅用于开发检查及可选的库打包。
+[库接入示例](docs/features.md#第三方库接入)通过 Valibot 演示校验、业务拒绝、客户端头读取和离线用例。
 
 ### 调用 API
 

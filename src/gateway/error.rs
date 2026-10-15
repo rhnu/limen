@@ -13,6 +13,7 @@ pub enum ErrorCode {
     Busy,
     DeadlineExceeded,
     Cancelled,
+    RequestRejected,
     HookFailed,
     UpstreamFailed,
     UpstreamProtocol,
@@ -31,6 +32,7 @@ impl ErrorCode {
             Self::Busy => "busy",
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::Cancelled => "cancelled",
+            Self::RequestRejected => "request_rejected",
             Self::HookFailed => "hook_failed",
             Self::UpstreamFailed => "upstream_failed",
             Self::UpstreamProtocol => "upstream_protocol",
@@ -42,7 +44,7 @@ impl ErrorCode {
     #[must_use]
     pub const fn status(self) -> u16 {
         match self {
-            Self::InvalidRequest | Self::UnknownModel => 400,
+            Self::InvalidRequest | Self::UnknownModel | Self::RequestRejected => 400,
             Self::Unauthorized => 401,
             Self::PayloadTooLarge => 413,
             Self::Busy => 429,
@@ -159,6 +161,7 @@ impl Failure {
             ErrorCode::Busy => "The gateway is busy",
             ErrorCode::DeadlineExceeded => "The request deadline was exceeded",
             ErrorCode::Cancelled => "The request was cancelled",
+            ErrorCode::RequestRejected => "The request was rejected by script policy",
             ErrorCode::HookFailed => "A configured request hook failed",
             ErrorCode::UpstreamFailed => "The upstream request failed",
             ErrorCode::UpstreamProtocol => "The upstream response is not supported",

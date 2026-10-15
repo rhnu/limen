@@ -49,3 +49,46 @@ fn response_hook_body_requires_an_object() {
         ErrorCode::HookFailed
     );
 }
+
+#[test]
+fn business_rejection_commits_valid_state_and_preserves_phase_and_step() {
+    for status in [400, 403, 422] {
+        let mut lifecycle = Lifecycle::new("request-1".into(), Cancellation::new(), 1000);
+        lifecycle.phase = "beforeSend";
+        lifecycle.step = Some("policy".into());
+        let mut output = json!({"state":{"checked":true},"rejection":{"status":status}});
+        let failure = commit_request(&mut lifecycle, &mut output).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::RequestRejected);
+        assert_eq!(failure.http_status(), status);
+        assert_eq!(failure.phase, "beforeSend");
+        assert_eq!(failure.step.as_deref(), Some("policy"));
+        assert_eq!(lifecycle.state, json!({"checked":true}));
+    }
+}
+
+#[test]
+fn malformed_rejection_or_state_cannot_commit() {
+    let mut lifecycle = Lifecycle::new("request-1".into(), Cancellation::new(), 1000);
+    lifecycle.state = json!({"previous":true});
+    for rejection in [
+        json!(null),
+        json!({}),
+        json!({"status":500}),
+        json!({"status":"400"}),
+    ] {
+        let failure = commit_request(
+            &mut lifecycle,
+            &mut json!({"state":{"changed":true},"rejection":rejection}),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, ErrorCode::HookFailed);
+        assert_eq!(lifecycle.state, json!({"previous":true}));
+    }
+    let failure = commit_request(
+        &mut lifecycle,
+        &mut json!({"state":[],"rejection":{"status":400}}),
+    )
+    .unwrap_err();
+    assert_eq!(failure.code, ErrorCode::HookFailed);
+    assert_eq!(lifecycle.state, json!({"previous":true}));
+}

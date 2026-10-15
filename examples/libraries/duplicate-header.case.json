@@ -1,0 +1,15 @@
+{
+  "name": "library-policy-rejects-ambiguous-client-header",
+  "clientHeaders": { "x-example-policy": ["allow", "deny"] },
+  "request": {
+    "model": "chat",
+    "messages": [{ "role": "user", "content": "Hello" }]
+  },
+  "upstream": { "status": 200, "body": {} },
+  "expect": {
+    "sent": false,
+    "state": {},
+    "response": { "status": 403 },
+    "error": { "code": "request_rejected", "status": 403, "phase": "onRequest" }
+  }
+}

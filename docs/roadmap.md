@@ -4,6 +4,7 @@
 
 `limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立认证和单次路由。
 `limen test` 为每个用例创建独立 VM，以合成上游替代网络并复用生产管线；JavaScript 配置另有可选 JSDoc 类型检查。
+脚本支持发送前的业务拒绝、显式白名单客户端头读取，以及经开发打包的纯 JavaScript 库示例。
 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → model 正序 hook 已实现。
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
 服务配置支持 TOML 与 YAML，共用 schema 和校验，默认 TOML 优先，仅缺失时回退 YAML。

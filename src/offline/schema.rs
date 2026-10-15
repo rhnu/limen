@@ -21,6 +21,8 @@ pub(super) type Headers = BTreeMap<String, Vec<String>>;
 pub(super) struct Case {
     pub name: String,
     pub request: Value,
+    #[serde(default)]
+    pub client_headers: Headers,
     pub upstream: Upstream,
     pub expect: Expected,
 }

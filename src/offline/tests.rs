@@ -67,6 +67,11 @@ async fn observer_failures_preserve_readonly_state_and_terminal_results() {
 async fn case_lifetimes_isolate_lexical_and_request_state() { group(&fixtures("isolation")).await; }
 
 #[tokio::test(flavor = "current_thread")]
+async fn business_rejection_and_client_context_follow_production_pipeline() {
+    group(&fixtures("script-policy")).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn runnable_examples_cover_all_four_transports() {
     group(&Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/testing")).await;
 }
@@ -197,6 +202,7 @@ fn schema_rejects_unknown_fields_and_wrong_types() {
         assert!(!error.to_string().contains("synthetic-"));
     }
     for (pointer, replacement) in [
+        ("/clientHeaders", json!({"x-test":"one"})),
         ("/upstream/status", json!("200")),
         ("/upstream/headers", json!({"x-test":"one"})),
         ("/expect/response", json!({"done":"true"})),
@@ -204,6 +210,8 @@ fn schema_rejects_unknown_fields_and_wrong_types() {
         let mut value = minimal_case();
         if pointer == "/expect/response" {
             value["expect"]["response"] = replacement;
+        } else if pointer == "/clientHeaders" {
+            value["clientHeaders"] = replacement;
         } else {
             *value.pointer_mut(pointer).unwrap() = replacement;
         }
@@ -237,6 +245,27 @@ async fn semantic_fixture_validation_has_safe_errors() {
             .expect("invalid fixture is rejected");
         assert!(matches!(error, Error::Invalid(_) | Error::HeaderName(_)));
         assert!(!error.to_string().contains("synthetic-"));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn client_fixture_headers_are_bounded_and_cannot_override_runner_fields() {
+    for headers in [
+        json!({"Authorization":["Bearer synthetic-private-value"]}),
+        json!({"Content-Type":["text/plain"]}),
+        json!({"x-empty":[]}),
+        json!({"x-value":["bad\nsynthetic-private-value"]}),
+        json!({"x-many":vec!["v"; 100]}),
+        json!({"x-large":["v".repeat(32 * 1024)]}),
+    ] {
+        let mut value = minimal_case();
+        value["clientHeaders"] = headers;
+        let error = run_value(&value)
+            .await
+            .err()
+            .expect("invalid client fixture headers must fail");
+        assert!(matches!(error, Error::Invalid(_) | Error::HeaderValue(_)));
+        assert!(!error.to_string().contains("synthetic-private-value"));
     }
 }
 

@@ -1,10 +1,12 @@
 use std::{
+    collections::BTreeSet,
     fs::File,
     io::{self, Read},
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 
+use http::HeaderName;
 use serde::Deserialize;
 use serde_saphyr::Location;
 
@@ -81,6 +83,91 @@ pub struct LogConfig {
     pub output: LogOutput,
 }
 
+/// Explicitly allowlisted client metadata exposed to request scripts.
+#[derive(Clone, Debug, Default)]
+pub struct ScriptContextConfig {
+    pub client_headers: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default = "RawScriptContext::default")]
+struct RawScriptContext<const TOML: bool> {
+    #[serde(deserialize_with = "strict_spanned")]
+    client_headers: Input<Vec<String>, TOML>,
+}
+
+impl<const TOML: bool> Default for RawScriptContext<TOML> {
+    fn default() -> Self {
+        Self {
+            client_headers: Input::unlocated(Vec::new()),
+        }
+    }
+}
+
+impl<const TOML: bool> RawScriptContext<TOML> {
+    fn validate(self, source: &str) -> Result<ScriptContextConfig, ConfigError> {
+        let invalid = |kind, message| {
+            self.client_headers.locate(
+                ConfigError::new(kind, "script_context.client_headers", message),
+                source,
+            )
+        };
+        if self.client_headers.value.len() > 32 {
+            return Err(invalid(
+                ConfigErrorKind::Range,
+                "client header allowlist exceeds 32 names",
+            ));
+        }
+        let mut names = BTreeSet::new();
+        let mut client_headers = Vec::with_capacity(self.client_headers.value.len());
+        for name in &self.client_headers.value {
+            if name.len() > 256 {
+                return Err(invalid(
+                    ConfigErrorKind::Range,
+                    "client header name exceeds 256 bytes",
+                ));
+            }
+            let header = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                invalid(ConfigErrorKind::Header, "invalid client header name")
+                    .with_source("parse client header name", error)
+            })?;
+            let name = header.as_str();
+            if matches!(
+                name,
+                "authorization"
+                    | "proxy-authorization"
+                    | "cookie"
+                    | "set-cookie"
+                    | "proxy-authenticate"
+                    | "host"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "connection"
+                    | "content-encoding"
+                    | "content-type"
+                    | "proxy-connection"
+                    | "keep-alive"
+                    | "te"
+                    | "trailer"
+                    | "upgrade"
+            ) {
+                return Err(invalid(
+                    ConfigErrorKind::Header,
+                    "sensitive or transport client header is forbidden",
+                ));
+            }
+            if !names.insert(name.to_owned()) {
+                return Err(invalid(
+                    ConfigErrorKind::Header,
+                    "duplicate client header name",
+                ));
+            }
+            client_headers.push(name.to_owned());
+        }
+        Ok(ScriptContextConfig { client_headers })
+    }
+}
+
 // Generate the public limits and a separate span-aware input schema together, so every
 // range failure retains the parser's value location without retaining source text.
 macro_rules! resource_limits {
@@ -147,6 +234,7 @@ pub struct ServerConfig {
     pub client_auth: ClientAuth,
     pub log: LogConfig,
     pub limits: ResourceLimits,
+    pub script_context: ScriptContextConfig,
 }
 
 #[derive(Deserialize)]
@@ -160,6 +248,8 @@ struct RawServer<const TOML: bool> {
     log: LogConfig,
     #[serde(default, deserialize_with = "map_only")]
     limits: RawLimits<TOML>,
+    #[serde(default, deserialize_with = "map_only")]
+    script_context: RawScriptContext<TOML>,
 }
 
 #[derive(Deserialize)]
@@ -196,7 +286,9 @@ fn map_only<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(
             T::deserialize(serde::de::value::MapAccessDeserializer::new(map))
         }
     }
-    deserializer.deserialize_map(ObjectVisitor(std::marker::PhantomData))
+    // YAML's deserialize_map treats null as an empty map. Inspect the actual
+    // input kind so an explicitly null section cannot become default settings.
+    deserializer.deserialize_any(ObjectVisitor(std::marker::PhantomData))
 }
 
 fn map_spanned<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>, const TOML: bool>(
@@ -331,11 +423,13 @@ impl<const TOML: bool> RawServer<TOML> {
             ));
         }
         let limits = self.limits.validate(source)?;
+        let script_context = self.script_context.validate(source)?;
         Ok(ServerConfig {
             listen: self.listen.value,
             client_auth: auth,
             log: self.log,
             limits,
+            script_context,
         })
     }
 }

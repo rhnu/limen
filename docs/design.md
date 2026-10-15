@@ -67,6 +67,7 @@ Chat Completions 请求里的未知扩展字段默认保留。能够传递某个
 - 请求体大小、并发/排队上限、超时与关闭行为。
 - JS 启动、hook 等待、请求整体、VM 执行及内存预算。
 - 日志级别、格式及输出方式。
+- 通过 `script_context.client_headers` 明确开放给脚本的客户端头名称。
 
 它不定义
 provider、模型映射或业务变换。这样无需先运行用户脚本，就能确定日志、监听与脚本资源限制。
@@ -320,6 +321,19 @@ hook。
 - provider 的 `auth` 或静态认证头用于访问上游。
 - 客户端的 `Authorization`、Cookie 以及其他无关请求头不默认传给上游。
 
+可选服务配置 `script_context.client_headers` 是客户端头读取白名单，默认空数组。
+TOML 与 YAML 使用同一结构；名称按 HTTP 规则校验并规范化为小写，拒绝大小写无关的重复项，
+最多 32 项，每项最多 256 个 ASCII 字节。认证、Cookie 与传输控制头禁止配置，具体列表见功能指南。
+请求认证成功后、读取正文前，仅复制白名单中的头；`Connection` 动态指定的逐跳头仍被排除。
+被选中的头值必须为 UTF-8，非法值返回 `invalid_request`，不静默改变字节。
+选中快照另限 100 项与 32 KiB 名值字节，并继续受 context JSON 与 VM 预算限制。
+认证或准入失败时尚无可公开快照，观察 hook 看到空客户端头视图。
+
+所有阶段通过冻结的 `ctx.client.headers.getAll(name)` 读取该请求的同一快照。
+查询大小写无关，保留每个头的多值顺序，缺失或未开放的名称返回空数组；每次返回新数组。
+`client`、`headers` 及方法均不可替换，不提供写操作。这与可变的上游/下游 `ctx.headers` 分开；
+读取不自动转发，不把客户端可控头提升为已经认证的身份，也不把完整请求头或配置凭据放入 context。
+
 上游请求头从最小集合、provider 静态头和 provider 认证构建，再进入
 `beforeSend`。可信本地 hook
 可显式修改上游认证头，但不能改变已经完成的客户端认证结果。
@@ -407,6 +421,19 @@ meta 包含 requestId、phase、model、provider、configuredUpstreamModel、cli
 - 服务仅在当前 hook 成功完成并通过输出校验后，提交其
   draft、请求状态及事件输出；异步等待期间的修改不提前交给后一步。调用失败时不继续把半完成结果发往上游或客户端。
 - 这种提交边界不回滚 JS 闭包或全局变量的修改；不要把它宣传为脚本事务。
+
+`onRequest` 与 `beforeSend` 另提供 `ctx.reject(status = 400)` 表达预期业务拒绝，允许的状态为
+400、403、422；其余阶段不提供该方法。它只记录当前调用的拒绝意图并返回 `undefined`，
+不会中断 JavaScript，提前结束应写 `return ctx.reject(422)`。重复调用或非法参数报脚本错误。
+hook 必须正常完成 void/Promise<void>，通过 JSON、body 形状以及当前阶段 URL/header 校验，
+才提交 state 和拒绝意图；异常、非法输出、取消或超时仍按原失败规则处理，不提交半完成 state。
+应用接到成功拒绝后立即停止后续步骤、路由或上游发送，不新增重试或补偿。
+成功拒绝前的 state 可由终态观察读取；未使用的 body/URL/header 不会发送出去。
+
+业务拒绝统一产生 `request_rejected` 与核心固定公开说明，不接受任意响应体或异常 message。
+即使原客户端请求 SSE，在发送前拒绝也返回普通 HTTP JSON 错误。
+`onError` 与 `onFinish` 按 `failed` 观察一次，错误视图包括 code、status、phase、step；
+业务拒绝按预期请求拒绝记录 warn，不归类为脚本故障。
 
 `beforeSend` 后的 `body.model` 与 `body.stream`
 是最终上游请求值，不在发送前又被路由层偷偷覆写。它们不会触发第二次 provider
@@ -600,6 +627,7 @@ Rust 的固定错误控制帧使用独立的 1 KiB 上限，
 | code                                    | HTTP 状态                                 |
 | --------------------------------------- | ----------------------------------------- |
 | `invalid_request` / `unknown_model`     | 400                                       |
+| `request_rejected`                      | 400 / 403 / 422（脚本显式选择）           |
 | `unauthorized`                          | 401                                       |
 | `payload_too_large`                     | 413                                       |
 | `busy`                                  | 429                                       |
@@ -735,6 +763,14 @@ QuickJS 是 JavaScript 引擎，并不自动提供
 Node.js、`fetch`、定时器或浏览器标准库。首版不承诺这些能力；配置复用依靠本地模块和普通
 JS。宿主仅另外提供第 3.4 节的只读 `limen.env(name)` 接口。
 
+第三方纯 JavaScript 库可复制发布后的本地 ESM，或在开发阶段打包成入口 `config.js`。
+运行时继续只解析相对 `.js` / `.mjs`，不读取 npm package exports，不联网安装依赖，部署不需要 Node.js。
+打包解决模块解析与未使用代码裁剪，不补充 URL、TextEncoder、DOM、Node 或网络等宿主 API。
+兼容承诺按实际调用的函数建立，不能由“零依赖”推导完整库均可运行。
+库返回的结果仍须满足普通 JSON/draft 契约，校验不得无意删除请求扩展字段。
+`examples/libraries` 用 Valibot 演示开发打包、参数校验、白名单头、业务拒绝与合成上游测试；
+依赖、生成文件与命令的维护边界见开发指引。
+
 脚本可访问的宿主能力由 `host::install` 集中注册：创建命名空间、显式注册函数、冻结对象，
 最后以不可替换、不可删除的全局 `limen` 绑定发布。该入口在 VM/context 创建并设置预算后、
 用户模块求值前调用一次。各能力模块只构造函数及维护自身参数、预算和错误语义，不自行写入全局对象。
@@ -852,6 +888,9 @@ JavaScript 仍为运行语言，类型工具不引入 TypeScript 运行时或 DO
 用例选择待发送请求、下游响应、最终 state、错误与观察结果的完整类别做精确比较，
 不支持任意断言脚本或 JSON 子集匹配。文件、解析、输出与执行均有界，失败报告仅含固定类别，
 不输出实际/预期正文、header、带 query 的 URL 或异常源码。用例字段见[功能指南](features.md#离线脚本测试)。
+可选 `clientHeaders` 通过真实请求头入口进入白名单选择，不直接注入脚本 context；
+认证与 Content-Type 继续由用例 runner 维护。构造后的客户端头限制为 100 项与 32 KiB，
+无效或超限 fixture 直接失败，不用于模拟超出 HTTP 入口预算的请求。
 离线执行不验证监听、真实认证接线、HTTP 分块、断开、信号关闭或真实 provider，
 这些边界继续使用隔离测试和部署验收验证。
 

@@ -105,13 +105,28 @@ export interface HeadersDraft {
   readonly delete: (name: string) => void;
 }
 
+/** A read-only view of explicitly allowlisted client headers, separate from outbound headers. */
+export interface ReadonlyHeaders {
+  /** Names are case-insensitive. A missing or unexposed field returns a fresh empty array. */
+  readonly getAll: (name: string) => string[];
+}
+export interface ClientContext {
+  readonly headers: ReadonlyHeaders;
+}
+export type RejectionStatus = 400 | 403 | 422;
+
 export interface RequestContext<State extends JsonObject = JsonObject> {
+  readonly client: ClientContext;
+  /** Records a business rejection (default 400), committed only when this hook succeeds. */
+  readonly reject: (status?: RejectionStatus) => void;
   readonly meta: RequestMeta;
   /** The reference is fixed; its JSON fields can change. Starts as an empty object. */
   readonly state: State;
   body: RequestBody;
 }
 export interface BeforeSendContext<State extends JsonObject = JsonObject> {
+  readonly client: ClientContext;
+  readonly reject: (status?: RejectionStatus) => void;
   readonly meta: BeforeSendMeta;
   readonly state: State;
   body: RequestBody;
@@ -119,18 +134,21 @@ export interface BeforeSendContext<State extends JsonObject = JsonObject> {
   readonly headers: HeadersDraft;
 }
 export interface AfterReceiveContext<State extends JsonObject = JsonObject> {
+  readonly client: ClientContext;
   readonly meta: ReceivedMeta<"afterReceive">;
   readonly state: State;
   status: number;
   readonly headers: HeadersDraft;
 }
 export interface ResponseContext<State extends JsonObject = JsonObject> {
+  readonly client: ClientContext;
   readonly meta: ReceivedMeta<"onResponse">;
   readonly state: State;
   /** Upstream JSON and its extensions are not restricted to a fixed response schema. */
   body: JsonObject;
 }
 export interface EventContext<P extends "onUpstreamEvent" | "onStreamEvent", State extends JsonObject = JsonObject> {
+  readonly client: ClientContext;
   readonly meta: ReceivedMeta<P>;
   readonly state: State;
   event: StreamEvent;
@@ -142,9 +160,10 @@ export type StreamEventContext<State extends JsonObject = JsonObject> = EventCon
 
 export type ErrorCode = "invalid_request" | "unauthorized" | "unknown_model"
   | "payload_too_large" | "busy" | "deadline_exceeded" | "cancelled"
-  | "hook_failed" | "upstream_failed" | "upstream_protocol" | "internal_error" | "unavailable";
+  | "request_rejected" | "hook_failed" | "upstream_failed" | "upstream_protocol" | "internal_error" | "unavailable";
 export interface ObserverError {
   readonly code: ErrorCode;
+  readonly status: number;
   readonly message: string;
   readonly request_id: string;
   /** May be a gateway operation such as authentication, not only a hook phase. */
@@ -165,6 +184,7 @@ export interface ObserverStats {
 }
 
 interface ObserverContext<P extends "onError" | "onFinish", State extends JsonObject> {
+  readonly client: ClientContext;
   readonly meta: Meta<P>;
   readonly state: DeepReadonly<State>;
   readonly stats: ObserverStats;

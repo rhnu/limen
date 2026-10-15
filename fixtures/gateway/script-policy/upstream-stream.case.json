@@ -1,0 +1,65 @@
+{
+  "name": "upstream-stream",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "stream": true
+  },
+  "clientHeaders": {
+    "x-profile": [
+      "stream"
+    ],
+    "x-tags": [
+      "one",
+      "two"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "response.sse"
+  },
+  "expect": {
+    "sent": true,
+    "state": {
+      "client": {
+        "profiles": [
+          "stream"
+        ],
+        "tags": [
+          "one",
+          "two"
+        ]
+      },
+      "mode": "normal",
+      "provider": true,
+      "model": true
+    },
+    "response": {
+      "status": 200,
+      "done": true
+    },
+    "outbound": {
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer synthetic-upstream-secret"
+        ],
+        "content-type": [
+          "application/json"
+        ]
+      }
+    }
+  }
+}

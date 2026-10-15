@@ -1,0 +1,5 @@
+[client_auth]
+bearer = "synthetic-client-secret"
+
+[script_context]
+client_headers = ["X-Profile", "x-tags"]

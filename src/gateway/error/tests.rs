@@ -110,12 +110,29 @@ fn status_mapping_preserves_success_and_body_semantics() {
 
 #[test]
 fn public_error_categories_map_to_failure_statuses() {
+    assert_eq!(ErrorCode::RequestRejected.status(), 400);
+    assert_eq!(ErrorCode::RequestRejected.as_str(), "request_rejected");
     assert_eq!(ErrorCode::Unauthorized.status(), 401);
     assert_eq!(ErrorCode::Busy.status(), 429);
     assert_eq!(ErrorCode::DeadlineExceeded.status(), 504);
     assert_eq!(ErrorCode::Cancelled.status(), 499);
     assert_eq!(ErrorCode::UpstreamProtocol.status(), 502);
     assert_eq!(ErrorCode::HookFailed.as_str(), "hook_failed");
+}
+
+#[test]
+fn business_rejection_exposes_only_core_owned_public_text() {
+    let mut failure = Failure::new(ErrorCode::RequestRejected, "beforeSend")
+        .with_source(io::Error::other("synthetic private policy data"));
+    failure.status = Some(422);
+    assert_eq!(failure.http_status(), 422);
+    assert_eq!(
+        failure.error_json("request-1"),
+        json!({"error":{
+            "code":"request_rejected", "message":"The request was rejected by script policy", "request_id":"request-1"
+        }})
+    );
+    assert!(!format!("{failure:?}").contains("synthetic"));
 }
 
 #[test]

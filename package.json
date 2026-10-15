@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:types": "tsc --project tsconfig.json"
+    "build:examples": "node examples/libraries/build.mjs",
+    "check:types": "tsc --project tsconfig.json && tsc --project examples/libraries/tsconfig.json"
   },
   "devDependencies": {
-    "typescript": "7.0.2"
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "valibot": "1.5.0"
   }
 }

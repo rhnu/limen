@@ -1,0 +1,64 @@
+{
+  "name": "library-validation-preserves-extensions",
+  "clientHeaders": {
+    "x-example-policy": ["allow"],
+    "cookie": ["example=not-forwarded"],
+    "x-unlisted": ["not-forwarded"]
+  },
+  "request": {
+    "model": "chat",
+    "messages": [{ "role": "user", "content": "Hello" }],
+    "temperature": 0.7,
+    "max_completion_tokens": 8192,
+    "store": true,
+    "vendor_extension": { "enabled": true }
+  },
+  "upstream": {
+    "status": 200,
+    "headers": { "content-type": ["application/json"] },
+    "body": {
+      "id": "demo",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [{
+        "index": 0,
+        "message": { "role": "assistant", "content": "hello" },
+        "finish_reason": "stop"
+      }]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "state": { "policy": "allowed" },
+    "outbound": {
+      "url": "https://example.invalid/v1/chat/completions",
+      "headers": {
+        "accept": ["application/json"],
+        "content-type": ["application/json"],
+        "x-policy": ["validated"]
+      },
+      "body": {
+        "model": "demo-model",
+        "messages": [{ "role": "user", "content": "Hello" }],
+        "temperature": 0.7,
+        "max_completion_tokens": 4096,
+        "vendor_extension": { "enabled": true }
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "demo",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [{
+          "index": 0,
+          "message": { "role": "assistant", "content": "hello" },
+          "finish_reason": "stop"
+        }]
+      }
+    }
+  }
+}

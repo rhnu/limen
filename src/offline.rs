@@ -214,16 +214,8 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
         headers,
         body,
     };
+    let request = client_request(&case, &loaded.server.client_auth)?;
     let (gateway, trace) = Gateway::offline(loaded, upstream);
-    let request_body = serde_json::to_vec(&case.request)?;
-    let mut request = Request::builder()
-        .method("POST")
-        .uri("/v1/chat/completions")
-        .header("content-type", "application/json");
-    if let ClientAuth::Bearer(token) = &loaded.server.client_auth {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
-    let request = request.body(Body::from(request_body))?;
     let budget = Duration::from_millis(limits.request_ms + limits.cleanup_ms + limits.shutdown_ms);
     let cancellation = Cancellation::new();
     let work = async {
@@ -261,6 +253,42 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
             }),
         }),
     }
+}
+
+/// Build the same client input shape without allowing fixtures to replace runner credentials.
+fn client_request(case: &Case, auth: &ClientAuth) -> Result<Request<Body>, Error> {
+    let client_headers = header_map(&case.client_headers)?;
+    if client_headers.contains_key("authorization") || client_headers.contains_key("content-type") {
+        return Err(Error::Invalid(
+            "fixture client authentication and media type are managed by the runner",
+        ));
+    }
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json");
+    if let ClientAuth::Bearer(token) = auth {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    for (name, value) in &client_headers {
+        request = request.header(name, value);
+    }
+    let request = request.body(Body::from(serde_json::to_vec(&case.request)?))?;
+    let header_bytes = request
+        .headers()
+        .iter()
+        .try_fold(2_usize, |total, (name, value)| {
+            total
+                .checked_add(name.as_str().len())?
+                .checked_add(value.as_bytes().len())?
+                .checked_add(4)
+        });
+    if request.headers().len() > 100 || header_bytes.is_none_or(|bytes| bytes > 32 * 1024) {
+        return Err(Error::Invalid(
+            "fixture client headers exceed HTTP input limits",
+        ));
+    }
+    Ok(request)
 }
 
 fn header_map(input: &Headers) -> Result<HeaderMap, Error> {

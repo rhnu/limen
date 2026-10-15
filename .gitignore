@@ -1,5 +1,6 @@
 /target/
 /node_modules/
+/examples/libraries/config.js
 .rumdl_cache/
 
 # Local runtime configuration and secrets. Commit sanitized *.example.* files instead.

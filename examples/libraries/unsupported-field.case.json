@@ -1,0 +1,16 @@
+{
+  "name": "library-policy-rejects-unsupported-field",
+  "clientHeaders": { "x-example-policy": ["allow"] },
+  "request": {
+    "model": "chat",
+    "messages": [{ "role": "user", "content": "Hello" }],
+    "logprobs": true
+  },
+  "upstream": { "status": 200, "body": {} },
+  "expect": {
+    "sent": false,
+    "state": { "policy": "allowed" },
+    "response": { "status": 400 },
+    "error": { "code": "request_rejected", "status": 400, "phase": "beforeSend" }
+  }
+}

@@ -10,6 +10,6 @@ pub use business::{
 };
 pub use error::{ConfigError, ConfigErrorKind};
 pub use server::{
-    ClientAuth, LogConfig, LogFormat, LogLevel, LogOutput, ResourceLimits, ServerConfig,
-    ServerFormat, load_server,
+    ClientAuth, LogConfig, LogFormat, LogLevel, LogOutput, ResourceLimits, ScriptContextConfig,
+    ServerConfig, ServerFormat, load_server,
 };

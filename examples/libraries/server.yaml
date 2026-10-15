@@ -1,0 +1,5 @@
+client_auth:
+  bearer: example-limen-client-token
+script_context:
+  client_headers:
+    - x-example-policy

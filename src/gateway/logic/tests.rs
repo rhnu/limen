@@ -1,5 +1,64 @@
 use super::*;
 
+#[test]
+fn client_context_selects_multivalue_headers_and_ignores_connection_fields() {
+    let mut headers = HeaderMap::new();
+    headers.append("x-profile", HeaderValue::from_static("one"));
+    headers.append("x-profile", HeaderValue::from_static("two"));
+    headers.insert("x-hop", HeaderValue::from_static("private-hop"));
+    headers.insert("connection", HeaderValue::from_static("keep-alive, X-Hop"));
+    headers.insert(
+        "authorization",
+        HeaderValue::from_static("Bearer synthetic-secret"),
+    );
+    headers.insert("cookie", HeaderValue::from_static("synthetic-cookie"));
+    headers.insert("x-other", HeaderValue::from_static("unselected"));
+    let client = client_context(
+        &headers,
+        &["x-profile".into(), "x-hop".into(), "x-missing".into()],
+    )
+    .unwrap();
+    assert_eq!(
+        client,
+        json!({"headers":[{"name":"x-profile","value":"one"},{"name":"x-profile","value":"two"}]})
+    );
+    assert_eq!(
+        client_context(&headers, &[]).unwrap(),
+        json!({"headers":[]})
+    );
+}
+
+#[test]
+fn selected_client_header_bytes_must_be_utf8_and_bounded() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-binary", HeaderValue::from_bytes(&[255]).unwrap());
+    assert_eq!(
+        client_context(&headers, &["x-binary".into()])
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    assert!(client_context(&headers, &[]).is_ok());
+    headers.insert(
+        "x-large",
+        HeaderValue::from_str(&"x".repeat(32 * 1024)).unwrap(),
+    );
+    assert_eq!(
+        client_context(&headers, &["x-large".into()])
+            .unwrap_err()
+            .code,
+        ErrorCode::PayloadTooLarge
+    );
+    let mut many = HeaderMap::new();
+    for _ in 0..101 {
+        many.append("x-many", HeaderValue::from_static("v"));
+    }
+    assert_eq!(
+        client_context(&many, &["x-many".into()]).unwrap_err().code,
+        ErrorCode::PayloadTooLarge
+    );
+}
+
 fn config() -> BusinessConfig {
     BusinessConfig::from_value(json!({
         "providers": {"primary": {"endpoint": "https://fictional.invalid/custom/chat?static=1", "auth": {"bearer": "upstream-token"}, "headers": {"X-App": "limen"}, "defaults": {"temperature": 0.8, "nested": {"provider": true}, "only_provider": true}}},

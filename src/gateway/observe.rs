@@ -55,6 +55,7 @@ impl Gateway {
             if let Some(failure) = failure {
                 context["error"] = failure.error_json(&lifecycle.request_id)["error"].clone();
                 context["error"]["phase"] = json!(failure.phase);
+                context["error"]["status"] = json!(failure.http_status());
                 context["error"]["step"] =
                     json!(failure.step.as_deref().or(lifecycle.step.as_deref()));
             }

@@ -18,7 +18,7 @@
 ├── LICENSE              GNU AGPLv3 完整许可证
 ├── Cargo.toml           根包、workspace、集中依赖和共享 lint
 ├── Cargo.lock           应用依赖解析结果，纳入版本控制
-├── package-lock.json    TypeScript 开发工具及平台包解析结果
+├── package-lock.json    TypeScript、示例库和打包工具及平台包解析结果
 ├── rust-toolchain.toml  固定 Rust 1.99.0、rustfmt 与 Clippy
 └── rusteward.toml       Rusteward 格式与 lint 配置
 ```
@@ -93,6 +93,11 @@ npm run check:types
 不生成代码，不加载 DOM 或 Node.js 全局类型。负例的 `@ts-expect-error` 必须对应实际诊断，
 覆盖阶段字段、冻结引用、深只读观察状态、受控 header、JSON 扩展，以及同步和异步返回对象的误用。
 普通无返回值 hook 可直接使用。项目以 `tsc` 完成检查，没有额外的类型测试框架。
+`npm run check:types` 还检查 `examples/libraries/tsconfig.json` 的源配置。
+该示例项目只启用 ES2023 全局类型，局部使用 `skipLibCheck` 跳过声明文件内部检查，
+因为 Valibot 完整声明包含本例未使用的 Blob/File 验证器；不因此为脚本声明 DOM 宿主能力。
+根项目继续独立严格检查 Limen 声明及正负用例，不受此选项影响。
+新增类型用例覆盖请求阶段拒绝状态、阶段限制、只读客户端头、固定方法及观察错误状态。
 
 TypeScript 固定为 7.0.2，`package-lock.json` 记录各平台可选原生编译器包。
 引入时已核对 [npm registry](https://registry.npmjs.org/typescript/7.0.2) 与
@@ -120,6 +125,36 @@ fixture 是合成数据，保存在 `examples/testing/`；真实配置和真实�
 provider → model 顺序、参数覆写、单次路由、四种 JSON/SSE 组合、流丢弃/拆分、失败提交及观察上下文
 使用可独立确定的合成输入与输出断言，不再要求启动本地 HTTP 服务。
 这里的 VM 测试不修改进程环境，也不故意制造死循环或 OOM。
+
+## 第三方库示例构建
+
+`examples/libraries/src/config.js` 是可编辑源码；`examples/libraries/build.mjs` 仅在 Node.js 开发环境执行。
+使用锁文件安装并生成纯 ESM 入口，然后通过实际 QuickJS 与生产管线验证：
+
+```sh
+npm ci --ignore-scripts
+npm run build:examples
+npm run check:types
+cargo run --locked -- check --config examples/libraries/server.toml
+cargo run --locked -- test --config examples/libraries/server.toml --cases examples/libraries
+```
+
+示例另有等价 `server.yaml`，可显式选择；默认仍为 TOML。
+生成的 `examples/libraries/config.js` 被 Git 忽略，构建只写这个入口，不修改用户配置。
+esbuild 使用 `platform: neutral`、ESM 和 ES2023 目标，不注入 Node、DOM、URL 或编码宿主 API。
+运行与部署只需生成后的 `config.js`、服务配置及任何未打包的本地模块，不需要 npm 或 Node.js。
+bundle banner 保留 Valibot 的完整 MIT 许可证，分发生成文件时不能丢弃。
+
+新增的开发依赖固定为 Valibot 1.5.0 和 esbuild 0.28.2，已核对
+[Valibot 注册表](https://registry.npmjs.org/valibot/1.5.0)与[上游发布](https://github.com/open-circle/valibot/releases/tag/v1.5.0)、
+[esbuild 注册表](https://registry.npmjs.org/esbuild/0.28.2)与[上游发布](https://github.com/evanw/esbuild/releases/tag/v0.28.2)。
+Valibot 无运行依赖，esbuild 要求 Node.js 18 或更高，兼容开发基线 Node.js 24；两者均只加入 npm devDependencies。
+`npm ci --ignore-scripts` 通过可选平台包提供 esbuild 原生二进制，构建不依赖安装脚本下载。
+`package-lock.json` 记录具体版本、完整性和平台包。Rust 运行时未增加库依赖或宿主能力。
+
+离线 fixture 的 `clientHeaders` 先通过 HTTP 头校验和入口预算，再由生产逻辑选择白名单。
+普通测试另覆盖多值、只读、逐跳排除、UTF-8/字节边界、拒绝时停止发送、状态提交及一次终态观察；
+不通过测试注入已经处理好的脚本 context 来替代这层验证。
 
 ## 隔离边界测试
 
@@ -261,8 +296,9 @@ JS 异常诊断另外保存固定内建类别、模块编号和可用行列，�
 CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，默认只授予 `contents: read`，
 镜像 job 另授予 `packages: write`。同 ref 运行串行排队，`queue: max` 最多容纳 100 个等待运行，
 超过 GitHub 队列上限的运行会被取消；新运行不取消正在执行的构建与发布。每个 job 有超时；checkout 不持久化凭据。
-Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、常规 Cargo 测试、
-`limen test` 四路径示例与 `cargo xtask test --isolated`；隔离边界使用 worker 进程与单项外部超时。
+Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、常规 Cargo 测试，
+再使用 Node.js 24、`npm ci --ignore-scripts` 与 `npm run build:examples` 构建库示例，
+执行 `limen test` 四路径示例、库示例与 `cargo xtask test --isolated`；隔离边界使用 worker 进程与单项外部超时。
 JavaScript types job 使用 Node.js 24、`npm ci --ignore-scripts` 与 `npm run check:types`，
 Markdown job 检查仓库文档；任一检查失败都会阻止后续镜像构建与发布。
 

@@ -27,6 +27,40 @@ pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> 
     Ok(())
 }
 
+/// Capture only configured fields, excluding connection-nominated hop-by-hop data.
+/// Header bytes remain private request data and are never added to diagnostics.
+pub fn client_context(headers: &HeaderMap, allowed: &[String]) -> Result<Value, Failure> {
+    let mut fields = Vec::new();
+    let mut bytes = 0_usize;
+    for name in allowed {
+        let mut connection_field = false;
+        for connection in headers.get_all(header::CONNECTION) {
+            let connection = connection.to_str().map_err(|source| {
+                Failure::new(ErrorCode::InvalidRequest, "client_context").with_source(source)
+            })?;
+            connection_field |= connection
+                .split(',')
+                .any(|field| field.trim().eq_ignore_ascii_case(name));
+        }
+        if connection_field {
+            continue;
+        }
+        for value in headers.get_all(name) {
+            bytes = bytes
+                .saturating_add(name.len())
+                .saturating_add(value.as_bytes().len());
+            if fields.len() >= 100 || bytes > 32 * 1024 {
+                return Err(Failure::new(ErrorCode::PayloadTooLarge, "client_context"));
+            }
+            let value = std::str::from_utf8(value.as_bytes()).map_err(|source| {
+                Failure::new(ErrorCode::InvalidRequest, "client_context").with_source(source)
+            })?;
+            fields.push(json!({"name": name, "value": value}));
+        }
+    }
+    Ok(json!({"headers":fields}))
+}
+
 // Compare every byte once lengths match; authentication never exits at the first difference.
 fn secret_equal(actual: &[u8], expected: &[u8]) -> bool {
     actual.len() == expected.len()

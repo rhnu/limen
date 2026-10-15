@@ -1,0 +1,82 @@
+{
+  "name": "reject-promise",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "mode": "reject-promise"
+  },
+  "clientHeaders": {
+    "X-Profile": [
+      "editor"
+    ],
+    "x-tags": [
+      "one",
+      "two"
+    ],
+    "cookie": [
+      "synthetic-cookie-secret"
+    ],
+    "x-private": [
+      "synthetic-private-value"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "state": {
+      "client": {
+        "profiles": [
+          "editor"
+        ],
+        "tags": [
+          "one",
+          "two"
+        ]
+      },
+      "mode": "reject-promise"
+    },
+    "response": {
+      "status": 500,
+      "body": {
+        "error": {
+          "code": "hook_failed",
+          "message": "A configured request hook failed",
+          "request_id": "limen-1"
+        }
+      }
+    },
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    }
+  }
+}

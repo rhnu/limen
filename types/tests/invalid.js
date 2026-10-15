@@ -34,6 +34,22 @@ export const config = {
   providers: { primary: { endpoint: "https://fictional.invalid/v1/chat/completions" } },
   models: { chat: { provider: "primary", upstream: "fictional-chat-model" } },
   onRequest(ctx) {
+    // @ts-expect-error Only supported business rejection statuses are accepted.
+    ctx.reject(500);
+    // @ts-expect-error Rejection does not accept arbitrary response bodies or messages.
+    ctx.reject({ status: 400, message: "private" });
+    // @ts-expect-error The rejection method cannot be replaced.
+    ctx.reject = () => {};
+    // @ts-expect-error The client context reference is fixed.
+    ctx.client = ctx.client;
+    // @ts-expect-error The read-only client header view cannot be replaced.
+    ctx.client.headers = ctx.client.headers;
+    // @ts-expect-error Client header views expose no mutations.
+    ctx.client.headers.set("x-test", "changed");
+    // @ts-expect-error Client header methods are frozen.
+    ctx.client.headers.getAll = () => [];
+    // @ts-expect-error Client header names must be strings.
+    ctx.client.headers.getAll(1);
     // @ts-expect-error Header controls exist only in beforeSend and afterReceive.
     ctx.headers.set("x-test", "value");
     // @ts-expect-error Routing is not available yet.
@@ -58,6 +74,8 @@ export const config = {
     ctx.replaceEvents([]);
   },
   onError(ctx) {
+    // @ts-expect-error Observers cannot reject a finished request.
+    ctx.reject(400);
     // @ts-expect-error Observer state is deeply readonly.
     ctx.state.calls = 1;
     // @ts-expect-error Nested arrays in observer state are frozen too.
@@ -103,6 +121,8 @@ export const phases = {
     ctx.url = 12;
   },
   afterReceive(ctx) {
+    // @ts-expect-error Rejection is only available before upstream dispatch.
+    ctx.reject(403);
     // @ts-expect-error afterReceive does not have a body draft.
     ctx.body.model = "chat";
     // @ts-expect-error afterReceive does not have a URL draft.
@@ -113,12 +133,16 @@ export const phases = {
     ctx.meta.upstreamStatus = 200;
   },
   onResponse(ctx) {
+    // @ts-expect-error Rejection is unavailable in response hooks.
+    ctx.reject();
     // @ts-expect-error Only stream hooks receive event output controls.
     ctx.replaceEvents([]);
     // @ts-expect-error Response hooks cannot alter status.
     ctx.status = 201;
   },
   onUpstreamEvent(ctx) {
+    // @ts-expect-error Rejection is unavailable during streaming.
+    ctx.reject(422);
     // @ts-expect-error Event drafts must be JSON chunk objects.
     ctx.event = null;
     // @ts-expect-error Control frames belong to Rust, not JSON event output.

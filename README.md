@@ -13,6 +13,7 @@ responses with local JavaScript modules. Linux Docker is the primary deployment 
 - Ordered provider → model pipelines for request bodies, URLs, headers, responses, and streaming events.
 - Synchronous and asynchronous JavaScript hooks, local ESM imports, and per-request state.
 - Optional JSDoc type checking and offline script tests with synthetic JSON/SSE responses.
+- Explicit request policy rejection and read-only access to allowlisted client headers.
 - Read upstream credentials from process environment variables with `limen.env(name)`.
 - JSON and SSE in all four upstream/downstream combinations, including text, refusal, function tool calls,
   multiple choices, finish reasons, and usage when converting between formats.
@@ -79,7 +80,9 @@ Test request hooks without networking using the [offline example](examples/testi
 Each case gets a fresh VM and runs through the production pipeline with a synthetic upstream response.
 Case fields and assertions are described in the [offline testing guide](docs/features.md#离线脚本测试).
 For editor feedback and static checking of JavaScript configurations, see the
-[development guide](docs/development.md#脚本静态检查). Node.js is only needed for that development check.
+[development guide](docs/development.md#脚本静态检查). Node.js is only needed for development checks and
+optional library bundling. The [library example](docs/features.md#第三方库接入) demonstrates Valibot validation,
+request rejection, and client header access with synthetic offline cases.
 
 ### Call the API
 

@@ -47,8 +47,18 @@ jobs:
         run: cargo dev lint --locked --deny-warnings
       - name: Regular tests
         run: cargo test --workspace --lib --bins --locked
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install library example build tools
+        run: npm ci --ignore-scripts
+      - name: Bundle the library example
+        run: npm run build:examples
       - name: Offline script examples
-        run: cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
+        run: |
+          cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
+          cargo run --locked -- test --config examples/libraries/server.toml --cases examples/libraries
       - name: Isolated boundary tests
         run: cargo xtask test --isolated
 

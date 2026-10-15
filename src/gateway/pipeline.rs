@@ -47,6 +47,10 @@ impl Gateway {
             return Err(Failure::new(ErrorCode::InvalidRequest, "request_body"));
         }
         lifecycle.phase = "request_body";
+        lifecycle.client = logic::client_context(
+            request.headers(),
+            &self.server.script_context.client_headers,
+        )?;
         let bytes = to_bytes(request.into_body(), self.server.limits.max_body_bytes)
             .await
             .map_err(Failure::body)?;
@@ -87,7 +91,7 @@ impl Gateway {
             logic::validate_body_shape(require_body(&output)?).map_err(|source| {
                 Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source)
             })?;
-            commit_state(lifecycle, &mut output)?;
+            commit_request(lifecycle, &mut output)?;
             body = output["body"].take();
         }
         lifecycle.phase = "routing";
@@ -161,7 +165,7 @@ impl Gateway {
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_headers = logic::headers_from_json(&output["headers"])
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                commit_state(lifecycle, &mut output)?;
+                commit_request(lifecycle, &mut output)?;
                 body = output["body"].take();
                 let Value::String(next_url) = output["url"].take() else {
                     return Err(hook_invalid("beforeSend", &step.name));
@@ -194,6 +198,29 @@ impl Gateway {
             .await
             .map_err(|source| Failure::script(source, phase, step))
     }
+}
+
+/// Reject only after the ordinary draft checks and successful state commit.
+fn commit_request(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), Failure> {
+    let rejection = output
+        .get("rejection")
+        .map(|value| {
+            value
+                .get("status")
+                .and_then(Value::as_u64)
+                .filter(|status| matches!(status, 400 | 403 | 422))
+                .and_then(|status| u16::try_from(status).ok())
+                .ok_or_else(|| Failure::new(ErrorCode::HookFailed, lifecycle.phase))
+        })
+        .transpose()?;
+    commit_state(lifecycle, output)?;
+    if let Some(status) = rejection {
+        let mut failure = Failure::new(ErrorCode::RequestRejected, lifecycle.phase);
+        failure.status = Some(status);
+        failure.step.clone_from(&lifecycle.step);
+        return Err(failure);
+    }
+    Ok(())
 }
 
 pub(super) fn commit_state(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), Failure> {

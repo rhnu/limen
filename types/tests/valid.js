@@ -13,6 +13,7 @@ export const config = {
       pipeline: [{
         name: "provider",
         beforeSend(ctx) {
+          if (ctx.client.headers.getAll("x-client-name").includes("unsupported")) return ctx.reject(403);
           ctx.state.calls = (ctx.state.calls ?? 0) + 1;
           ctx.state.details = { tags: [ctx.meta.provider] };
           ctx.body.max_completion_tokens = 1024;
@@ -57,6 +58,8 @@ export const config = {
     },
   },
   onRequest(ctx) {
+    if (ctx.body.unsupported === true) return ctx.reject();
+    ctx.client.headers.getAll("X-Client-Name").push("detached-array");
     ctx.body.model = "chat";
     ctx.body.messages.push({ role: "system", content: "Example" });
     ctx.body.stream = false;
@@ -75,7 +78,7 @@ export const config = {
     const code = ctx.error.code;
     /** @type {string | null} */
     const model = ctx.meta.model;
-    void [outcome, code, model, ctx.error.request_id, ctx.error.phase, ctx.error.step];
+    void [outcome, code, model, ctx.error.status, ctx.error.request_id, ctx.error.phase, ctx.error.step];
   },
   async onFinish(ctx) {
     await Promise.resolve();
@@ -132,5 +135,14 @@ export const untypedState = {
     ctx.state.extension = { nested: [1, "value"] };
     const count = ctx.state.count;
     if (typeof count === "number") ctx.state.count = count + 1;
+  },
+};
+
+/** @type {import("../limen").PipelineStep} */
+export const asyncRejection = {
+  name: "async-rejection",
+  async beforeSend(ctx) {
+    await Promise.resolve();
+    if (ctx.body.unsupported === true) return ctx.reject(422);
   },
 };
