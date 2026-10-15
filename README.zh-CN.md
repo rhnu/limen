@@ -12,6 +12,7 @@ Limen 是使用 Rust 编写的 Chat Completions 网关，面向个人和内网�
 - 显式模型别名、可复用的 provider 配置，以及独立的客户端和上游认证。
 - provider → model 有序管线，可修改请求体、URL、请求头、响应和流事件。
 - 同步与异步 JavaScript hook、本地 ESM 导入和请求独立状态。
+- 通过 `limen.env(name)` 从进程环境变量读取上游凭据。
 - 上下游 JSON/SSE 四种组合；跨形态转换支持文本、refusal、function tool calls、
   多 choice、finish reason 和 usage。
 - 有界请求、队列、JavaScript 执行、事件展开和流聚合，明确报告超时与流截断。
@@ -51,6 +52,7 @@ curl 示例使用 POSIX 换行与引号语法，在 PowerShell 中需要调整�
 2. 在 `local/basic/server.yaml` 中设置客户端 bearer token，在 `local/basic/config.js` 中填写
    provider 的**完整 Chat Completions URL**、上游认证和上游模型名。
    示例中的 `.invalid` 地址和令牌均为占位值。真实配置保存在 `local/`。
+   示例优先读取 `UPSTREAM_API_KEY`，设置方式见[环境变量指南](docs/features.md#从环境变量读取上游密钥)。
 
 3. 检查配置，然后启动网关：
 

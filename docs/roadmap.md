@@ -5,7 +5,8 @@
 `limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立客户端认证和单次路由。
 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → model 正序 hook 已实现。
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
-开发实验统一在 Rust `xtask/` 包，17 个 VM 与 12 个合成 HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证。
+开发实验统一在 Rust `xtask/` 包，既有 17 个 VM 与 12 个合成 HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证。
+VM 现共 18 项，已在 Windows 全部通过，新增环境变量读取实验的 Linux CI 运行待验证。
 CI 在单元测试后固定执行全部 VM 与 HTTP 高级测试，两个高级测试步骤均已通过。
 
 Dockerfile、Compose、精简非 root 运行层、cargo-chef 依赖缓存、Rust 与 Buildx GHA 缓存已配置。

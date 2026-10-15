@@ -7,7 +7,7 @@
 ├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server 与日志
 ├── modules/
 │   ├── config/          limen-config：YAML/业务配置、资源 schema、配置诊断
-│   ├── script/          limen-script：ESM、严格 JSON 桥接、专属线程和有界 JS 调度
+│   ├── script/          limen-script：ESM、只读环境变量、严格 JSON 桥接和有界 JS 调度
 │   └── chat/            limen-chat：SSE 编解码、chunk 校验、四路径转换与有界聚合
 ├── examples/            无真实凭据的基础配置与共享模块
 ├── xtask/               limen-xtask：Rust 编写的隔离 VM/HTTP 实验与进程监督
@@ -80,6 +80,7 @@ JS 执行实验与普通单元测试分开。xtask 通过内部 worker 子命令
 ```sh
 cargo xtask probe runtime
 cargo xtask probe runtime context-stream
+cargo xtask probe runtime environment
 cargo xtask probe runtime --list
 ```
 
@@ -94,6 +95,11 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 17 个 VM 实验（包含 `context-stream`）已通过 Linux 与 Windows 隔离运行验证。
 启动实验在成功返回后立即检查 `Ready`；`memory-limit` 另外覆盖同步抛出或 Promise rejection 携带
 `null` / 自身 `message: "out of memory"` 的保守退役边界；这些场景已通过 Windows 与 Linux CI 隔离运行。
+
+`environment` 通过父进程的子进程启动配置注入合成变量，不修改多线程进程的全局环境，
+也不需要 `unsafe`。它覆盖顶层、本地 ESM、异步 hook 的密钥读取、缺失与空值、Unicode、
+非法参数、非 Unicode 值、名称/值字节上限、只读绑定和失败后恢复；纯逻辑单元测试独立检查校验与错误来源。
+该新增实验的单项与完整 18 项 VM 实验均已在 Windows 通过，Linux 运行待既有 CI 的完整 VM 步骤验证。
 
 检查示例配置：
 

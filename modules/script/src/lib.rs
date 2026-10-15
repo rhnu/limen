@@ -2,6 +2,7 @@
 
 mod context;
 mod engine;
+mod environment;
 mod error;
 mod json;
 mod loader;

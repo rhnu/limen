@@ -212,6 +212,25 @@ JS runtime 必须随服务存活。修改文件后重启服务才生效。
 
 “启动时执行一次”不是“脚本没有副作用”，也不是“运行完便销毁 JS 引擎”。
 
+### 3.4 环境变量接口
+
+脚本通过全局只读接口 `limen.env(name)` 同步读取 Limen 进程继承的单个环境变量。
+配置顶层、本地导入模块和 hook 均可调用；`limen` 与它的 `env` 属性不可替换或删除。
+接口由脚本库在用户模块求值前安装，JS 句柄和宿主回调始终留在拥有 VM 的线程。
+
+- `name` 必须为非空字符串，不得包含 `=` 或 NUL；不隐式转换其他 JS 类型。
+- 已设置返回 Unicode 字符串，保留空字符串与首尾空白；未设置返回 `undefined`。
+  默认值使用 JS 的 `??`；必需密钥应由配置显式拒绝缺失或空值。
+- 名称和值各自的 UTF-8 字节数均不得超过 `limits.max_output_bytes`；超出时抛出 `RangeError`。
+  无效参数抛出 `TypeError`；操作系统值不是有效 Unicode 时抛出 `Error`，不替换字符或当作缺失。
+- 每次调用按名称读取当前进程环境，不枚举、不预载全部变量、不提供写入或 `.env` 文件加载。
+  顶层读取得到的 provider 字符串在启动时固定；外部修改环境不能更新已经运行的进程，变更后应重启。
+- 错误使用固定文案，不回显变量名和值；沿用 JS 异常诊断的清理规则。
+  接口按可信本地配置处理，可读取进程继承的任意变量，不是秘密隔离或权限沙箱。
+
+此接口只增加环境变量读取能力，不开放其他进程、网络、任意文件或 Node.js API。
+`server.yaml` 不执行环境变量插值；Docker 部署需显式将变量传入容器。
+
 ## 4. Provider 与模型的关系
 
 ### 4.1 Provider 字段
@@ -690,7 +709,7 @@ rquickjs 提供 resolver/loader 接口；当前适配器增加路径归一化、
 
 QuickJS 是 JavaScript 引擎，并不自动提供
 Node.js、`fetch`、定时器或浏览器标准库。首版不承诺这些能力；配置复用依靠本地模块和普通
-JS。
+JS。宿主仅另外提供第 3.4 节的只读 `limen.env(name)` 接口。
 
 ### 9.4 超时、取消与共享 VM 边界
 
@@ -941,7 +960,8 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 ### 12.4 库内模块与依赖方向
 
 `config` 保留 `server`、`business`、`error`；静态配置只保存 owned 数据与 hook ID。
-`script` 保留 `loader`、`json`、`context`、`engine`、`error`，`engine/startup` 与 `engine/scheduler` 分工不变。
+`script` 保留 `loader`、`environment`、`json`、`context`、`engine`、`error`，
+`environment` 安装只读环境变量接口，`engine/startup` 与 `engine/scheduler` 分工不变。
 `lib.rs` 的公开调用与通道入口只有在职责或维护需要时再移入 `runtime.rs`，不把 VM 内部类型公开给根包。
 
 `chat` 库内部按 `sse`（分块解码与 framing）、`chunk`（Chat 事件与结束校验）、

@@ -12,6 +12,7 @@ responses with local JavaScript modules. Linux Docker is the primary deployment 
 - Explicit model aliases with reusable provider settings and independent client and upstream authentication.
 - Ordered provider → model pipelines for request bodies, URLs, headers, responses, and streaming events.
 - Synchronous and asynchronous JavaScript hooks, local ESM imports, and per-request state.
+- Read upstream credentials from process environment variables with `limen.env(name)`.
 - JSON and SSE in all four upstream/downstream combinations, including text, refusal, function tool calls,
   multiple choices, finish reasons, and usage when converting between formats.
 - Bounded requests, queues, JavaScript execution, event expansion, and stream aggregation, with explicit
@@ -55,6 +56,7 @@ continuations and quoting; adapt them for PowerShell and invoke `curl.exe`.
 2. Edit `local/basic/server.yaml` and set your client bearer token. Edit `local/basic/config.js` with
    your provider's **full Chat Completions URL**, upstream credentials, and upstream model name.
    The bundled `.invalid` URL and tokens are placeholders. Keep real configuration in `local/`.
+   The example reads `UPSTREAM_API_KEY` when set; see the [environment variable guide](docs/features.md#从环境变量读取上游密钥).
 
 3. Validate the configuration, then start the gateway:
 

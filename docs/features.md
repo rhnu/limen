@@ -44,7 +44,8 @@ local/
 复制仓库示例时应复制整个 `examples/`，保留 `basic/`、`docker/` 与 `shared/` 的相对关系。
 
 配置脚本作为可信本地代码执行。真实令牌可直接放在 `local/` 的配置文件或本地导入模块中，
-限制文件读取权限并排除版本控制。无需 `package.json`，不支持 npm 包解析、远程 URL 导入、
+也可通过 `limen.env(name)` 读取进程环境。限制秘密文件读取权限并排除版本控制。
+无需 `package.json`，不支持 npm 包解析、远程 URL 导入、
 Node.js、`fetch`、定时器、进程或任意文件读写 API。本地模块导入会读取对应文件。
 模块图每次启动求值一次；修改配置后需要检查并重启服务。
 
@@ -137,6 +138,55 @@ Model 字段为 `provider`、`upstream`、`defaults` 与 `pipeline`；模型的�
 可配置 1–1024 个 provider、1–4096 个 model，每条 pipeline 最多 256 步。
 Provider 名、模型别名与步骤名使用 ASCII 字母、数字或 `-._/`，长度为 1–128 字节。
 同一条 pipeline 内步骤名必须唯一，每个步骤至少包含一个阶段函数。
+
+### 从环境变量读取上游密钥
+
+全局同步接口 `limen.env(name)` 可用于配置顶层、本地导入模块和 hook，返回 `string | undefined`。
+例如将上游认证改为读取 `UPSTREAM_API_KEY`：
+
+```javascript
+const upstreamToken = limen.env("UPSTREAM_API_KEY");
+if (!upstreamToken) throw new Error("UPSTREAM_API_KEY is required");
+
+export default {
+  providers: {
+    primary: {
+      endpoint: "https://fictional.invalid/v1/chat/completions",
+      auth: { bearer: upstreamToken },
+    },
+  },
+  models: { chat: { provider: "primary", upstream: "fictional-chat-model" } },
+};
+```
+
+在启动 `check` 和 `serve` 前设置变量。POSIX shell：
+
+```sh
+export UPSTREAM_API_KEY='example-upstream-token'
+./target/release/limen check --config local/basic/server.yaml
+./target/release/limen serve --config local/basic/server.yaml
+```
+
+PowerShell：
+
+```powershell
+$env:UPSTREAM_API_KEY = 'example-upstream-token'
+./target/release/limen.exe check --config local/basic/server.yaml
+./target/release/limen.exe serve --config local/basic/server.yaml
+```
+
+以上令牌只是占位示例。仓库基础示例使用 `limen.env("UPSTREAM_API_KEY") ?? "example-upstream-token"`
+保持未设置环境时仍可检查；真实接入应填写有效令牌，或按上例显式拒绝缺失。
+
+未设置的变量返回 `undefined`，空字符串返回 `""`，不会自动 trim。
+可选值可写成 `limen.env("UPSTREAM_MODEL") ?? "default-model"`；`??` 不替换空字符串。
+变量名必须是非空字符串且不含 `=` 或 NUL，其他类型不隐式转成字符串，无效参数抛出 `TypeError`。
+名称和值分别限制为 `limits.max_output_bytes` 个 UTF-8 字节，超过时抛出 `RangeError`；
+非 Unicode 环境值抛出 `Error`。诊断不回显变量名、值或任意 JS 异常文本。
+
+该接口只按名称读取，不提供枚举、写入或 `.env` 自动加载；`limen` 和 `limen.env` 不可替换或删除。
+配置是可信本地脚本，可读取进程继承的任意环境变量。顶层读取的密钥随配置在启动时固定；
+修改外部环境后需重启服务。`server.yaml` 不支持 `${...}` 插值，客户端 bearer 仍由 YAML 独立配置。
 
 ### 默认参数与单次路由
 
@@ -483,6 +533,16 @@ docker compose down
 Compose 将整个 `local/` 只读挂载到 `/config`，配置入口为 `/config/docker/server.yaml`。
 容器内显式监听 `0.0.0.0:8080`，宿主默认仅发布 `127.0.0.1:8080`。
 需要内网访问时同时考虑宿主端口绑定和客户端认证。
+
+如果脚本使用 `limen.env("UPSTREAM_API_KEY")`，在 Compose 的 `services.limen` 下显式添加：
+
+```yaml
+environment:
+  UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:?set UPSTREAM_API_KEY before starting Compose}
+```
+
+设置宿主环境变量后再运行前述 `docker compose run` 和 `up`，两者会使用同一环境配置。
+Compose 的变量替换发生在容器启动之前；宿主 `.env` 文件不会由 Limen 脚本自行加载。
 
 运行用户为 UID/GID `10001`，挂载的 YAML、JS 和共享模块必须对其可读。
 示例启用只读根文件系统、移除 capabilities、禁止提权、512 MiB 内存和 128 PID 上限，

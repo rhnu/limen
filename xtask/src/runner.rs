@@ -94,6 +94,9 @@ async fn run_case(
     let mut command =
         tokio::process::Command::new(std::env::current_exe().context("locate xtask executable")?);
     command.args(["__worker", family, case]).arg(&fixture);
+    if family == "runtime" && case == "environment" {
+        runtime::environment::configure(&mut command);
+    }
     if let Some(executable) = executable {
         command.arg(executable);
     }

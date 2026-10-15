@@ -11,6 +11,7 @@ use limen_script::{
 use serde_json::{Value, json};
 
 mod context;
+pub(crate) mod environment;
 
 type ProbeResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -59,6 +60,7 @@ pub const CASES: &[&str] = &[
     "top-level-await",
     "strict-json",
     "modules",
+    "environment",
     "sync-loop",
     "microtask-loop",
     "memory-limit",
@@ -81,6 +83,7 @@ pub async fn run(case: &str, root: PathBuf) -> ProbeResult {
         "top-level-await" => top_level_await(&fixture).await,
         "strict-json" => strict_json(&fixture).await,
         "modules" => modules(&fixture).await,
+        "environment" => environment::run(&fixture).await,
         "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&fixture, case).await,
         "shutdown-pending" => shutdown_pending(&fixture).await,
         "startup-loop" => startup_loop(&fixture).await,
