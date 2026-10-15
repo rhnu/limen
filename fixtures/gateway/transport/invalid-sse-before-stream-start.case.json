@@ -1,0 +1,56 @@
+{
+  "name": "invalid-sse-before-stream-start",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 502
+    },
+    "state": {
+      "clientStream": true,
+      "upstreamStatus": 200,
+      "upstreamMedia": "sse"
+    },
+    "error": {
+      "code": "upstream_protocol",
+      "status": 502,
+      "phase": "upstream_sse"
+    }
+  }
+}

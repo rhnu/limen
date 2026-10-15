@@ -1,3 +1,4 @@
+/** @type {import("../../types/limen").PipelineStep} */
 export const limitOutput = {
   name: "limit-output",
   async beforeSend({ body }) {

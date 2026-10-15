@@ -2,7 +2,7 @@ use std::{ffi::OsString, path::PathBuf};
 
 use clap::{Parser, error::ErrorKind};
 
-use super::{Cli, Command, ConfigArgs};
+use super::{Cli, Command, ConfigArgs, TestArgs};
 
 #[test]
 fn accepts_commands_and_preserves_paths() {
@@ -15,6 +15,15 @@ fn accepts_commands_and_preserves_paths() {
             expected
         );
     }
+    assert_eq!(
+        Cli::try_parse_from(["limen", "test", "--cases", "a directory/用例"])
+            .unwrap()
+            .command,
+        Command::Test(TestArgs {
+            configuration: ConfigArgs { config: None },
+            cases: PathBuf::from("a directory/用例")
+        })
+    );
     assert_eq!(
         Cli::try_parse_from(["limen", "serve", "--config", "a directory/服务.yaml"])
             .unwrap()
@@ -68,6 +77,7 @@ fn help_and_version_use_successful_stdout_output() {
         vec!["limen", "-h"],
         vec!["limen", "check", "--help"],
         vec!["limen", "serve", "-h"],
+        vec!["limen", "test", "--help"],
         vec!["limen", "--version"],
         vec!["limen", "-V"],
     ] {
@@ -90,6 +100,8 @@ fn rejects_missing_ambiguous_and_extra_arguments() {
         vec!["limen", "check", "--config", "--help"],
         vec!["limen", "check", "--config", ""],
         vec!["limen", "serve", "one.yaml"],
+        vec!["limen", "test"],
+        vec!["limen", "test", "--cases"],
         vec![
             "limen", "check", "--config", "one.yaml", "--config", "two.yaml",
         ],

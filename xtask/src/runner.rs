@@ -1,4 +1,4 @@
-//! Case selection, parent-owned fixtures and experiment results.
+//! Isolated case selection, parent-owned fixtures and supervised test results.
 
 use std::{fs, path::Path, process::ExitCode, time::Duration};
 
@@ -7,67 +7,92 @@ use clap::error::ErrorKind;
 
 use crate::{cargo, cli, http, process, runtime};
 
-/// Validate a complete selection before building or starting any experiments.
-fn select<'a>(
-    args: &'a cli::Selection,
-    cases: &'a [&str],
-    minimum: f64,
-    default: f64,
-) -> Result<(Vec<&'a str>, Duration)> {
-    let seconds = args.timeout.unwrap_or(default);
-    if !seconds.is_finite() || !(minimum..=60.0).contains(&seconds) {
-        return Err(clap::Error::raw(
-            ErrorKind::InvalidValue,
-            format!("--timeout must be between {minimum} and 60 seconds"),
-        )
-        .into());
-    }
-    for name in &args.cases {
-        if !cases.contains(&name.as_str()) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Case {
+    family: &'static str,
+    name: &'static str,
+}
+
+impl Case {
+    fn qualified(self) -> String { format!("{}/{}", self.family, self.name) }
+
+    fn timeout(self, seconds: Option<f64>) -> Result<Duration> {
+        let (minimum, default) = if self.family == "runtime" {
+            (1.0, 12.0)
+        } else {
+            (5.0, 18.0)
+        };
+        let seconds = seconds.unwrap_or(default);
+        if !seconds.is_finite() || !(minimum..=60.0).contains(&seconds) {
             return Err(clap::Error::raw(
                 ErrorKind::InvalidValue,
-                format!("unknown experiment: {name}"),
+                format!(
+                    "--timeout for {} must be between {minimum} and 60 seconds",
+                    self.qualified()
+                ),
             )
             .into());
         }
+        Ok(Duration::from_secs_f64(seconds))
     }
-    let selected = if args.cases.is_empty() {
-        cases.to_vec()
-    } else {
-        args.cases.iter().map(String::as_str).collect()
-    };
-    Ok((selected, Duration::from_secs_f64(seconds)))
 }
 
-pub async fn run(family: cli::Family) -> Result<ExitCode> {
-    let (name, args, cases, executable, minimum, default) = match family {
-        cli::Family::Runtime(args) => ("runtime", args, runtime::CASES, None, 1.0, 12.0),
-        cli::Family::Http(args) => (
-            "http",
-            args.selection,
-            http::CASES,
-            args.executable,
-            5.0,
-            18.0,
-        ),
+fn cases() -> Vec<Case> {
+    [("runtime", runtime::CASES), ("http", http::CASES)]
+        .into_iter()
+        .flat_map(|(family, names)| names.iter().map(move |name| Case { family, name }))
+        .collect()
+}
+
+/// Validate the complete selection and all budgets before building or starting a worker.
+fn select(args: &cli::Selection, available: &[Case]) -> Result<Vec<(Case, Duration)>> {
+    let selected = if args.cases.is_empty() {
+        available.to_vec()
+    } else {
+        args.cases
+            .iter()
+            .map(|name| {
+                available
+                    .iter()
+                    .copied()
+                    .find(|case| case.qualified() == *name)
+                    .ok_or_else(|| {
+                        clap::Error::raw(
+                            ErrorKind::InvalidValue,
+                            format!("unknown isolated test: {name}"),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
-    let (selected, timeout) = select(&args, cases, minimum, default)?;
+    selected
+        .into_iter()
+        .map(|case| Ok((case, case.timeout(args.timeout)?)))
+        .collect()
+}
+
+pub async fn run(args: cli::Selection) -> Result<ExitCode> {
+    let selected = select(&args, &cases())?;
     if args.list {
-        for case in cases {
-            println!("{case}");
+        for (case, _) in selected {
+            println!("{}", case.qualified());
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let executable = match (name, executable) {
-        ("http", Some(path)) => Some(path.canonicalize().context("resolve gateway executable")?),
-        ("http", None) => Some(cargo::build_gateway().await?),
-        _ => None,
+    let needs_gateway = selected.iter().any(|(case, _)| case.family == "http");
+    let executable = if needs_gateway {
+        Some(match args.executable {
+            Some(path) => path.canonicalize().context("resolve gateway executable")?,
+            None => cargo::build_gateway().await?,
+        })
+    } else {
+        None
     };
     let mut passed = 0;
-    for case in &selected {
-        passed += usize::from(run_case(name, case, executable.as_deref(), timeout).await?);
+    for (case, timeout) in &selected {
+        passed += usize::from(run_case(*case, executable.as_deref(), *timeout).await?);
     }
-    println!("{passed}/{} {name} experiments passed", selected.len());
+    println!("{passed}/{} isolated tests passed", selected.len());
     Ok(if passed == selected.len() {
         ExitCode::SUCCESS
     } else {
@@ -76,17 +101,14 @@ pub async fn run(family: cli::Family) -> Result<ExitCode> {
 }
 
 /// Keep files and process-tree ownership in the process enforcing the deadline.
-async fn run_case(
-    family: &str,
-    case: &str,
-    executable: Option<&Path>,
-    timeout: Duration,
-) -> Result<bool> {
+async fn run_case(test: Case, executable: Option<&Path>, timeout: Duration) -> Result<bool> {
+    let Case { family, name: case } = test;
+    let qualified = test.qualified();
     let started = std::time::Instant::now();
     let directory = tempfile::Builder::new()
-        .prefix("limen-probe-")
+        .prefix("limen-test-")
         .tempdir()
-        .context("create experiment directory")?;
+        .context("create isolated test directory")?;
     let stdout = directory.path().join("worker.stdout");
     let stderr = directory.path().join("worker.stderr");
     let fixture = directory.path().join("fixture");
@@ -118,16 +140,16 @@ async fn run_case(
     }
     match &outcome {
         Ok(process::Outcome::TimedOut) => println!(
-            "FAIL {case}: killed process tree after {:.2}s",
+            "FAIL {qualified}: killed process tree after {:.2}s",
             timeout.as_secs_f64()
         ),
         Ok(process::Outcome::Exited(status)) if !status.success() => {
-            println!("FAIL {case}: worker exit {status}");
+            println!("FAIL {qualified}: worker exit {status}");
         },
-        Err(error) => eprintln!("FAIL {case}: {error:#}"),
+        Err(error) => eprintln!("FAIL {qualified}: {error:#}"),
         _ => {},
     }
-    let cleanup = directory.close().context("remove experiment directory");
+    let cleanup = directory.close().context("remove isolated test directory");
     match (outcome, cleanup) {
         (Ok(_), Ok(())) => {},
         (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
@@ -136,7 +158,7 @@ async fn run_case(
         },
     }
     println!(
-        "{} {case} ({:.2}s)",
+        "{} {qualified} ({:.2}s)",
         if success { "PASS" } else { "FAIL" },
         started.elapsed().as_secs_f64()
     );

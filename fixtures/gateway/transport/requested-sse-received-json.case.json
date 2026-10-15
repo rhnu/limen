@@ -1,0 +1,83 @@
+{
+  "name": "requested-sse-received-json",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "upstreamStream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "body": {
+        "model": "real-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "synthetic-body-secret"
+          }
+        ],
+        "upstreamStream": true,
+        "stream": true
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        }
+      }
+    },
+    "state": {
+      "clientStream": false,
+      "upstreamStatus": 200,
+      "upstreamMedia": "json"
+    }
+  }
+}

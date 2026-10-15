@@ -3,5 +3,7 @@
 *.jpg binary
 *.ico binary
 *.pdf binary
+# SSE records end with an empty line, including the final record.
+*.sse whitespace=-blank-at-eof
 *.bat text eol=crlf
 *.cmd text eol=crlf

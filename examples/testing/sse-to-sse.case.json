@@ -1,0 +1,82 @@
+{
+  "name": "sse-to-sse",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": true,
+    "store": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "response.sse"
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://example.invalid/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-policy": [
+          "checked"
+        ]
+      },
+      "body": {
+        "model": "demo-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": true
+      }
+    },
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": "hello"
+              },
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [],
+          "usage": {
+            "total_tokens": 2
+          }
+        }
+      ],
+      "done": true
+    }
+  }
+}

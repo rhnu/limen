@@ -1,0 +1,49 @@
+{
+  "name": "error-wait",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "mode": "error-wait"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 500
+    },
+    "observationFailed": true,
+    "sent": false,
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    }
+  }
+}

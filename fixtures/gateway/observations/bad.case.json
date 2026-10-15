@@ -1,0 +1,56 @@
+{
+  "name": "bad",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "mode": "bad"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 500
+    },
+    "state": {
+      "mode": "bad",
+      "original": "retained"
+    },
+    "observationFailed": true,
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    }
+  }
+}

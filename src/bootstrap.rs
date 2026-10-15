@@ -106,11 +106,7 @@ impl fmt::Display for Diagnostic<'_> {
 impl Bootstrap {
     /// Resolve the script relative to the selected server file, independent of later cwd changes.
     pub async fn load(path: Option<&Path>, command: &'static str) -> Result<Self, Error> {
-        let (path, server) = load_server(path).map_err(|source| Error::Config {
-            file: "server configuration",
-            source: Box::new(source),
-        })?;
-        crate::telemetry::initialize(&server.log).map_err(Error::Logging)?;
+        let (path, server) = Self::settings(path)?;
         Self::start(&path, server)
             .instrument(tracing::info_span!(
                 "configuration",
@@ -120,7 +116,18 @@ impl Bootstrap {
             .await
     }
 
-    async fn start(path: &Path, server: ServerConfig) -> Result<Self, Error> {
+    pub(crate) fn settings(
+        path: Option<&Path>,
+    ) -> Result<(std::path::PathBuf, ServerConfig), Error> {
+        let (path, server) = load_server(path).map_err(|source| Error::Config {
+            file: "server configuration",
+            source: Box::new(source),
+        })?;
+        crate::telemetry::initialize(&server.log).map_err(Error::Logging)?;
+        Ok((path, server))
+    }
+
+    pub(crate) async fn start(path: &Path, server: ServerConfig) -> Result<Self, Error> {
         tracing::debug!(phase = "script_startup", "evaluating local configuration");
         let script = path
             .parent()

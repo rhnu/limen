@@ -4,12 +4,13 @@
 
 ```text
 .
-├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server 与日志
+├── src/                 根包：CLI、bootstrap、gateway、HTTP server、离线测试与日志
 ├── modules/
 │   ├── config/          limen-config：TOML/YAML 与业务配置、资源 schema、配置诊断
 │   ├── script/          limen-script：ESM、只读环境变量、严格 JSON 桥接和有界 JS 调度
 │   └── chat/            limen-chat：SSE 编解码、chunk 校验、四路径转换与有界聚合
 ├── examples/            无真实凭据的基础配置与共享模块
+├── types/               config.js 的公开声明与 JS/JSDoc 正负类型用例
 ├── xtask/               limen-xtask：Rust 编写的隔离 VM/HTTP 实验与进程监督
 ├── .cargo/config.toml   cargo xtask 别名
 ├── docs/                功能使用指南、设计、唯一实施路线图、开发指引
@@ -17,6 +18,7 @@
 ├── LICENSE              GNU AGPLv3 完整许可证
 ├── Cargo.toml           根包、workspace、集中依赖和共享 lint
 ├── Cargo.lock           应用依赖解析结果，纳入版本控制
+├── package-lock.json    TypeScript 开发工具及平台包解析结果
 ├── rust-toolchain.toml  固定 Rust 1.99.0、rustfmt 与 Clippy
 └── rusteward.toml       Rusteward 格式与 lint 配置
 ```
@@ -61,7 +63,8 @@ cargo install --git https://github.com/rhnu/rusteward.git --locked rusteward
 
 `cargo dev format` 会修改源码；只读检查使用 `cargo dev format --check --diff --locked`。
 质量规则由 `rusteward.toml` 管理，不以编译或格式通过代替行为验证。
-`--lib --bins` 只运行配置、输入边界、SSE/转换、预算和 CLI 等纯逻辑单元测试，不隐式运行集成或文档测试。
+`--lib --bins` 运行纯逻辑、有限 VM 及离线管线组合的常规测试，不隐式运行真实 HTTP、隔离边界或文档测试。
+常规测试在职责模块的 `tests.rs` 与其子模块中维护；JS fixture 放在被测职责附近，不另建共享测试框架。
 
 文档修改收尾时仅传本次修改的 Markdown 文件，例如：
 
@@ -76,83 +79,82 @@ actionlint 1.7.12 尚不识别 GitHub 已支持的 `concurrency.queue`，该版�
 actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/ci.yml
 ```
 
-## 隔离运行时实验
+## 脚本静态检查
 
-JS 执行实验与普通单元测试分开。xtask 通过内部 worker 子命令将每个实验放入独立进程，
-超过外部时间上限即终止，避免同步死循环或 VM 故障让单元测试及 CI 无界挂起。无需 Python。
+JavaScript 继续作为配置运行语言。`types/limen.d.ts` 只提供编辑器与静态检查契约；
+它不注册宿主 API，也不要求运行时加载 TypeScript。开发环境和 CI 使用 Node.js 24：
 
 ```sh
-cargo xtask probe runtime
-cargo xtask probe runtime context-stream
-cargo xtask probe runtime environment
-cargo xtask probe runtime --list
+npm ci --ignore-scripts
+npm run check:types
 ```
 
-使用 `cargo xtask probe runtime --help` 查看单项实验、超时和列表选项。
-`--timeout` 默认 12 秒，接受 1–60 秒；`--list` 不启动实验 worker。
-Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调用，不应绕过外部超时保护直接使用。
-实验只使用临时合成配置，不连接真实 provider，验证 VM 行为；Docker 部署与 HTTP 端到端验收分别执行。
-临时目录由 xtask 父进程统一持有和清理，覆盖正常完成、失败与外部超时终止。
-父进程监听 Ctrl-C 和 Unix SIGTERM，停止并回收进程树后再删除目录；实验失败以非零退出码汇总。
-退出码为 `0` 全部通过或列表/帮助成功，`1` 实验、构建或清理失败，`2` 参数错误。
-`context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
-全部 18 个 VM 实验（包含 `environment` 与 `context-stream`）已通过 Linux CI 与 Windows 隔离运行验证。
-启动实验在成功返回后立即检查 `Ready`；`memory-limit` 另外覆盖同步抛出或 Promise rejection 携带
-`null` / 自身 `message: "out of memory"` 的保守退役边界；这些场景已通过 Windows 与 Linux CI 隔离运行。
+`tsconfig.json` 检查声明、`examples/` 中的 JS/MJS 与 `types/tests/` 中真实 JavaScript/JSDoc 正负例；
+不生成代码，不加载 DOM 或 Node.js 全局类型。负例的 `@ts-expect-error` 必须对应实际诊断，
+覆盖阶段字段、冻结引用、深只读观察状态、受控 header、JSON 扩展，以及同步和异步返回对象的误用。
+普通无返回值 hook 可直接使用。项目以 `tsc` 完成检查，没有额外的类型测试框架。
 
-`environment` 通过父进程的子进程启动配置注入合成变量，不修改多线程进程的全局环境，
-也不需要 `unsafe`。它覆盖顶层、本地 ESM、异步 hook 的密钥读取、缺失与空值、Unicode、
-非法参数、非 Unicode 值、名称/值字节上限、只读绑定、导入前命名空间冻结和失败后恢复；
-纯逻辑单元测试独立检查校验与错误来源。
-该实验与完整 18 项 VM 实验均已通过 Windows 与 Linux CI 隔离运行验证。
+TypeScript 固定为 7.0.2，`package-lock.json` 记录各平台可选原生编译器包。
+引入时已核对 [npm registry](https://registry.npmjs.org/typescript/7.0.2) 与
+[微软发布记录](https://github.com/microsoft/TypeScript/releases/tag/v7.0.2)：稳定版于 2026-08-20 发布，
+包声明 Node.js 最低版本为 16.20.0。CI 的 [setup-node](https://github.com/actions/setup-node) 使用官方支持的 v7 入口。
+类型声明覆盖配置结构和 hook 可访问的字段，不能验证安全整数、非有限数字、循环引用、对象原型、
+URL/header 内容、provider 引用、事件结束条件或资源预算；这些仍由 Rust/QuickJS 运行时检查。
+JSDoc 的使用方式见[功能指南](features.md#脚本类型提示)。
 
-检查示例配置：
+## 离线脚本测试与常规测试
+
+配置检查与真实脚本用例分别执行：
 
 ```sh
 cargo run --locked -- check --config examples/basic/server.toml
+cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
 ```
 
-`check` 会执行顶层 JS，但不执行请求阶段 hook。CLI 退出码与操作边界见[功能指南](features.md#命令行与配置检查)。
-运行时库只报告退役；HTTP 服务监听状态变更，停止监听、取消在途请求并非零退出，
-不继续接收依赖失效 VM 的请求，也不自动重放上游请求。
+`check` 只运行顶层 JS；`test` 为每个用例新建 VM，运行真实请求/响应管线并替换上游传输。
+`test` 不监听端口，也不创建真实上游 HTTP 客户端。fixture 可覆盖发送前的 body/URL/header、
+下游 JSON/SSE、终态 state、错误和观察失败；字段与精确比较规则见[离线脚本测试](features.md#离线脚本测试)。
+fixture 是合成数据，保存在 `examples/testing/`；真实配置和真实请求样本仍放 `local/`。
 
-## 本地 HTTP 实验
+常规 Cargo 测试直接验证配置、JSON 桥接、有限 Promise 调度、context draft、异常诊断和离线管线组合。
+provider → model 顺序、参数覆写、单次路由、四种 JSON/SSE 组合、流丢弃/拆分、失败提交及观察上下文
+使用可独立确定的合成输入与输出断言，不再要求启动本地 HTTP 服务。
+这里的 VM 测试不修改进程环境，也不故意制造死循环或 OOM。
 
-单独运行本地合成上游与网关，每个实验在有外部超时保护的 Rust worker 中执行。
-驱动只绑定回环地址并使用临时合成配置和占位秘密；不连接真实 provider。
+## 隔离边界测试
+
+需要进程或真实 HTTP 边界的场景通过统一入口运行；不指定名称时运行全部：
 
 ```sh
-cargo xtask probe http
-cargo xtask probe http transport-contracts
-cargo xtask probe http request-overrides pipeline stream-transforms
-cargo xtask probe http --executable target/debug/limen
+cargo xtask test --isolated
+cargo xtask test --isolated --list
+cargo xtask test --isolated runtime/environment runtime/sync-loop
+cargo xtask test --isolated http/disconnect --executable target/debug/limen
 ```
 
-`--list` 查看实验，位置参数选择单项，`--executable PATH` 复用已构建二进制，`--timeout` 设置单项外部上限。
-HTTP 外部上限默认 18 秒，接受 5–60 秒。未提供 `--executable` 时通过 Cargo 构建 `limen`，
-从 JSON artifact 消息读取可执行文件位置，支持自定义 target-dir 与含空格的路径。
-Unix 使用独立进程 session，Windows 使用 Job Object；超时、失败及父进程中断均清理整棵进程树。
-VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixture 子目录。
-合成上游复用 Hyper，客户端复用 reqwest；客户端断开实验另外持有原始 TCP socket。
-持有请求通过 `Expect: 100-continue` 确认网关已分配请求许可，再发送正文；不以 socket 写入完成或固定休眠推断准入。
-`resources` 的超大正文与并发上限检查使用独立实例，避免前一个请求的异步观察清理影响容量断言。
-实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
-`request-overrides` 检查上游实际收到的参数、URL 和请求头，覆盖 provider/model/client/hook 优先级、
-对象与数组的浅层替换、显式 null、字段删除、多模态/工具/扩展字段保留，以及改写 model 后不重新路由。
-`pipeline` 以客户端最终文本、状态码、响应头和上游请求检查异步响应改写、请求状态隔离与失败后恢复；
-异常、Promise rejection、非 void 完成值和循环 draft 都必须返回安全错误且不发送上游请求。
-`stream-transforms` 检查 SSE 丢弃与拆分后的实际片段、聚合文本、usage 和对外模型名，
-也覆盖完整 JSON 响应改写后转换为 SSE。上述断言不依赖内部调用轨迹或执行计数。
-`transport-contracts` 覆盖四种传输组合、原始客户端流意图、usage 尾块与截断后的流内错误，
-并检查首个 DONE 后的错误事件位于同一块或延迟尾块时，JSON/SSE 下游均保持成功终结。
-该终结回归已在 Windows 与 Linux CI 通过；Windows 负向对照中临时恢复旧的块尾终结逻辑时，实验会拒绝其错误结果。
-全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，覆盖参数覆写、流变换、管线与终结分块一致性。
-Linux 的 149 项单元测试、18 个 VM 实验与 12 个 HTTP 实验均通过，证据见
+使用 `cargo xtask test --help` 查看选项。名称采用 `runtime/name` 或 `http/name`，
+以 `--list` 输出为准。`--list` 不启动 worker，也不构建网关；首次调用 Cargo 仍可能构建 xtask。
+VM 单项外部超时默认 12 秒，允许 1–60 秒；HTTP 默认 18 秒，允许 5–60 秒，
+`--timeout` 覆盖所选每项。只要选择 HTTP 场景且未提供 `--executable`，
+xtask 就通过 Cargo 构建网关，并从 JSON artifact 消息读取可执行文件位置，支持自定义 target-dir 与空格路径。
+
+VM 隔离组保留进程环境注入、同步死循环、无限微任务、内存耗尽和启动死循环。
+`runtime/environment` 仅在子进程启动配置中注入合成变量，不修改多线程进程的全局环境，
+无需增加 `unsafe`；覆盖缺失、空值、Unicode、非法输入、字节预算与冻结宿主命名空间。
+`runtime/memory-limit` 保留未捕获 OOM 及同步/Promise 异常携带空值或自身 OOM message 的保守退役检查。
+HTTP 隔离组覆盖真实端点与传输接线、认证、deadline、断开、关闭、VM 退役和资源准入边界。
+驱动只绑定回环地址，使用临时合成上游和占位秘密，不连接真实 provider。
+日志检查使用合成秘密验证正文、令牌、Cookie、异常源码文本和 query 不出现在应用日志中。
+
+每项由 xtask 父进程持有临时根并监督 worker，超时后终止进程树；内部 `__worker` 等入口仅供监督器使用。
+Unix 使用独立 session，Windows 使用 Job Object。父进程监听 Ctrl-C 与 Unix SIGTERM，
+先回收进程树再删除临时目录；`0` 表示全部通过或列表/帮助成功，`1` 表示实验、构建或清理失败，`2` 表示参数错误。
+Windows 关闭测试通过短命 helper 隔离控制台 Ctrl-C 广播；正常清理和独立控制台关闭已有运行证据，
+外部超时和父进程中断时的 Job Object 回收仍在[路线图](roadmap.md)中跟踪。
+
+Windows 与 Linux CI 已有 VM/HTTP 运行基线；Linux 的既有证据见
 [`c562fa0` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38674755676/job/116225705564)。
-Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创建或连接网关私有控制台，隔离 Ctrl-C 广播。
-正常实验清理与独立控制台 Ctrl-C 已有运行证据；Job Object 在外部超时和父进程中断时的回收仍待单独验证。
-纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动作为独立高级测试执行，CI 中固定排在单元测试之后。
-日志检查使用合成秘密验证正文、令牌、Cookie、源码异常文本和 query 不出现在应用日志中。
+测试重组后的静态检查、常规测试、产品离线用例和隔离边界结果分别报告；真实上游与 Docker 运行验收另行安排。
 
 ## 当前依赖选择
 
@@ -230,9 +232,9 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 直接返回共享原因的原始类型，避免 `Arc` 包装妨碍 downcast。主错误与清理失败分别保存。
 纯逻辑单元测试检查分类、来源类型、上下文及安全诊断，不执行 VM。
 JS 异常诊断另外保存固定内建类别、模块编号和可用行列，重分类与克隆不丢失这些信息，原始引擎错误仍保留为 source。
-`error/exception` 的纯逻辑测试验证栈位置匹配与安全输出；`rejection` 隔离 VM 实验验证启动语法错误、
+`error/exception` 的纯逻辑测试验证栈位置匹配与安全输出；常规 VM 测试验证启动语法错误、
 顶层 await、导入模块及同步/异步 hook 异常，以及 getter、Proxy、内建函数覆写和自定义栈下的诊断与失败后恢复。
-这些诊断场景纳入现有 `rejection` 实验，由本机检查与 Linux CI 运行。
+这些诊断场景随脚本库 Cargo 测试运行。
 
 原始 `source()` 可能含配置、键名或源码，仅用于内部类型检查；CLI、日志与 Debug 使用安全诊断。
 库的 `diagnostic()` 输出有界原因分类，应用补充失败阶段和逻辑配置文件类别，避免直接格式化任意来源。
@@ -259,12 +261,13 @@ JS 异常诊断另外保存固定内建类别、模块编号和可用行列，�
 CI 在 `main` push、pull request 和手动触发时运行，使用 `ubuntu-24.04`，默认只授予 `contents: read`，
 镜像 job 另授予 `packages: write`。同 ref 运行串行排队，`queue: max` 最多容纳 100 个等待运行，
 超过 GitHub 队列上限的运行会被取消；新运行不取消正在执行的构建与发布。每个 job 有超时；checkout 不持久化凭据。
-Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、纯逻辑单元测试、
-`cargo xtask probe runtime` 与 `cargo xtask probe http`；Markdown job 检查仓库文档。
-两组高级测试各自使用 worker 进程与单项外部超时，任一失败都会阻止后续镜像构建与发布。
+Rust job 使用工具链与锁文件相关的缓存，依次编译检查、格式检查、lint、常规 Cargo 测试、
+`limen test` 四路径示例与 `cargo xtask test --isolated`；隔离边界使用 worker 进程与单项外部超时。
+JavaScript types job 使用 Node.js 24、`npm ci --ignore-scripts` 与 `npm run check:types`，
+Markdown job 检查仓库文档；任一检查失败都会阻止后续镜像构建与发布。
 
 GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支保护可依据现有 CI 配置。
-镜像 job 等待 Rust 与 Markdown 检查通过，使用 Buildx 构建 `linux/amd64` 和 GHA `mode=max` 中间层缓存。
+镜像 job 等待 Rust、JavaScript types 与 Markdown 检查通过，使用 Buildx 构建 `linux/amd64` 和 GHA `mode=max` 中间层缓存。
 仅 `main` push 使用 `GITHUB_TOKEN` 登录 GHCR 并推送 `ghcr.io/<小写 owner>/<小写 repo>:latest`，
 当前仓库为 `ghcr.io/rhnu/limen:latest`。PR 和手动触发使用 `cacheonly` 完成构建，不登录、不推送、不清理。
 CI 不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；

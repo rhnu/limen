@@ -1,0 +1,117 @@
+{
+  "name": "explicit-alias",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "stream": true,
+    "explicitName": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "input.sse"
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "[HE!]"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "[LLO!]"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "[ WORLD!]"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "stream-model",
+          "choices": [],
+          "usage": {
+            "total_tokens": 3
+          }
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "explicitName": true
+    }
+  }
+}

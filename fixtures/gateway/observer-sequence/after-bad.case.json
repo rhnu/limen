@@ -1,0 +1,61 @@
+{
+  "name": "after-bad",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "counts": [
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

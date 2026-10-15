@@ -1,6 +1,7 @@
 mod bootstrap;
 mod cli;
 mod gateway;
+mod offline;
 mod server;
 mod telemetry;
 
@@ -17,6 +18,7 @@ fn main() -> ExitCode {
     let (path, serve) = match &cli.command {
         Command::Check(args) => (&args.config, false),
         Command::Serve(args) => (&args.config, true),
+        Command::Test(args) => (&args.configuration.config, false),
     };
     let executor = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -28,6 +30,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
+    if let Command::Test(args) = &cli.command {
+        return executor.block_on(offline::run(path.as_deref(), &args.cases));
+    }
     executor.block_on(run(path.as_deref(), serve))
 }
 

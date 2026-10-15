@@ -1,0 +1,50 @@
+{
+  "name": "unknown-model",
+  "request": {
+    "model": "unknown",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 400
+    },
+    "error": {
+      "code": "unknown_model",
+      "status": 400,
+      "phase": "routing"
+    }
+  }
+}

@@ -64,12 +64,17 @@ limen-config.workspace = true
 limen-script.workspace = true
 limen-chat.workspace = true
 reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sse-parse.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

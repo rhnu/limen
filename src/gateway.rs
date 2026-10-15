@@ -6,10 +6,10 @@ mod logic;
 mod observe;
 mod pipeline;
 mod response;
+mod transport;
 mod upstream;
 
 use std::{
-    collections::BTreeSet,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -32,6 +32,8 @@ use tokio::{
     task::JoinSet,
 };
 use tracing::Instrument;
+pub(crate) use transport::{FixtureResponse, Trace};
+pub(crate) use upstream::media_kind;
 
 use crate::bootstrap::Bootstrap;
 
@@ -40,8 +42,7 @@ pub struct Gateway {
     server: ServerConfig,
     business: BusinessConfig,
     runtime: ScriptRuntime,
-    client: reqwest::Client,
-    pooled_origins: BTreeSet<String>,
+    transport: transport::Transport,
     shutdown: Cancellation,
     permits: Arc<Semaphore>,
     tasks: Mutex<JoinSet<()>>,
@@ -52,25 +53,43 @@ pub struct Gateway {
 impl Gateway {
     pub fn new(loaded: &Bootstrap, shutdown: Cancellation) -> Result<Arc<Self>, reqwest::Error> {
         // Generation is sent once. Disable even protocol-level retries and redirects.
-        let client = upstream_client(1)?;
         let pooled_origins = loaded
             .business
             .providers
             .values()
             .map(|provider| logic::safe_target(&provider.endpoint))
             .collect();
-        Ok(Arc::new(Self {
+        let transport = transport::Transport::http(pooled_origins)?;
+        Ok(Self::with_transport(loaded, shutdown, transport))
+    }
+
+    pub(crate) fn offline(
+        loaded: &Bootstrap,
+        response: FixtureResponse,
+    ) -> (Arc<Self>, Arc<Mutex<Trace>>) {
+        let (transport, trace) = transport::Transport::fixture(response);
+        (
+            Self::with_transport(loaded, Cancellation::new(), transport),
+            trace,
+        )
+    }
+
+    fn with_transport(
+        loaded: &Bootstrap,
+        shutdown: Cancellation,
+        transport: transport::Transport,
+    ) -> Arc<Self> {
+        Arc::new(Self {
             server: loaded.server.clone(),
             business: loaded.business.clone(),
             runtime: loaded.runtime.clone(),
-            client,
-            pooled_origins,
+            transport,
             shutdown,
             permits: Arc::new(Semaphore::new(loaded.server.limits.concurrency)),
             tasks: Mutex::new(JoinSet::new()),
             requests: AtomicU64::new(1),
             calls: AtomicU64::new(1),
-        }))
+        })
     }
 
     /// The worker survives a dropped HTTP future only long enough to record its terminal
@@ -149,6 +168,8 @@ impl Gateway {
             };
             lifecycle.record(&terminal);
             gateway.observe(&lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
+            let error = terminal.as_ref().err().map(|failure| serde_json::json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase}));
+            gateway.transport.complete(&lifecycle.state, error).await;
         }.instrument(span));
         drop(tasks);
         let response = tokio::select! {
@@ -183,16 +204,6 @@ impl Gateway {
         lifecycle
             .deadline
             .min(Instant::now() + Duration::from_millis(self.server.limits.hook_ms))
-    }
-
-    fn client_for(&self, endpoint: &str) -> Result<reqwest::Client, Failure> {
-        if self.pooled_origins.contains(&logic::safe_target(endpoint)) {
-            Ok(self.client.clone())
-        } else {
-            // Hooks may select arbitrarily many origins over time. Those clients
-            // must not accumulate idle sockets in the long-lived shared pool.
-            upstream_client(0).map_err(|source| Failure::upstream(source, "upstream_client"))
-        }
     }
 }
 

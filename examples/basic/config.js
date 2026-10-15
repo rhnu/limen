@@ -1,5 +1,6 @@
 import { limitOutput } from "../shared/rules.mjs";
 
+/** @satisfies {import("../../types/limen").Config} */
 export default {
   providers: {
     primary: {

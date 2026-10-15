@@ -13,10 +13,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Run isolated experiments outside ordinary unit tests.
-    Probe {
-        #[command(subcommand)]
-        family: Family,
+    /// Run process-boundary tests in supervised child processes.
+    Test {
+        /// Explicitly opt in to isolated process tests.
+        #[arg(long, required = true)]
+        isolated: bool,
+        #[command(flatten)]
+        selection: Selection,
     },
     #[command(name = "__worker", hide = true)]
     Worker {
@@ -36,31 +39,17 @@ pub enum Command {
     Signal { pid: u32 },
 }
 
-#[derive(Subcommand)]
-pub enum Family {
-    /// JS and VM contracts, each in a separate process.
-    Runtime(Selection),
-    /// Local synthetic HTTP upstream and gateway experiments.
-    Http(HttpSelection),
-}
-
 #[derive(clap::Args)]
 pub struct Selection {
-    /// Experiment names; omit to run the complete family.
+    /// Qualified test names (runtime/name or http/name); omit to run all.
     pub cases: Vec<String>,
-    /// List experiments without starting a worker.
+    /// List selected tests without building or starting a worker.
     #[arg(long)]
     pub list: bool,
-    /// External seconds per experiment (runtime: 1..60; HTTP: 5..60).
+    /// External seconds per test (runtime: 1..60; HTTP: 5..60).
     #[arg(long)]
     pub timeout: Option<f64>,
-}
-
-#[derive(clap::Args)]
-pub struct HttpSelection {
-    #[command(flatten)]
-    pub selection: Selection,
-    /// Reuse an existing gateway instead of building limen.
+    /// Reuse an existing gateway instead of building limen for HTTP tests.
     #[arg(long)]
     pub executable: Option<PathBuf>,
 }

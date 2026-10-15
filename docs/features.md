@@ -18,6 +18,7 @@ Limen 将显式配置的模型别名映射到上游 Chat Completions 服务，�
 | 请求与响应变换 | 全局 hook 和 `pipeline`            | 每个阶段按 provider → model 正序执行           |
 | 流式变换       | `onUpstreamEvent`、`onStreamEvent` | 修改、丢弃或展开合法 Chat SSE JSON 事件        |
 | 配置复用       | 本地 `.js` / `.mjs` ESM            | 相对导入、共享规则、同步或异步 hook            |
+| 脚本验证       | JSDoc、`limen check`、`limen test` | 类型提示、配置装载检查与合成响应离线用例       |
 | 运行保护       | `limits`                           | 限制并发、队列、VM 执行、正文、流事件和聚合    |
 | 部署与诊断     | CLI、日志、Docker Compose          | 配置检查、安全错误、非 root 服务进程和信号关闭 |
 
@@ -183,7 +184,7 @@ export default {
 };
 ```
 
-在启动 `check` 和 `serve` 前设置变量。POSIX shell：
+在启动 `check`、`serve` 或 `test` 前设置变量。POSIX shell：
 
 ```sh
 export UPSTREAM_API_KEY='example-upstream-token'
@@ -529,6 +530,37 @@ JavaScript runtime: Module; exception=Error, module=import#1, line=4, column=25;
 模块路径、函数名、异常 message 和 stack 可能携密，因此不输出；栈缺失、被自定义、格式不匹配或超限时可能没有行列。
 `Module` 包括启动阶段的脚本求值失败，并不只表示导入文件找不到。
 
+### 脚本类型提示
+
+仓库的 `types/limen.d.ts` 为 JavaScript 配置提供可选的 JSDoc 类型。
+基础示例通过 `@satisfies {import("../../types/limen").Config}` 检查默认导出，
+共享规则通过 `@type {import("../../types/limen").PipelineStep}` 获得阶段参数提示。
+这些注释不会被 QuickJS 执行；复制示例到其他目录后，按本地类型文件的位置调整相对路径。
+
+有自定义请求状态时可传入 JSON 对象类型，例如放在 `examples/shared/` 或同层的本地模块中：
+
+```javascript
+/** @type {import("../../types/limen").PipelineStep<{ calls?: number }>} */
+export const countRequests = {
+  name: "count-requests",
+  beforeSend(ctx) {
+    ctx.state.calls = (ctx.state.calls ?? 0) + 1;
+    ctx.headers.set("x-request-count", String(ctx.state.calls));
+  },
+};
+```
+
+每个请求的 state 初始为空对象，因此跨阶段共享字段通常声明为可选；泛型提供提示，不会初始化状态。
+`Config<State>` 会将同一状态类型传给全局 hook 以及 provider/model 步骤。
+`meta` 和 state 引用固定；普通阶段可改 state 内容，观察阶段深只读。
+字段随阶段区分：URL 和请求 header 只在 `beforeSend`，status 和响应 header 只在 `afterReceive`，
+`replaceEvents` 只在流 hook 中可用。同步或异步返回对象都会报类型错误，普通无返回值 hook 可直接使用。
+响应体与事件中的未知扩展仍须是 JSON 值。
+
+静态检查命令与 Node.js 要求见[开发指引](development.md#脚本静态检查)。
+类型检查不运行脚本，也不能验证循环引用、安全整数、URL/header 内容、流结束条件或资源限制；
+部署前仍使用 `check`，用合成输入验证 hook 时使用下文 `test`。
+
 ### 命令行与配置检查
 
 ```sh
@@ -536,22 +568,82 @@ limen --help
 limen --version
 limen check --config local/basic/server.toml
 limen serve --config local/basic/server.toml
+limen test --config examples/testing/server.toml --cases examples/testing
 ```
 
 从源码运行可使用 `cargo run --locked -- check --config examples/basic/server.toml`。
-两个子命令均优先读取当前目录的 `server.toml`，仅当它不存在时尝试 `server.yaml`；不合并配置。
+三个子命令均优先读取当前目录的 `server.toml`，仅当它不存在时尝试 `server.yaml`；不合并配置。
 接受 `--config PATH` 与 `--config=PATH`，显式指定时只读取该文件。
-`limen check --help` / `limen serve --help` 查看各自选项。
+`limen check --help` / `limen serve --help` / `limen test --help` 查看各自选项。
 
 `check` 校验所选 TOML/YAML、本地模块、默认导出、provider/model 引用、静态认证冲突、管线与资源配置。
 它会执行配置和导入模块的顶层 JavaScript，包括 top-level await；
 不监听端口、不调用上游、不执行请求 hook，不能证明 hook 对所有输入都正确，也不能证明上游可用。
 
-退出码为 `0`：检查成功、服务正常关闭、帮助或版本输出；`1`：配置、服务、运行时或关闭失败；
+退出码为 `0`：检查成功、离线用例全部通过、服务正常关闭、帮助或版本输出；`1`：配置、用例、服务、运行时或关闭失败；
 `2`：CLI 参数错误。修改配置后先检查再重启。
 Ctrl-C 和 Unix SIGTERM 停止监听并取消在途请求；关闭超过预算会失败退出。
 执行中断、失控微任务或宿主观测到的内存耗尽可能使共享 VM 退役，服务随后关闭并以失败退出，
 不会重放在途生成请求。
+
+### 离线脚本测试
+
+`limen test --config PATH --cases PATH` 用合成上游响应执行真实请求/响应管线，验证当前 `config.js` 的 hook 行为。
+它不监听端口、不创建真实上游 HTTP 客户端；即使 hook 修改 URL，也只检查待发送请求，不联网。
+客户端请求固定为 `POST /v1/chat/completions`，工具按服务配置自动填入客户端认证。
+这层测试不验证 HTTP 接线、真实客户端认证失败、断开、信号关闭或真实 provider 可用性。
+
+`--cases` 接受一个文件或目录。目录只读取直属的 `.case.json` 文件，按路径排序，最多 1024 个；不递归。
+每个用例重新装载配置、启动全新 VM，完成后关闭，闭包与全局状态不会跨用例保留。
+用例中的 `request` 进入生产校验和单次路由，`upstream` 替代发送后的响应；
+无需发送上游请求的预期失败仍须提供 `upstream` 记录。
+
+用例顶层要求 `name`、`request`、`upstream`、`expect`，未知 schema 字段会被拒绝。
+`name` 为 1–128 字节的 ASCII 标识符，允许字母、数字及 `-._/`；用例报告只显示该名称和固定结果类别。
+
+| 字段                       | 类型与含义                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| `request`                  | 入站 JSON 值，通常是含 `model` 和 `messages` 的 Chat Completions 对象                      |
+| `upstream.status`          | 必填，合成 HTTP status，范围 100–599；最终响应仍受生产状态规则检查                         |
+| `upstream.headers`         | 可选，header 名到字符串数组的映射，默认 `{}`，例如 `{"content-type":["application/json"]}` |
+| `upstream.body`            | 可选，内联 JSON 正文，按 JSON 编码后交给生产解析器                                         |
+| `upstream.bodyFile`        | 可选，原始正文文件路径；相对路径从当前用例文件的目录解析，适合 SSE 或非法 JSON             |
+| `expect.sent`              | 可选布尔值，是否形成待发送的上游请求                                                       |
+| `expect.outbound`          | 可选对象，选择 `url`、`headers`、`body` 中要比较的类别                                     |
+| `expect.response`          | 可选对象，选择 `status`、`headers`、`body`、`events`、`done` 中要比较的类别                |
+| `expect.state`             | 可选，最终请求 state 的完整 JSON 值                                                        |
+| `expect.error`             | 可选错误对象，要求完整的 `code`、`status`、`phase`；省略表示不得发生请求错误               |
+| `expect.observationFailed` | 可选布尔值，观察 hook 是否失败；省略表示不得失败                                           |
+
+`body` 与 `bodyFile` 不可同时提供；都省略时上游正文为空。
+所有 header 映射均使用长度至少为 1 的字符串数组保留重复值，比较前名称规范为小写；不同大小写的重复 header 名会被拒绝。
+省略与 `null` 不等价：`upstream.body: null` 发送 JSON `null` 正文，
+`expect.response.body: null` 或 `expect.state: null` 则精确断言 JSON `null`。
+`sent`、header、`error`、`response` 等带具体结构的可选字段不能用 `null` 代替省略。
+`expect` 至少明确给出一项断言；省略的普通输出类别不检查。
+选中类别按**完整值精确相等**比较，不是子集匹配：
+指定 `outbound.body` 必须写出整个最终请求体，指定 `response.headers` 必须写出完整 header 映射。
+JSON 对象的键顺序不影响相等，数组和重复 header 值的顺序影响相等。
+每个用例是新网关的首个请求，响应请求标识为 `limen-1`；比较完整响应 header 时包含
+`"x-limen-request-id":["limen-1"]`，并考虑生产适配器添加的 Content-Type 等字段。
+
+`response.body` 比较完整 JSON；`response.events` 比较下游 SSE 中按顺序解码的 JSON 事件数组，
+不包含 Rust 的 `event: error` 控制帧或 `[DONE]`。`response.done` 单独检查成功结束标记是否出现。
+流截断用例可同时断言错误类别与 `done: false`；不会把缺少成功标记的流当成正常成功。
+`expect.error` 是生产终态的 `{code,status,phase}`，不包含任意异常文本，
+`expect.observationFailed` 则检查已配置的观察 hook 是否失败，或因 VM 不可用、清理预算耗尽而被跳过。
+
+完整用例和原始 SSE fixture 见 [`examples/testing/`](../examples/testing)。从源码执行：
+
+```sh
+cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
+```
+
+配置与用例文件大小、JSON 深度/节点、上游正文、事件解析和输出收集均受预算限制；
+case 文件使用 `max_source_bytes`，外部正文和收集使用 `max(max_aggregate_bytes, max_output_bytes)`，
+执行同时受请求、hook、清理与关闭预算约束。
+通过输出 `PASS`，不匹配输出 `FAIL` 和固定类别（例如 `outbound.body`），不显示实际/预期正文、URL、header 或秘密值。
+配置、读取、schema 错误或文件/收集超限会拒绝 fixture 并失败退出；用例差异返回非零退出码。
 
 ## Docker 部署
 
@@ -620,5 +712,5 @@ CI 在 main push 检查通过后构建并推送 `ghcr.io/rhnu/limen:latest`；PR
 自动重试、故障转移、热重载、上游模型发现、多租户或配额。
 传递请求扩展字段不等于实现相应 API 或完整多模态跨形态转换。
 
-Windows 和 Linux CI 覆盖纯逻辑测试、隔离 VM 与本地合成 HTTP 实验；
+Windows 与 Linux 已有 VM/HTTP 运行证据，当前检查分为脚本静态检查、常规 Cargo 测试和隔离边界测试；
 CI 同时负责 Linux 镜像构建与 main 分支的镜像发布。部署操作见上文 Docker 部署章节。

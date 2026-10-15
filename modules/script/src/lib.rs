@@ -337,3 +337,6 @@ fn valid_options(o: &RuntimeOptions) -> bool {
         && o.json_limits.max_nodes > 0
         && o.json_limits.max_bytes > 0
 }
+
+#[cfg(test)]
+mod tests;

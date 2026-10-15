@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Result, ensure};
 use serde_json::json;
-use tokio::time::{Instant, sleep};
+use tokio::time::Instant;
 
 use super::fixture::{Laboratory, Options, PENDING_CONFIG, request};
 
@@ -60,7 +60,7 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
             },
             async |item| {
                 let stream = item.open_request(request(&[("wait", json!(true))])).await?;
-                sleep(Duration::from_millis(80)).await;
+                item.wait_pending(1).await?;
                 drop(stream);
                 item.wait_cancelled(1).await
             },
@@ -79,19 +79,16 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
 
 /// Exercise the platform's real shutdown signal with one pending hook and a failing observer.
 pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
-    let config = PENDING_CONFIG.replace(
-        "finishes++;if(ctx.outcome==='cancelled')cancelled++;",
-        "finishes++;if(ctx.outcome==='cancelled')cancelled++;throw new Error('observer failure');",
-    );
+    let config = include_str!("../../fixtures/http/shutdown.js");
     laboratory
         .with_fixture(
             Options {
-                config: Some(&config),
+                config: Some(config),
                 ..Options::default()
             },
             async |item| {
                 let stream = item.open_request(request(&[("wait", json!(true))])).await?;
-                sleep(Duration::from_millis(100)).await;
+                item.wait_pending(1).await?;
                 item.process.shutdown_signal()?;
                 ensure!(
                     item.process
@@ -133,13 +130,12 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
 
 /// A synchronous runaway hook retires the VM and fails the gateway without upstream sends.
 pub async fn retirement(laboratory: &mut Laboratory<'_>) -> Result<()> {
-    let config = "export default {onRequest(){while(true){}},providers:{p:{endpoint:ENDPOINT}},models:{chat:{provider:'p',upstream:'real-model'}}};";
+    let config = include_str!("../../fixtures/http/retirement.js");
     laboratory
         .with_fixture(
             Options {
                 config: Some(config),
                 limits: "  execution_ms: 20\n",
-                ..Options::default()
             },
             async |item| {
                 match item.request(request(&[])).await {
@@ -180,7 +176,6 @@ pub async fn resources(laboratory: &mut Laboratory<'_>) -> Result<()> {
             Options {
                 config: Some(PENDING_CONFIG),
                 limits: "  max_body_bytes: 300\n",
-                ..Options::default()
             },
             async |item| {
                 item.request(request(&[("large", json!("x".repeat(400)))]))

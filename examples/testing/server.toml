@@ -1,0 +1,2 @@
+[client_auth]
+bearer = "example-limen-client-token"

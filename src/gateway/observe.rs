@@ -30,6 +30,7 @@ impl Gateway {
                 continue;
             };
             if !matches!(self.runtime.status(), RuntimeStatus::Ready) {
+                self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
                     phase,
@@ -39,6 +40,7 @@ impl Gateway {
                 continue;
             }
             if Instant::now() >= deadline {
+                self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
                     phase,
@@ -74,6 +76,7 @@ impl Gateway {
                     "observation completed"
                 ),
                 Err(source) => {
+                    self.transport.observation_failed().await;
                     tracing::warn!(request_id = lifecycle.request_id, phase, error_kind = ?source.kind(), error = %source.diagnostic(), "observation failed; terminal outcome retained");
                 },
             }

@@ -1,0 +1,64 @@
+{
+  "name": "sse-to-json-tools",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream; charset=utf-8"
+      ]
+    },
+    "bodyFile": "tools.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "tools",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call-1",
+                  "type": "function",
+                  "function": {
+                    "name": "lookup",
+                    "arguments": "{\"q\":\"x\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1,
+          "completion_tokens": 2,
+          "total_tokens": 3
+        }
+      }
+    },
+    "state": {
+      "clientStream": false,
+      "upstreamStatus": 200,
+      "upstreamMedia": "sse"
+    }
+  }
+}

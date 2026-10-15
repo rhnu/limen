@@ -2,12 +2,14 @@
 
 ## 当前状态与使用方式
 
-`limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立客户端认证和单次路由。
+`limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立认证和单次路由。
+`limen test` 为每个用例创建独立 VM，以合成上游替代网络并复用生产管线；JavaScript 配置另有可选 JSDoc 类型检查。
 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → model 正序 hook 已实现。
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
 服务配置支持 TOML 与 YAML，共用 schema 和校验，默认 TOML 优先，仅缺失时回退 YAML。
-开发实验统一在 Rust `xtask/` 包，全部 18 个 VM 与 12 个合成 HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证。
-CI 在单元测试后固定执行全部 VM 与 HTTP 高级测试，两个高级测试步骤均已通过。
+常规 Cargo 测试包含纯逻辑、有限 VM 与离线管线组合；进程环境、失控执行、真实 HTTP 和进程边界
+通过 `cargo xtask test --isolated` 单独监督。此前 VM/HTTP 验证已在 Windows 和 Linux CI 通过，
+当前测试分层与命令见[开发指引](development.md)。
 
 Dockerfile、Compose、精简运行层与入口降权、cargo-chef 依赖缓存、Rust 与 Buildx GHA 缓存已配置。
 CI 在 main push 检查通过后构建 Linux amd64 镜像并推送 GHCR latest，成功后只保留该版本；

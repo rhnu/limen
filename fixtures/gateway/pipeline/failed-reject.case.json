@@ -1,0 +1,61 @@
+{
+  "name": "failed-reject",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "fail": "reject"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 500,
+      "body": {
+        "error": {
+          "code": "hook_failed",
+          "message": "A configured request hook failed",
+          "request_id": "limen-1"
+        }
+      }
+    },
+    "state": {
+      "suffix": ""
+    },
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    }
+  }
+}

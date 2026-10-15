@@ -128,14 +128,7 @@ impl Gateway {
             header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
-        let response = self
-            .client_for(&url)?
-            .post(url)
-            .headers(headers)
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|source| Failure::upstream(source, "upstream_send"))?;
+        let response = self.transport.send(url, headers, bytes).await?;
         self.receive(provider, model, response, lifecycle, delivery)
             .await
     }

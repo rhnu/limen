@@ -1,0 +1,68 @@
+{
+  "name": "with-suffix",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "suffix": "!"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello!"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        }
+      }
+    },
+    "state": {
+      "requests": 1,
+      "suffix": "!"
+    }
+  }
+}

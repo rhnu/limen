@@ -1,0 +1,158 @@
+{
+  "name": "extensions-and-multimodal",
+  "request": {
+    "model": "incoming",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "synthetic-body-secret"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://image.invalid/picture"
+            }
+          }
+        ]
+      }
+    ],
+    "store": true,
+    "vendor_extension": {
+      "keep": [
+        1,
+        null
+      ]
+    },
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://upstream.invalid/custom/completion?key=synthetic-query-secret",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-policy": [
+          "static"
+        ],
+        "authorization": [
+          "Bearer synthetic-upstream-secret"
+        ]
+      },
+      "body": {
+        "temperature": 0.4,
+        "top_p": 0.9,
+        "max_completion_tokens": 256,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "stop": [
+          "model"
+        ],
+        "model": "real-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "synthetic-body-secret"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "https://image.invalid/picture"
+                }
+              }
+            ]
+          }
+        ],
+        "vendor_extension": {
+          "keep": [
+            1,
+            null
+          ]
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

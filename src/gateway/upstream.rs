@@ -19,11 +19,11 @@ impl Gateway {
         &self,
         provider: &Provider,
         model: &Model,
-        mut response: reqwest::Response,
+        mut response: super::transport::Incoming,
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
     ) -> Result<Option<Response>, Failure> {
-        let original_status = response.status().as_u16();
+        let original_status = response.status();
         lifecycle.upstream_status = Some(original_status);
         lifecycle.upstream_headers_ms = Some(elapsed_ms(lifecycle.started));
         // Parser selection always uses the frozen upstream facts, never hook drafts.
@@ -118,15 +118,11 @@ impl Gateway {
 
     async fn receive_json(
         &self,
-        response: &mut reqwest::Response,
+        response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
         let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|source| Failure::upstream(source, "upstream_receive"))?
-        {
+        while let Some(chunk) = response.chunk().await? {
             if chunk.len()
                 > self
                     .server
@@ -160,7 +156,7 @@ impl Gateway {
         &self,
         provider: &Provider,
         model: &Model,
-        response: &mut reqwest::Response,
+        response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
         client_stream: bool,
@@ -173,11 +169,7 @@ impl Gateway {
         let mut downstream_tracker = ChunkTracker::new(limits.max_json_nodes);
         let mut aggregate = (!client_stream)
             .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events));
-        'upstream: while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|source| Failure::upstream(source, "upstream_receive"))?
-        {
+        'upstream: while let Some(chunk) = response.chunk().await? {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
                 let event = decoder
@@ -287,10 +279,10 @@ impl Gateway {
         &self,
         provider: &Provider,
         model: &Model,
-        response: &reqwest::Response,
+        response: &super::transport::Incoming,
         lifecycle: &mut Lifecycle,
     ) -> Result<(u16, http::HeaderMap), Failure> {
-        let original_status = response.status().as_u16();
+        let original_status = response.status();
         let mut status = if (300..600).contains(&original_status) {
             502
         } else {
@@ -342,7 +334,7 @@ fn finish_aggregate(aggregate: Aggregator, limits: &ResourceLimits) -> Result<Va
 #[error("downstream status violates the upstream status class: {0:?}")]
 struct StatusMapping(ErrorCode);
 
-pub(super) fn media_kind(media: &str) -> &'static str {
+pub(crate) fn media_kind(media: &str) -> &'static str {
     if is_json_media(media) {
         "json"
     } else if media

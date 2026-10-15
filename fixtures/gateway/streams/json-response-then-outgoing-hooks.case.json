@@ -1,0 +1,104 @@
+{
+  "name": "json-response-then-outgoing-hooks",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "completed-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "completed-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "[[hello]]"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "completed-model",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "synthetic",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "completed-model",
+          "choices": [],
+          "usage": {
+            "total_tokens": 3
+          }
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "explicitName": false
+    }
+  }
+}

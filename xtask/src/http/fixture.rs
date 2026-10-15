@@ -18,23 +18,14 @@ use tokio::{
 use super::upstream::Upstream;
 use crate::process::Gateway;
 
-const DEFAULT_CONFIG: &str = r"export default {
- providers: {p: {endpoint: ENDPOINT, auth: {bearer: 'synthetic-upstream-secret'},
- defaults: {temperature: 0.2, extra: {provider: true}}}},
- models: {chat: {provider: 'p', upstream: 'real-model', defaults: {temperature: 0.4}}}
-};";
+const DEFAULT_CONFIG: &str = include_str!("../../fixtures/http/default.js");
 
-pub const PENDING_CONFIG: &str = r"let cancelled = 0, finishes = 0;
-export default {onRequest(ctx){if(ctx.body.wait)return new Promise(()=>{});},
- onFinish(ctx){finishes++;if(ctx.outcome==='cancelled')cancelled++;},
- providers:{p:{endpoint:ENDPOINT,pipeline:[{name:'report',onResponse(ctx){ctx.body.cancelled=cancelled;ctx.body.finishes=finishes;}}]}},
- models:{chat:{provider:'p',upstream:'real-model'}}};";
+pub const PENDING_CONFIG: &str = include_str!("../../fixtures/http/pending.js");
 
 #[derive(Default)]
 pub struct Options<'a> {
     pub config: Option<&'a str>,
     pub limits: &'a str,
-    pub no_auth: bool,
 }
 
 pub struct Laboratory<'a> {
@@ -111,15 +102,6 @@ pub struct Reply {
 }
 
 impl Reply {
-    /// Read a required response header using HTTP's case-insensitive lookup.
-    pub fn header(&self, name: &str) -> Result<&str> {
-        self.headers
-            .get(name)
-            .context("required response header missing")?
-            .to_str()
-            .context("required response header is not text")
-    }
-
     /// Access SSE text while JSON replies retain their structured representation.
     pub fn text(&self) -> Result<&str> { self.body.as_str().context("expected SSE response text") }
 
@@ -153,16 +135,20 @@ impl Fixture {
             "http://127.0.0.1:{}/custom/completion?key=synthetic-query-secret",
             upstream.port
         );
-        let config = options.config.unwrap_or(DEFAULT_CONFIG).replace(
-            "ENDPOINT",
-            &serde_json::to_string(&endpoint).context("encode synthetic endpoint")?,
+        let data = format!(
+            "export const endpoint = {};\n",
+            serde_json::to_string(&endpoint).context("encode synthetic endpoint")?
         );
-        fs::write(directory.join("config.js"), config).context("write synthetic HTTP script")?;
-        let auth = if options.no_auth {
-            "none: true"
-        } else {
-            "bearer: synthetic-client-secret"
-        };
+        fs::write(directory.join("fixture-data.js"), data)
+            .context("write synthetic HTTP fixture data")?;
+        fs::write(directory.join("pending.js"), PENDING_CONFIG)
+            .context("write pending-hook HTTP fixture")?;
+        fs::write(
+            directory.join("config.js"),
+            options.config.unwrap_or(DEFAULT_CONFIG),
+        )
+        .context("write synthetic HTTP script")?;
+        let auth = "bearer: synthetic-client-secret";
         let yaml = format!(
             "listen: 127.0.0.1:{port}\nclient_auth: {{{auth}}}\nlog: {{level: debug, format: json}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
             options.limits
@@ -353,21 +339,6 @@ impl Fixture {
             .collect()
     }
 
-    /// Wait for terminal observation diagnostics without racing asynchronous cleanup.
-    pub async fn wait_event(&self, predicate: impl Fn(&Value) -> bool) -> Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            if self.events()?.iter().any(&predicate) {
-                return Ok(());
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "expected bounded observation did not finish"
-            );
-            sleep(Duration::from_millis(10)).await;
-        }
-    }
-
     /// Poll until disconnected requests have released their admission permits.
     pub async fn wait_cancelled(&self, count: u64) -> Result<()> {
         let deadline = Instant::now() + Duration::from_millis(800);
@@ -381,6 +352,19 @@ impl Fixture {
                 "disconnect did not cancel pending hooks and release admission permits"
             );
             sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Observe hook entry before disconnecting or signalling the gateway.
+    pub async fn wait_pending(&self, count: u64) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(800);
+        loop {
+            let response = self.request(request(&[])).await?;
+            if response.status == 200 && response.body["waiting"] == count {
+                return Ok(());
+            }
+            ensure!(Instant::now() < deadline, "pending hook did not start");
+            sleep(Duration::from_millis(10)).await;
         }
     }
 }

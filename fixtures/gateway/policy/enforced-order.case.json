@@ -1,0 +1,117 @@
+{
+  "name": "enforced-order",
+  "request": {
+    "model": "incoming",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "store": true,
+    "vendor_extension": {
+      "keep": [
+        1,
+        null
+      ]
+    },
+    "enforce": true,
+    "temperature": 0.8,
+    "max_completion_tokens": 7
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://upstream.invalid/model/completion?key=synthetic-query-secret",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-policy": [
+          "model-final"
+        ],
+        "x-labels": [
+          "one",
+          "two"
+        ]
+      },
+      "body": {
+        "enforce": true,
+        "temperature": 0.1,
+        "top_p": 0.75,
+        "max_completion_tokens": 270,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "stop": [
+          "model"
+        ],
+        "model": "decoy",
+        "messages": [
+          {
+            "role": "user",
+            "content": "synthetic-body-secret"
+          }
+        ],
+        "vendor_extension": {
+          "keep": [
+            1,
+            null
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

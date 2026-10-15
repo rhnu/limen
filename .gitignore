@@ -1,4 +1,5 @@
 /target/
+/node_modules/
 .rumdl_cache/
 
 # Local runtime configuration and secrets. Commit sanitized *.example.* files instead.

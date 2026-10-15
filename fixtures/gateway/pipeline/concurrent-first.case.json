@@ -1,0 +1,110 @@
+{
+  "name": "concurrent-first",
+  "request": {
+    "model": "route-once",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "suffix": " first"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "world"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      },
+      "vendor_extension": {
+        "preserved": true
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://upstream.invalid/modified?key=synthetic-query-secret",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-multiple": [
+          "one",
+          "two"
+        ]
+      },
+      "body": {
+        "model": "hook-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "synthetic-body-secret"
+          }
+        ],
+        "suffix": " first"
+      }
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-type": [
+          "application/json"
+        ],
+        "x-draft": [
+          "model"
+        ],
+        "x-limen-request-id": [
+          "limen-1"
+        ]
+      },
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "explicit-alias",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "HELLO WORLD first"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        },
+        "vendor_extension": {
+          "preserved": true
+        }
+      }
+    },
+    "state": {
+      "suffix": " first"
+    }
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "name": "json-to-sse",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": true,
+    "store": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "demo",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 2
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://example.invalid/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-policy": [
+          "checked"
+        ]
+      },
+      "body": {
+        "model": "demo-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": true
+      }
+    },
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "hello"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [],
+          "usage": {
+            "total_tokens": 2
+          }
+        }
+      ],
+      "done": true
+    }
+  }
+}

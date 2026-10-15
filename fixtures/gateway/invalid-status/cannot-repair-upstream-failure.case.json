@@ -1,0 +1,50 @@
+{
+  "name": "cannot-repair-upstream-failure",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 500,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 500
+    },
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "afterReceive"
+    }
+  }
+}

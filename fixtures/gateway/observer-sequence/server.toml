@@ -1,0 +1,5 @@
+[client_auth]
+bearer = "synthetic-client-secret"
+
+[limits]
+cleanup_ms = 100

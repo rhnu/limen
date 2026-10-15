@@ -39,7 +39,6 @@ pub struct Controls {
     pub disconnected: bool,
     pub status: u16,
     pub media: &'static str,
-    pub response: Option<Value>,
     pub raw: Option<Vec<u8>>,
     pub split_at: Option<usize>,
     pub delay: bool,
@@ -55,7 +54,6 @@ impl Default for Controls {
             disconnected: false,
             status: 200,
             media: "application/json",
-            response: None,
             raw: None,
             split_at: None,
             delay: false,
@@ -209,9 +207,7 @@ async fn respond(
         // This future is dropped by Hyper on remote EOF or by fixture cleanup.
         return std::future::pending().await;
     }
-    let response = controls.response.clone().unwrap_or_else(
-        || json!({"id":"synthetic", "model":"real-model", "choices":[], "echo":body}),
-    );
+    let response = json!({"id":"synthetic", "model":"real-model", "choices":[], "echo":body});
     let raw = match &controls.raw {
         Some(raw) => raw.clone(),
         None => serde_json::to_vec(&response).context("encode synthetic upstream response")?,

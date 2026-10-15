@@ -1,3 +1,4 @@
+/** @satisfies {import("../../types/limen").Config} */
 export default {
   providers: {
     primary: {

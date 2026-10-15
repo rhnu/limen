@@ -12,6 +12,7 @@ Limen 是使用 Rust 编写的 Chat Completions 网关，面向个人和内网�
 - 显式模型别名、可复用的 provider 配置，以及独立的客户端和上游认证。
 - provider → model 有序管线，可修改请求体、URL、请求头、响应和流事件。
 - 同步与异步 JavaScript hook、本地 ESM 导入和请求独立状态。
+- 可选的 JSDoc 类型检查，以及使用合成 JSON/SSE 响应的离线脚本测试。
 - 通过 `limen.env(name)` 从进程环境变量读取上游凭据。
 - 上下游 JSON/SSE 四种组合；跨形态转换支持文本、refusal、function tool calls、
   多 choice、finish reason 和 usage。
@@ -63,6 +64,16 @@ curl 示例使用 POSIX 换行与引号语法，在 PowerShell 中需要调整�
 
 默认监听 `127.0.0.1:8080`，`config.js` 始终从所选服务配置文件的同目录加载。
 `check` 会执行顶层 JavaScript、导入模块和 top-level await，不连接 provider，也不运行请求阶段 hook。
+
+使用[离线示例](examples/testing)验证请求 hook，无需启动服务或联网：
+
+```sh
+./target/release/limen test --config examples/testing/server.toml --cases examples/testing
+```
+
+每个用例使用全新 VM，通过生产管线处理合成上游响应。用例字段与断言规则见
+[离线测试指南](docs/features.md#离线脚本测试)。编辑器提示和 JavaScript 静态检查见
+[开发指引](docs/development.md#脚本静态检查)；Node.js 仅用于该开发检查。
 
 ### 调用 API
 
@@ -133,7 +144,7 @@ GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 - SSE 成功以 `[DONE]` 结束；开始发送后失败会发送 `event: error` 并关闭连接，不补成功标记。
 - 配置变更需要重启。Ctrl-C 停止监听并取消在途请求，Unix 下也支持 SIGTERM。
 
-使用 `limen --help`、`limen check --help` 或 `limen serve --help` 查看命令选项，
+使用 `limen --help`、`limen check --help`、`limen serve --help` 或 `limen test --help` 查看命令选项，
 `limen --version` 查看版本。不传 `--config` 时，两个命令优先读取当前目录中的 `server.toml`，
 仅在它不存在时读取 `server.yaml`；其他 TOML 错误直接终止，不合并文件。
 显式 `--config` 只读取指定文件，根据 `.toml`、`.yaml` 或 `.yml` 扩展名选择解析器。
@@ -143,11 +154,11 @@ GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 
 - [功能与使用指南](docs/features.md)：配置、API、hook、流处理和故障排查。
 - [设计](docs/design.md)：架构与契约，区分已确认决定和待验证事项。
-- [开发指引](docs/development.md)：构建、Rusteward、单元测试与隔离运行时实验。
+- [开发指引](docs/development.md)：构建、Rusteward、JavaScript 类型、常规测试与隔离边界测试。
 - [路线图](docs/roadmap.md)：剩余任务与后续工作。
 
 参与开发前请阅读[工作区约定](AGENTS.md)和开发指引。修改中不得包含真实凭据，
-验证结果应区分纯逻辑单元测试、运行时实验和部署验收。
+验证结果应区分静态检查、常规测试、离线用例和部署验收。
 
 ## 许可证
 

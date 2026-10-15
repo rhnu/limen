@@ -1,0 +1,55 @@
+{
+  "name": "json-is-not-sse",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 502
+    },
+    "state": {
+      "clientStream": false,
+      "upstreamStatus": 200,
+      "upstreamMedia": "sse"
+    },
+    "error": {
+      "code": "upstream_protocol",
+      "status": 502,
+      "phase": "upstream_sse"
+    }
+  }
+}

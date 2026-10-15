@@ -39,7 +39,7 @@
 异步调度与 HTTP 四路径已有 Windows 和 Linux CI 运行证据；CI 与容器流程作为当前工程基线维护。
 
 - **已有本机证据：**Rust 与 QuickJS 引用关闭顺序、Promise 调度与取消、执行/内存预算和数字边界已通过隔离实验；已知限制见第 9 节。
-- **已有运行证据：**Rust xtask 的全部 18 个 VM 与 12 个本地合成 HTTP 实验在 Windows 和 Linux CI 通过，
+- **已有运行证据：**VM 与本地合成 HTTP 验证在 Windows 和 Linux CI 通过，
   覆盖参数覆写、JSON/SSE 管线、认证隔离、单次发送、超时、客户端断开、启动就绪发布、DONE 分块一致性、
   OOM 保守退役边界、环境变量读取、Windows Ctrl-C 与 Linux SIGTERM 关闭。
 - **已有 CI 证据：**单元测试、全部 VM/HTTP 实验、Markdown 检查和 Linux amd64 镜像构建、发布与旧版本清理均通过；
@@ -812,21 +812,21 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
 
 ### 10.1 CLI
 
-CLI 使用 clap 定义两个基本入口：
+CLI 使用 clap 定义配置检查、服务与离线测试入口：
 
 ```text
 limen serve --config ./server.toml
 limen check --config ./server.toml
+limen test --config ./server.toml --cases ./cases
 ```
 
 默认先读 `server.toml`，仅缺失时尝试 `server.yaml`；具体选择与失败规则见[服务配置](#31-服务配置进程与资源边界)。
 支持 `--config PATH` 和 `--config=PATH`，按原生文件系统路径解析，显式路径不回退。
-顶层提供 `--help` / `-h` 和 `--version` / `-V`，两个子命令提供各自的帮助。
+顶层提供 `--help` / `-h` 和 `--version` / `-V`，三个子命令提供各自的帮助。
 帮助与版本输出到 stdout 并返回 `0`；参数错误输出到 stderr 并返回 `2`，不回显任意参数值。
 
-`check` 与 `serve`
-共用配置加载、模块求值、导出提取和结构校验逻辑，但不监听端口、不调用
-provider，也不执行请求阶段 hook。
+三个子命令共用配置加载、模块求值、导出提取和结构校验逻辑。
+`check` 不监听端口、不调用 provider，也不执行请求阶段 hook。
 
 `check` 会执行配置 JS
 的顶层代码及导入模块；它不是无副作用的安全扫描器。禁止宿主网络/写文件能力可以减少副作用，但不能把本地代码执行说成纯文本校验。
@@ -842,8 +842,18 @@ provider，也不执行请求阶段 hook。
   数据可表示性、模块求值是否在启动预算内完成，以及默认导出是否仍为配置对象。允许异步
   hook 不代表允许用 Promise 代替整个默认配置对象。
 
-静态 `check` 无法证明任意 hook
-在所有输入下正确。可用最小合成输入对纯变换逻辑做单元测试，但这与配置结构检查是不同验证层。
+`check` 无法证明任意 hook 在所有输入下正确。可选 JSDoc 声明覆盖公开配置和各阶段上下文，
+JavaScript 仍为运行语言，类型工具不引入 TypeScript 运行时或 DOM/Node 宿主 API。
+同步及异步 hook 的完成值类型为 `void | Promise<void>`，静态检查拒绝返回对象的常见误用；
+数值、循环引用、原型、URL/header 内容、事件协议及预算仍以运行时校验为准。
+
+`test` 通过每个用例的独立 VM 执行生产请求/响应管线，使用合成上游传输替代真实 HTTP。
+上游传输边界只负责发送与收取字节，不复制路由、hook 顺序、JSON/SSE 转换或终态观察逻辑。
+用例选择待发送请求、下游响应、最终 state、错误与观察结果的完整类别做精确比较，
+不支持任意断言脚本或 JSON 子集匹配。文件、解析、输出与执行均有界，失败报告仅含固定类别，
+不输出实际/预期正文、header、带 query 的 URL 或异常源码。用例字段见[功能指南](features.md#离线脚本测试)。
+离线执行不验证监听、真实认证接线、HTTP 分块、断开、信号关闭或真实 provider，
+这些边界继续使用隔离测试和部署验收验证。
 
 ### 10.2 日志
 
@@ -952,7 +962,7 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 
 ### 12.1 当前结构
 
-主应用 `limen` 位于 workspace 根包，`src/` 包含 CLI、启动组合、HTTP server、gateway、日志和隔离实验入口。
+主应用 `limen` 位于 workspace 根包，`src/` 包含 CLI、启动组合、HTTP server、gateway、日志和产品离线测试。
 `modules/config/` 对应 Cargo 包 `limen-config`，`modules/script/` 对应 `limen-script`。
 目录使用简短职责名，包名保留项目前缀；目录名与 Cargo 包身份不要求相同。
 全部依赖（包括内部路径依赖）由根清单集中声明，成员通过 `workspace = true` 使用。
@@ -977,7 +987,8 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 `config` 的拆分隔离启动 schema，`script` 的拆分隔离 VM 所有权与引擎依赖，`chat` 的拆分隔离协议状态机与转换逻辑；
 这些边界能分别用纯逻辑测试或隔离运行实验验证。
 xtask 不反向成为应用或职责库的依赖。根包保留为默认 workspace 成员，普通应用构建仅包含产品二进制；
-开发实验通过 `cargo xtask probe runtime` 或 `cargo xtask probe http` 显式运行，保持与普通单元测试分离。
+有限 VM 与离线管线组合随常规 Cargo 测试运行；进程环境、失控执行、真实 HTTP 与进程生命周期
+通过 `cargo xtask test --isolated` 显式运行，保持独立的外部超时和进程树监督。
 
 不为认证、provider、model、limits、错误、日志或通用 SSE framing 单独建包，也不建立兜底的 `common`/`core` 包。
 SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事件队列，overflow 转为明确失败；
@@ -986,7 +997,7 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 
 ### 12.3 根包内部职责
 
-保留顶层 `cli`、`bootstrap`、`server`、`gateway`、`telemetry` 模块，网关按阶段与生命周期拆分。
+保留顶层 `cli`、`bootstrap`、`server`、`gateway`、`offline`、`telemetry` 模块，网关按阶段与生命周期拆分。
 
 - `cli`：参数、帮助与参数退出语义。`bootstrap`：配置装载、脚本启动、配置校验、资源选项转换及失败清理。
 - `server`：监听和 HTTP/1 连接驱动、头部与连接预算、断开通知、信号及 VM 退役后的有界关闭。
@@ -999,6 +1010,8 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 - `gateway/events`：流 hook 顺序、成功输出提交和贯穿两阶段的单源事件展开预算。
 - `gateway/observe`：`onError`/`onFinish` 与有限清理预算；流路径按实际完成、失败或截断进入终态。
 - `gateway/error`：稳定的应用错误码、失败分类、保留来源及安全对外错误对象。
+- `gateway/transport`：真实与合成上游传输，离线执行只替代此边界；终态快照供离线断言使用。
+- `offline`：用例 schema、有界文件读取、逐例 VM 生命周期、输出收集和固定类别比较。
 - `telemetry`：subscriber、panic hook 和应用边界失败报告。
 
 `ErrorCode` 和 `validate_response_status` 位于 `gateway/error`。配置错误留在 `config`，脚本错误留在 `script`，
@@ -1038,7 +1051,7 @@ hook 的 `replaceEvents` 方法和单次调用约束属于 `script` 的 draft �
 4. 流处理：SSE 解析、四种传输组合、usage/tool call 边界、取消与截断错误。
 
 HTTP 四路径与请求/响应变换已有 Windows 和 Linux CI 合成上游运行证据。
-纯逻辑测试、隔离 JS 运行实验与网络实验分开记录，
+脚本静态检查、常规测试、产品离线用例与隔离边界测试分开记录，
 继续用可独立确定的语义检验契约，例如：
 
 - 同一字段先 provider 后 model 修改，模型后的值最终发送。

@@ -1,0 +1,48 @@
+{
+  "name": "aggregate-transformed-events",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "input.sse"
+  },
+  "expect": {
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "synthetic",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "completed-model",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "[HE!LLO! WORLD!]"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "total_tokens": 3
+        }
+      }
+    },
+    "state": {
+      "explicitName": false
+    }
+  }
+}

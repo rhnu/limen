@@ -12,6 +12,7 @@ responses with local JavaScript modules. Linux Docker is the primary deployment 
 - Explicit model aliases with reusable provider settings and independent client and upstream authentication.
 - Ordered provider → model pipelines for request bodies, URLs, headers, responses, and streaming events.
 - Synchronous and asynchronous JavaScript hooks, local ESM imports, and per-request state.
+- Optional JSDoc type checking and offline script tests with synthetic JSON/SSE responses.
 - Read upstream credentials from process environment variables with `limen.env(name)`.
 - JSON and SSE in all four upstream/downstream combinations, including text, refusal, function tool calls,
   multiple choices, finish reasons, and usage when converting between formats.
@@ -68,6 +69,17 @@ continuations and quoting; adapt them for PowerShell and invoke `curl.exe`.
 The default listener is `127.0.0.1:8080`. `config.js` is loaded from the directory containing the
 selected server file. `check` executes top-level JavaScript, including imported modules and top-level
 await; it does not call a provider or run request hooks.
+
+Test request hooks without networking using the [offline example](examples/testing):
+
+```sh
+./target/release/limen test --config examples/testing/server.toml --cases examples/testing
+```
+
+Each case gets a fresh VM and runs through the production pipeline with a synthetic upstream response.
+Case fields and assertions are described in the [offline testing guide](docs/features.md#离线脚本测试).
+For editor feedback and static checking of JavaScript configurations, see the
+[development guide](docs/development.md#脚本静态检查). Node.js is only needed for that development check.
 
 ### Call the API
 
@@ -146,7 +158,7 @@ for details.
 - Configuration changes require a restart. Ctrl-C stops the listener and cancels in-flight requests;
   Unix also supports SIGTERM.
 
-Run `limen --help`, `limen check --help`, or `limen serve --help` for command options, and
+Run `limen --help`, `limen check --help`, `limen serve --help`, or `limen test --help` for command options, and
 `limen --version` for the version. Without `--config`, both commands try `server.toml` in the current
 directory and use `server.yaml` only if TOML is absent. Any other TOML error stops startup; files are
 never merged. Explicit `--config` paths select just that file, using `.toml`, `.yaml`, or `.yml` to
@@ -159,11 +171,11 @@ The detailed documentation is currently in Chinese:
 
 - [Features and usage](docs/features.md): configuration, API calls, hooks, streaming, and troubleshooting.
 - [Design](docs/design.md): architecture and contracts, including confirmed decisions and validation gaps.
-- [Development](docs/development.md): build requirements, Rusteward, unit tests, and isolated runtime experiments.
+- [Development](docs/development.md): build requirements, Rusteward, JavaScript types, regular tests, and isolated boundary tests.
 - [Roadmap](docs/roadmap.md): remaining work and deployment acceptance.
 
 For contributions, read the [workspace conventions](AGENTS.md) and development guide. Keep real
-credentials out of changes and distinguish unit-test results from runtime and deployment validation.
+credentials out of changes and distinguish static checks, regular tests, offline cases, and deployment validation.
 
 ## License
 

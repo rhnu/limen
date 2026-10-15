@@ -1,11 +1,11 @@
 //! Synthetic exceptions exercise diagnostics without exposing script-controlled text.
 
-use limen_script::{RuntimeOptions, ScriptError, ScriptErrorKind, ScriptRuntime};
 use serde_json::json;
 
-use super::{Fixture, ProbeResult, call, ensure, hook, stop};
+use super::{Fixture, TestResult, call, ensure, hook, stop};
+use crate::{RuntimeOptions, ScriptError, ScriptErrorKind, ScriptRuntime};
 
-fn check(error: &ScriptError, kind: ScriptErrorKind, class: &str) -> ProbeResult {
+fn check(error: &ScriptError, kind: ScriptErrorKind, class: &str) -> TestResult {
     ensure(
         error.kind() == kind,
         "exception changed its policy classification",
@@ -20,15 +20,18 @@ fn check(error: &ScriptError, kind: ScriptErrorKind, class: &str) -> ProbeResult
     )
 }
 
-async fn startup(fixture: &Fixture) -> ProbeResult {
+async fn startup(fixture: &Fixture) -> TestResult {
     for (source, class) in [
-        ("export default { value: ; };", "SyntaxError"),
         (
-            "missingSyntheticBinding(); export default {};",
+            include_str!("../../fixtures/diagnostics/startup-syntax.js"),
+            "SyntaxError",
+        ),
+        (
+            include_str!("../../fixtures/diagnostics/startup-reference.js"),
             "ReferenceError",
         ),
         (
-            "await Promise.reject(new RangeError('synthetic-secret')); export default {};",
+            include_str!("../../fixtures/diagnostics/startup-rejection.js"),
             "RangeError",
         ),
     ] {
@@ -52,22 +55,22 @@ async fn startup(fixture: &Fixture) -> ProbeResult {
     }
     for (source, class) in [
         (
-            "// synthetic module\nthrow new Error('synthetic-secret');\n",
+            include_str!("../../fixtures/diagnostics/import-error.mjs"),
             "Error",
         ),
         (
-            "// synthetic module\nexport const value = ;\n",
+            include_str!("../../fixtures/diagnostics/import-syntax.mjs"),
             "SyntaxError",
         ),
         (
-            "// synthetic module\nawait Promise.reject(new TypeError('synthetic-secret'));\n",
+            include_str!("../../fixtures/diagnostics/import-rejection.mjs"),
             "TypeError",
         ),
     ] {
         fixture.write("private-module.mjs", source)?;
         let path = fixture.write(
             "config.js",
-            "import './private-module.mjs'; export default {};",
+            include_str!("../../fixtures/diagnostics/config.js"),
         )?;
         match ScriptRuntime::start(path, RuntimeOptions::default()).await {
             Err(error) => {
@@ -89,48 +92,17 @@ async fn startup(fixture: &Fixture) -> ProbeResult {
     Ok(())
 }
 
-pub(super) async fn rejection(fixture: &Fixture) -> ProbeResult {
-    startup(fixture).await?;
+#[tokio::test]
+async fn rejection() -> TestResult {
+    let fixture = Fixture::new()?;
+    startup(&fixture).await?;
     fixture.write(
         "private-module.mjs",
-        "export function fail() {\n  throw new TypeError('synthetic-secret');\n}\n",
+        include_str!("../../fixtures/diagnostics/private-module.mjs"),
     )?;
-    let (runtime, config) = fixture.start(r"
-        import { fail } from './private-module.mjs';
-        let touched = 0;
-        const trap = () => { touched++; throw new Error('synthetic-secret'); };
-        export default {
-            onRequest(ctx) {
-                if (ctx.mode === 'import') fail();
-                if (ctx.mode === 'async') return Promise.reject(new ReferenceError('synthetic-secret'));
-                if (ctx.mode === 'string') throw 'synthetic-secret';
-                if (ctx.mode === 'proxy') throw new Proxy({}, { get: trap, getPrototypeOf: trap, getOwnPropertyDescriptor: trap });
-                if (ctx.mode === 'revoked') {
-                    const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); throw proxy;
-                }
-                if (ctx.mode === 'subclass') { class Custom extends RangeError {} throw new Custom('synthetic-secret'); }
-                if (ctx.mode === 'custom-stack' || ctx.mode === 'unicode-stack' || ctx.mode === 'huge-stack') {
-                    Error.prepareStackTrace = () => ctx.mode === 'custom-stack' ? { get value() { trap(); } }
-                        : ctx.mode === 'unicode-stack' ? '\uD800' : 'x'.repeat(8192);
-                    const error = new Error('synthetic-secret');
-                    Error.prepareStackTrace = undefined;
-                    throw error;
-                }
-                const error = new Error('synthetic-secret');
-                if (ctx.mode === 'prototype-proxy') Object.setPrototypeOf(error, new Proxy({}, { getPrototypeOf: trap, get: trap }));
-                if (ctx.mode === 'getters') {
-                    for (const key of ['message', 'name', 'stack', 'constructor']) Object.defineProperty(error, key, { get: trap });
-                }
-                if (ctx.mode === 'intrinsics') {
-                    Object.getPrototypeOf = trap;
-                    Object.getOwnPropertyDescriptor = trap;
-                    Error.isError = trap;
-                }
-                throw error;
-            },
-            onFinish(ctx) { ctx.touched = touched; ctx.ok = true; }
-        };
-    ").await?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/diagnostics/hooks.js"))
+        .await?;
     let id = hook(&config, "onRequest")?;
     for (index, (mode, class)) in [
         ("sync", "Error"),

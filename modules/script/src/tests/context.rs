@@ -1,44 +1,45 @@
-use std::time::Duration;
-
-use limen_script::{RuntimeStatus, ScriptErrorKind};
 use serde_json::{Value, json};
 
-use super::{Fixture, ProbeResult, call, ensure, hook, stop};
+use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
+use crate::{RuntimeStatus, ScriptErrorKind};
 
 fn draft(phase: &str) -> Value {
-    json!({
-        "meta": {"phase": phase, "requestId": "synthetic", "clientIntent": {"stream": false}},
-        "state": {"nested": {"value": 1}},
-        "body": {"model": "synthetic", "nested": {"value": 1}},
-        "headers": [{"name": "X-Example", "value": "first"}, {"name": "x-example", "value": "second"}],
-        "url": "https://fictional.invalid/v1/chat/completions",
-        "status": 200,
-        "outcome": {"success": true},
-        "stats": {"events": 0},
-        "error": {"category": "synthetic"}
-    })
+    let mut value = json!({
+        "meta": {"phase": phase, "requestId": "synthetic", "clientStream": false},
+        "state": {"nested": {"value": 1}}
+    });
+    match phase {
+        "onRequest" | "beforeSend" | "onResponse" => {
+            value["body"] = json!({"model": "synthetic", "nested": {"value": 1}});
+        },
+        "afterReceive" => value["status"] = json!(200),
+        "onError" | "onFinish" => {
+            value["outcome"] = json!("success");
+            value["stats"] = json!({"outputBytes": 0});
+            if phase == "onError" {
+                value["error"] = json!({"code": "synthetic"});
+            }
+        },
+        _ => panic!("unsupported test phase"),
+    }
+    if matches!(phase, "beforeSend" | "afterReceive") {
+        value["headers"] = json!([
+            {"name": "X-Example", "value": "first"},
+            {"name": "x-example", "value": "second"}
+        ]);
+    }
+    if phase == "beforeSend" {
+        value["url"] = json!("https://fictional.invalid/v1/chat/completions");
+    }
+    value
 }
 
-pub(super) async fn headers(fixture: &Fixture) -> ProbeResult {
-    let (runtime, config) = fixture.start(r"
-        export default { onRequest(ctx) {
-            const mode = ctx.meta.mode;
-            if (mode === 'valid') {
-                const values = ctx.headers.getAll('X-EXAMPLE');
-                if (values.length !== 2 || values[0] !== 'first' || values[1] !== 'second') throw new Error();
-                values[0] = 'not committed';
-                ctx.headers.append('x-Example', 'third,with,commas');
-                ctx.headers.set('Authorization', 'synthetic');
-                ctx.headers.append('authorization', 'second');
-                ctx.headers.delete('X-EXAMPLE');
-                ctx.headers.append('X-Example', 'final');
-            } else if (mode === 'get') {
-                if (ctx.headers.getAll('Host')[0] !== 'fictional.invalid') throw new Error();
-            } else {
-                ctx.headers[ctx.meta.operation](ctx.meta.name, ctx.meta.value);
-            }
-        } };
-    ").await?;
+#[tokio::test]
+async fn headers() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/context/headers.js"))
+        .await?;
     let id = hook(&config, "onRequest")?;
     let mut input = draft("beforeSend");
     input["meta"]["mode"] = json!("valid");
@@ -98,29 +99,12 @@ pub(super) async fn headers(fixture: &Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-pub(super) async fn readonly(fixture: &Fixture) -> ProbeResult {
-    let (runtime, config) = fixture.start(r"
-        export default { onRequest(ctx) {
-            switch (ctx.meta.operation) {
-                case 'meta-value': ctx.meta.clientIntent.stream = true; break;
-                case 'meta-ref': ctx.meta = {}; break;
-                case 'state-ref': ctx.state = {}; break;
-                case 'headers-ref': ctx.headers = []; break;
-                case 'headers-method': ctx.headers.set = () => {}; break;
-                case 'new-field': ctx.extra = true; break;
-                case 'state': ctx.state.nested.value = 2; break;
-                case 'body': ctx.body.nested.value = 2; break;
-                case 'body-ref': ctx.body = { replacement: true }; break;
-                case 'url': ctx.url = 'https://fictional.invalid/changed'; break;
-                case 'status': ctx.status = 201; break;
-                case 'outcome': ctx.outcome.success = false; break;
-                case 'stats': ctx.stats.events = 1; break;
-                case 'error': ctx.error.category = 'changed'; break;
-                case 'headers': ctx.headers.append('x-example', 'changed'); break;
-                case 'noop': if (ctx.headers.getAll('x-example').length !== 2) throw new Error(); break;
-            }
-        } };
-    ").await?;
+#[tokio::test]
+async fn readonly() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/context/readonly.js"))
+        .await?;
     let id = hook(&config, "onRequest")?;
     for phase in [
         "onRequest",
@@ -198,28 +182,12 @@ pub(super) async fn readonly(fixture: &Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-pub(super) async fn isolation(fixture: &Fixture) -> ProbeResult {
-    let (runtime, config) = fixture.start(r"
-        let release;
-        export default {
-            async onRequest(ctx) {
-                ctx.state.order = ['request'];
-                ctx.body.private = ctx.meta.requestId;
-                if (ctx.meta.pending) await new Promise(resolve => { release = resolve; });
-                await Promise.resolve();
-                ctx.state.order.push('completed');
-                if (ctx.meta.failure === 'reject') throw new Error('synthetic');
-                if (ctx.meta.failure === 'return') return {};
-            },
-            onFinish() { release(); },
-            providers: { p: { pipeline: [{ name: 'provider', async beforeSend(ctx) {
-                await Promise.resolve(); ctx.state.order.push('provider'); ctx.headers.append('x-step', 'provider');
-            } }] } },
-            models: { m: { pipeline: [{ name: 'model', async beforeSend(ctx) {
-                await Promise.resolve(); ctx.state.order.push('model'); ctx.headers.append('x-step', 'model');
-            } }] } }
-        };
-    ").await?;
+#[tokio::test]
+async fn isolation() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/context/isolation.js"))
+        .await?;
     let id = hook(&config, "onRequest")?;
     let mut input = draft("onRequest");
     input["meta"]["pending"] = json!(true);
@@ -227,7 +195,12 @@ pub(super) async fn isolation(fixture: &Fixture) -> ProbeResult {
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
     let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    wait_for(
+        &runtime,
+        hook(&config, "onError")?,
+        json!({"started": true}),
+    )
+    .await?;
     let mut second = draft("onRequest");
     second["meta"]["requestId"] = json!("independent");
     let mut output = runtime.invoke(call(id, 2, second)).await?;
@@ -246,7 +219,10 @@ pub(super) async fn isolation(fixture: &Fixture) -> ProbeResult {
     runtime
         .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
         .await?;
-    output["meta"]["phase"] = json!("beforeSend");
+    let mut next = draft("beforeSend");
+    next["state"] = output["state"].take();
+    next["body"] = output["body"].take();
+    output = next;
     let provider = config["providers"]["p"]["pipeline"][0]["beforeSend"]
         .as_u64()
         .ok_or("missing provider hook")?;
@@ -287,41 +263,12 @@ pub(super) async fn isolation(fixture: &Fixture) -> ProbeResult {
     stop(&runtime).await
 }
 
-const STREAM_CONTEXT_CONFIG: &str = r"
-        let release;
-        export default {
-            async onRequest(ctx) {
-                switch (ctx.meta.operation) {
-                    case 'edit': ctx.event.text += ' edited'; break;
-                    case 'replace': ctx.event = { text: 'replacement' }; break;
-                    case 'drop': ctx.replaceEvents([]); break;
-                    case 'split': ctx.replaceEvents([{text:'a'}, {text:'b'}]); break;
-                    case 'twice': ctx.replaceEvents([]); ctx.replaceEvents([]); break;
-                    case 'invalid': ctx.replaceEvents([null]); break;
-                    case 'sparse': ctx.replaceEvents(new Array(1)); break;
-                    case 'count': ctx.replaceEvents(new Array(65).fill({})); break;
-                    case 'late-count': {
-                        const events = [{}]; ctx.replaceEvents(events);
-                        await Promise.resolve(); events.length = 65; break;
-                    }
-                    case 'readonly': ctx.replaceEvents = () => {}; break;
-                    case 'return': ctx.replaceEvents([]); return {};
-                    case 'reject': ctx.replaceEvents([]); throw new Error('synthetic');
-                    case 'pending':
-                        ctx.replaceEvents([{text:'uncommitted'}]);
-                        await new Promise(resolve => { release = resolve; });
-                        ctx.state.late = true; break;
-                    case 'missing': if (typeof ctx.replaceEvents !== 'undefined') throw new Error(); break;
-                }
-                ctx.state.visited = true;
-            },
-            onFinish() { release(); }
-        };
-    ";
-
-/// Opt-in VM evidence stays outside pure unit tests and requires the timeout driver.
-pub(super) async fn stream(fixture: &Fixture) -> ProbeResult {
-    let (runtime, config) = fixture.start(STREAM_CONTEXT_CONFIG).await?;
+#[tokio::test]
+async fn stream() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/context/stream.js"))
+        .await?;
     let id = hook(&config, "onRequest")?;
     for phase in ["onUpstreamEvent", "onStreamEvent"] {
         for (operation, expected) in [
@@ -377,7 +324,12 @@ pub(super) async fn stream(fixture: &Fixture) -> ProbeResult {
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
     let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    wait_for(
+        &runtime,
+        hook(&config, "onError")?,
+        json!({"started": true}),
+    )
+    .await?;
     cancellation.cancel();
     ensure(
         waiting

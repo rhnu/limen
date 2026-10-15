@@ -30,7 +30,7 @@ async fn main() -> ExitCode {
 /// Dispatch public tasks separately from process-isolated worker entry points.
 async fn run(args: cli::Cli) -> Result<ExitCode> {
     match args.command {
-        cli::Command::Probe { family } => runner::run(family).await,
+        cli::Command::Test { selection, .. } => runner::run(selection).await,
         cli::Command::Worker {
             family,
             case,

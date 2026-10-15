@@ -1,0 +1,112 @@
+{
+  "name": "sse-to-sse-tools",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream; charset=utf-8"
+      ]
+    },
+    "bodyFile": "tools.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "tools",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "index": 0,
+                    "id": "call-",
+                    "type": "function",
+                    "function": {
+                      "name": "look",
+                      "arguments": "{\"q\":"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "tool_calls": [
+                  {
+                    "index": 0,
+                    "id": "1",
+                    "function": {
+                      "name": "up",
+                      "arguments": "\"x\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "tool_calls"
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [],
+          "usage": {
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3
+          }
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "clientStream": true,
+      "upstreamStatus": 200,
+      "upstreamMedia": "sse"
+    }
+  }
+}

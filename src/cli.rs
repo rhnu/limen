@@ -22,6 +22,17 @@ pub enum Command {
     Check(ConfigArgs),
     /// Validate configuration and start the HTTP gateway.
     Serve(ConfigArgs),
+    /// Test local scripts against synthetic upstream responses without networking.
+    Test(TestArgs),
+}
+
+#[derive(Debug, PartialEq, Eq, Args)]
+pub struct TestArgs {
+    #[command(flatten)]
+    pub configuration: ConfigArgs,
+    /// One .case.json file or a directory containing .case.json files.
+    #[arg(long, value_name = "PATH")]
+    pub cases: PathBuf,
 }
 
 /// Shared configuration options, with native filesystem path parsing.

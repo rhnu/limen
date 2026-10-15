@@ -1,0 +1,8 @@
+data: {"id":"tools","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call-","type":"function","function":{"name":"look","arguments":"{\"q\":"}}]},"finish_reason":null}]}
+
+data: {"id":"tools","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"up","arguments":"\"x\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"tools","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"tools","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
+

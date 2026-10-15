@@ -1,54 +1,59 @@
 use clap::Parser;
 
-use super::{Cli, Command, Family};
+use super::{Cli, Command};
 
 #[test]
-fn selects_named_runtime_experiments() {
+fn selects_qualified_isolated_tests_in_requested_order() {
     let args = Cli::try_parse_from([
         "xtask",
-        "probe",
-        "runtime",
-        "void",
-        "context-stream",
+        "test",
+        "--isolated",
+        "runtime/sync-loop",
+        "http/deadline",
         "--timeout",
         "8",
     ])
-    .expect("valid runtime selection");
-    let Command::Probe {
-        family: Family::Runtime(selection),
+    .expect("valid isolated test selection");
+    let Command::Test {
+        isolated,
+        selection,
     } = args.command
     else {
-        panic!("expected runtime experiments");
+        panic!("expected isolated tests");
     };
-    assert_eq!(selection.cases, ["void", "context-stream"]);
+    assert!(isolated);
+    assert_eq!(selection.cases, ["runtime/sync-loop", "http/deadline"]);
     assert_eq!(selection.timeout, Some(8.0));
 }
 
 #[test]
-fn accepts_gateway_paths_with_spaces() {
+fn accepts_gateway_paths_with_spaces_and_lists_without_running() {
     let args = Cli::try_parse_from([
         "xtask",
-        "probe",
-        "http",
+        "test",
+        "--isolated",
         "--executable",
         "build output/limen.exe",
         "--list",
     ])
-    .expect("valid HTTP selection");
-    let Command::Probe {
-        family: Family::Http(selection),
-    } = args.command
-    else {
-        panic!("expected HTTP experiments");
+    .expect("valid isolated listing");
+    let Command::Test { selection, .. } = args.command else {
+        panic!("expected isolated tests");
     };
     assert_eq!(
-        selection.executable.expect("explicit executable"),
+        selection.executable.unwrap(),
         std::path::PathBuf::from("build output/limen.exe")
     );
-    assert!(selection.selection.list);
+    assert!(selection.list);
 }
 
 #[test]
-fn rejects_unknown_public_commands() {
-    assert!(Cli::try_parse_from(["xtask", "serve"]).is_err());
+fn requires_explicit_isolation_opt_in() {
+    for args in [
+        vec!["xtask", "test"],
+        vec!["xtask", "test", "--list"],
+        vec!["xtask", "test", "--timeout", "8"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
 }

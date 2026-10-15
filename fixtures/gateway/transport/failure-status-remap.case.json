@@ -1,0 +1,69 @@
+{
+  "name": "failure-status-remap",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic-body-secret"
+      }
+    ]
+  },
+  "upstream": {
+    "status": 503,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "synthetic",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 409,
+      "headers": {
+        "content-type": [
+          "application/json"
+        ],
+        "x-limen-request-id": [
+          "limen-1"
+        ],
+        "x-original-media": [
+          "json"
+        ],
+        "x-mapped": [
+          "failure"
+        ]
+      }
+    },
+    "state": {
+      "clientStream": false,
+      "upstreamStatus": 503,
+      "upstreamMedia": "json"
+    },
+    "error": {
+      "code": "upstream_failed",
+      "status": 409,
+      "phase": "upstream_status"
+    }
+  }
+}

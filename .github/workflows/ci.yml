@@ -45,12 +45,29 @@ jobs:
         run: cargo dev format --check --diff --locked
       - name: Lint
         run: cargo dev lint --locked --deny-warnings
-      - name: Unit tests
+      - name: Regular tests
         run: cargo test --workspace --lib --bins --locked
-      - name: Isolated VM tests
-        run: cargo xtask probe runtime
-      - name: HTTP end-to-end tests
-        run: cargo xtask probe http
+      - name: Offline script examples
+        run: cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
+      - name: Isolated boundary tests
+        run: cargo xtask test --isolated
+
+  script-types:
+    name: JavaScript types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install static checking tools
+        run: npm ci --ignore-scripts
+      - name: Check JavaScript and declaration contracts
+        run: npm run check:types
 
   markdown:
     name: Markdown
@@ -70,7 +87,7 @@ jobs:
   image:
     name: Linux amd64 image
     runs-on: ubuntu-24.04
-    needs: [rust, markdown]
+    needs: [rust, script-types, markdown]
     timeout-minutes: 30
     permissions:
       contents: read

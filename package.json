@@ -1,0 +1,11 @@
+{
+  "name": "limen-script-checks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:types": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}
