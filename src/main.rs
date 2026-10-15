@@ -28,10 +28,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
-    executor.block_on(run(path, serve))
+    executor.block_on(run(path.as_deref(), serve))
 }
 
-async fn run(path: &std::path::Path, serve: bool) -> ExitCode {
+async fn run(path: Option<&std::path::Path>, serve: bool) -> ExitCode {
     let command = if serve { "serve" } else { "check" };
     let loaded = match Bootstrap::load(path, command).await {
         Ok(loaded) => loaded,

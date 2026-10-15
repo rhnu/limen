@@ -53,6 +53,18 @@ impl ConfigError {
         self
     }
 
+    pub(crate) fn at_offset(mut self, source: &str, offset: usize) -> Self {
+        let prefix = &source[..source.floor_char_boundary(offset.min(source.len()))];
+        self.line = Some(prefix.split('\n').count() as u64);
+        self.column = Some(
+            prefix
+                .rsplit('\n')
+                .next()
+                .map_or(1, |line| line.chars().count() as u64 + 1),
+        );
+        self
+    }
+
     pub(crate) fn with_source(
         mut self,
         operation: &'static str,
@@ -118,6 +130,8 @@ fn safe_cause(error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt:
         write!(f, "I/O ({:?})", error.kind())
     } else if let Some(error) = error.downcast_ref::<serde_saphyr::Error>() {
         write!(f, "YAML ({})", yaml_class(error))
+    } else if error.is::<toml::de::Error>() {
+        f.write_str("TOML (syntax, field or type)")
     } else if let Some(error) = error.downcast_ref::<serde_json::Error>() {
         write!(
             f,
@@ -187,8 +201,13 @@ pub(crate) fn safe_path(path: &serde_path_to_error::Path) -> String {
     let parts: Vec<&str> = path
         .iter()
         .filter_map(|segment| match segment {
-            // Spanned adds these adapter fields; they are not configuration schema.
-            Segment::Map { key } if matches!(key.as_str(), "value" | "referenced" | "defined") => {
+            // Native span adapters add these fields outside the configuration schema.
+            Segment::Map { key }
+                if matches!(
+                    key.as_str(),
+                    "value" | "referenced" | "defined" | "$__serde_spanned_private_value"
+                ) =>
+            {
                 None
             },
             Segment::Map { key } => Some(schema_name(key)),

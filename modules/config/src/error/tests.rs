@@ -65,9 +65,12 @@ fn opaque_nested_cause_is_retained_without_rendering_its_text() {
 
 #[test]
 fn validation_error_has_context_without_a_fabricated_source() {
-    let error = crate::ServerConfig::parse("client_auth: {none: true}\nlimits:\n  hook_ms: 0\n")
-        .err()
-        .unwrap();
+    let error = crate::ServerConfig::parse(
+        "client_auth: {none: true}\nlimits:\n  hook_ms: 0\n",
+        crate::ServerFormat::Yaml,
+    )
+    .err()
+    .unwrap();
     assert!(error.source().is_none());
     assert_eq!(error.line, Some(3));
     assert_eq!(error.column, Some(12));

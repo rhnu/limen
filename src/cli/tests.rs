@@ -7,18 +7,8 @@ use super::{Cli, Command, ConfigArgs};
 #[test]
 fn accepts_commands_and_preserves_paths() {
     for (name, expected) in [
-        (
-            "check",
-            Command::Check(ConfigArgs {
-                config: PathBuf::from("server.yaml"),
-            }),
-        ),
-        (
-            "serve",
-            Command::Serve(ConfigArgs {
-                config: PathBuf::from("server.yaml"),
-            }),
-        ),
+        ("check", Command::Check(ConfigArgs { config: None })),
+        ("serve", Command::Serve(ConfigArgs { config: None })),
     ] {
         assert_eq!(
             Cli::try_parse_from(["limen", name]).unwrap().command,
@@ -30,15 +20,15 @@ fn accepts_commands_and_preserves_paths() {
             .unwrap()
             .command,
         Command::Serve(ConfigArgs {
-            config: PathBuf::from("a directory/服务.yaml")
+            config: Some(PathBuf::from("a directory/服务.yaml"))
         })
     );
     assert_eq!(
-        Cli::try_parse_from(["limen", "check", "--config=other.yaml"])
+        Cli::try_parse_from(["limen", "check", "--config=other.toml"])
             .unwrap()
             .command,
         Command::Check(ConfigArgs {
-            config: PathBuf::from("other.yaml")
+            config: Some(PathBuf::from("other.toml"))
         })
     );
 }
@@ -66,7 +56,7 @@ fn preserves_non_utf8_config_paths() {
     assert_eq!(
         cli.command,
         Command::Check(ConfigArgs {
-            config: PathBuf::from(path)
+            config: Some(PathBuf::from(path))
         })
     );
 }

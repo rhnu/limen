@@ -12,7 +12,7 @@ Limen 将显式配置的模型别名映射到上游 Chat Completions 服务，�
 | -------------- | ---------------------------------- | ---------------------------------------------- |
 | 模型列表       | `GET /v1/models`                   | 只列出 `models` 中的别名，不请求上游发现模型   |
 | 对话生成       | `POST /v1/chat/completions`        | 接受模型别名与消息，支持 JSON 或 SSE 下游      |
-| 客户端认证     | `server.yaml` 的 `client_auth`     | 两个接口共用 bearer token 或显式无认证配置     |
+| 客户端认证     | 服务配置的 `client_auth`           | 两个接口共用 bearer token 或显式无认证配置     |
 | 上游连接       | `config.js` 的 `providers`         | 完整 endpoint、独立认证、静态头与默认参数      |
 | 模型映射       | `config.js` 的 `models`            | 选择 provider、上游模型名、模型默认参数和管线  |
 | 请求与响应变换 | 全局 hook 和 `pipeline`            | 每个阶段按 provider → model 正序执行           |
@@ -25,18 +25,23 @@ Limen 将显式配置的模型别名映射到上游 Chat Completions 服务，�
 
 ### 文件关系
 
-一个配置入口由 YAML 与同目录的 `config.js` 组成：
+一个配置入口由 TOML 或 YAML 与同目录的 `config.js` 组成，两种格式使用相同结构、默认值和校验规则：
 
 ```text
 local/
 ├── basic/
-│   ├── server.yaml
+│   ├── server.toml
+│   ├── server.yaml      可选的 YAML 替代文件
 │   └── config.js
 └── shared/
     └── rules.mjs
 ```
 
-`--config local/basic/server.yaml` 会定位 `local/basic/config.js`；文件名必须为 `config.js`。
+`--config local/basic/server.toml` 会定位 `local/basic/config.js`；文件名必须为 `config.js`。
+未指定 `--config` 时，优先读取当前目录的 `server.toml`，仅在它不存在时尝试 `server.yaml`。
+TOML 读取、解析或校验失败会直接报错；成功后不读取 YAML，也不合并配置。
+显式指定路径时只读取该文件，根据 `.toml`、`.yaml` 或 `.yml` 扩展名选择解析器，其他扩展名报错。
+仓库示例同时提供两种格式；复制后默认使用 TOML，选择 YAML 时可显式传入 `--config`。
 模块中的相对导入以导入者为基准，允许 `../shared/rules.mjs`。
 本机示例需保留 `basic/` 与 `shared/` 的相对关系；Docker 示例独立使用，复制方式见[部署说明](#docker-部署)。
 
@@ -46,9 +51,29 @@ local/
 Node.js、`fetch`、定时器、进程或任意文件读写 API。本地模块导入会读取对应文件。
 模块图每次启动求值一次；修改配置后需要检查并重启服务。
 
-### `server.yaml`
+### 服务配置：TOML 与 YAML
 
 最小配置必须明确选择客户端认证方式。以下示例同时展示常用运行选项；省略的资源字段使用默认值：
+
+```toml
+listen = "127.0.0.1:8080"
+
+[client_auth]
+bearer = "example-limen-client-token"
+
+[limits]
+request_ms = 120000
+hook_ms = 5000
+concurrency = 32
+max_body_bytes = 4194304
+
+[log]
+level = "info"
+format = "text"
+output = "stderr"
+```
+
+等价的 `server.yaml`：
 
 ```yaml
 listen: 127.0.0.1:8080
@@ -67,11 +92,12 @@ log:
 
 `listen` 接受 IP 与非零端口组成的 socket 地址，默认 `127.0.0.1:8080`。
 需要局域网访问时显式设置例如 `0.0.0.0:8080`，并配置客户端令牌。
-无认证模式必须显式写为 `client_auth: {none: true}`，不能与 `bearer` 同时使用。
+无认证模式在 TOML 中写为 `client_auth = { none = true }`，YAML 中写为 `client_auth: {none: true}`，不能与 `bearer` 同时使用。
 `bearer` 不是上游密钥；它用于客户端访问 Limen。
 
 `log.level` 接受 `error`、`warn`、`info`、`debug`、`trace`，`format` 接受 `text` 或 `json`，
-`output` 当前仅接受 `stderr`。基础配置拒绝未知字段、重复 YAML 键、anchor、alias、merge key 和多文档。
+`output` 当前仅接受 `stderr`。两种格式均限制为 1 MiB，拒绝未知字段、重复键和错误类型。
+YAML 另外拒绝 anchor、alias、merge key 和多文档。
 
 ### `config.js`
 
@@ -161,16 +187,16 @@ export default {
 
 ```sh
 export UPSTREAM_API_KEY='example-upstream-token'
-./target/release/limen check --config local/basic/server.yaml
-./target/release/limen serve --config local/basic/server.yaml
+./target/release/limen check --config local/basic/server.toml
+./target/release/limen serve --config local/basic/server.toml
 ```
 
 PowerShell：
 
 ```powershell
 $env:UPSTREAM_API_KEY = 'example-upstream-token'
-./target/release/limen.exe check --config local/basic/server.yaml
-./target/release/limen.exe serve --config local/basic/server.yaml
+./target/release/limen.exe check --config local/basic/server.toml
+./target/release/limen.exe serve --config local/basic/server.toml
 ```
 
 以上令牌只是占位示例。仓库基础示例使用 `limen.env("UPSTREAM_API_KEY") ?? "example-upstream-token"`
@@ -185,7 +211,7 @@ $env:UPSTREAM_API_KEY = 'example-upstream-token'
 该接口只按名称读取，不提供枚举、写入或 `.env` 自动加载；`limen` 和 `limen.env` 不可替换或删除。
 `limen` 命名空间已冻结，不能添加属性或改变其原型。
 配置是可信本地脚本，可读取进程继承的任意环境变量。顶层读取的密钥随配置在启动时固定；
-修改外部环境后需重启服务。`server.yaml` 不支持 `${...}` 插值，客户端 bearer 仍由 YAML 独立配置。
+修改外部环境后需重启服务。TOML 与 YAML 均不支持 `${...}` 插值，客户端 bearer 仍由服务配置独立指定。
 
 ### 默认参数与单次路由
 
@@ -207,7 +233,7 @@ $env:UPSTREAM_API_KEY = 'example-upstream-token'
 
 ## 调用 HTTP API
 
-以下请求使用 POSIX shell 语法和占位令牌。令牌需与所选 YAML 中的 `client_auth.bearer` 一致。
+以下请求使用 POSIX shell 语法和占位令牌。令牌需与所选服务配置中的 `client_auth.bearer` 一致。
 PowerShell 使用 `curl.exe`，并调整换行和 JSON 引号；原样复制多行 POSIX 命令不能直接运行。
 
 ### 列出模型
@@ -454,7 +480,7 @@ SSE 按事件解析，支持跨网络分块 UTF-8、多种换行与多行 `data:
 | `shutdown_ms`          | 5000     | 关闭等待预算，毫秒                            |
 
 VM 内存、栈、执行与微任务工作量、命令队列、pending hook、模块源码图及 JSON 深度/节点
-也有独立限制。完整字段与允许范围见[资源 schema](design.md#31-serveryaml进程与资源边界)。
+也有独立限制。完整字段与允许范围见[资源 schema](design.md#31-服务配置进程与资源边界)。
 这些默认值是资源边界，不是吞吐承诺；提高超时时仍需满足 schema 的范围。
 请求许可不足返回 `busy`，不会自动重试或建立无限等待队列。
 
@@ -499,15 +525,16 @@ Limen 不跟随上游重定向、不自动重试、不使用环境代理，也�
 ```sh
 limen --help
 limen --version
-limen check --config local/basic/server.yaml
-limen serve --config local/basic/server.yaml
+limen check --config local/basic/server.toml
+limen serve --config local/basic/server.toml
 ```
 
-从源码运行可使用 `cargo run --locked -- check --config examples/basic/server.yaml`。
-两个子命令的默认配置路径均为当前目录的 `server.yaml`，接受 `--config PATH` 与 `--config=PATH`。
+从源码运行可使用 `cargo run --locked -- check --config examples/basic/server.toml`。
+两个子命令均优先读取当前目录的 `server.toml`，仅当它不存在时尝试 `server.yaml`；不合并配置。
+接受 `--config PATH` 与 `--config=PATH`，显式指定时只读取该文件。
 `limen check --help` / `limen serve --help` 查看各自选项。
 
-`check` 校验 YAML、本地模块、默认导出、provider/model 引用、静态认证冲突、管线与资源配置。
+`check` 校验所选 TOML/YAML、本地模块、默认导出、provider/model 引用、静态认证冲突、管线与资源配置。
 它会执行配置和导入模块的顶层 JavaScript，包括 top-level await；
 不监听端口、不调用上游、不执行请求 hook，不能证明 hook 对所有输入都正确，也不能证明上游可用。
 
@@ -529,7 +556,7 @@ cp -R examples/docker/. data/
 
 PowerShell 先执行 `New-Item -ItemType Directory -Path data -Force`，再执行
 `Copy-Item -Path examples/docker/* -Destination data -Recurse`。
-在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌，然后执行：
+在 `data/config.js` 中填写上游配置，在 `data/server.toml` 中设置客户端令牌，然后执行：
 
 ```sh
 docker compose pull
@@ -539,10 +566,10 @@ docker compose logs -f
 docker compose down
 ```
 
-Compose 使用 `./data:/data` 挂载，容器工作目录为 `/data`，默认配置为 `/data/server.yaml`，
+Compose 使用 `./data:/data` 挂载，容器工作目录为 `/data`，优先读取 `/data/server.toml`，仅在它不存在时读取 `/data/server.yaml`，
 同目录加载 `config.js`。Docker 示例不依赖 `basic/` 或 `shared/`；自行添加的本地模块也应放在 `data/` 中并保留相对导入关系。
-启动前先复制并填写配置；短挂载语法会在源目录缺失时自动创建空目录，但不会生成 `server.yaml` 或 `config.js`。
-缺少任一配置文件，检查和启动都会失败。
+启动前先复制并填写配置；短挂载语法会在源目录缺失时自动创建空目录，但不会生成服务配置或 `config.js`。
+两种服务配置均不存在，或缺少 `config.js` 时，检查和启动都会失败。
 容器内显式监听 `0.0.0.0:8080`，宿主默认仅发布 `127.0.0.1:8080`。
 需要内网访问时同时考虑宿主端口绑定和客户端认证。
 

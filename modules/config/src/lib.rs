@@ -11,5 +11,5 @@ pub use business::{
 pub use error::{ConfigError, ConfigErrorKind};
 pub use server::{
     ClientAuth, LogConfig, LogFormat, LogLevel, LogOutput, ResourceLimits, ServerConfig,
-    load_server,
+    ServerFormat, load_server,
 };

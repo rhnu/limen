@@ -49,7 +49,7 @@ curl 示例使用 POSIX 换行与引号语法，在 PowerShell 中需要调整�
    cp -R examples local
    ```
 
-2. 在 `local/basic/server.yaml` 中设置客户端 bearer token，在 `local/basic/config.js` 中填写
+2. 在 `local/basic/server.toml` 中设置客户端 bearer token，在 `local/basic/config.js` 中填写
    provider 的**完整 Chat Completions URL**、上游认证和上游模型名。
    示例中的 `.invalid` 地址和令牌均为占位值。真实配置保存在 `local/`。
    示例优先读取 `UPSTREAM_API_KEY`，设置方式见[环境变量指南](docs/features.md#从环境变量读取上游密钥)。
@@ -57,16 +57,16 @@ curl 示例使用 POSIX 换行与引号语法，在 PowerShell 中需要调整�
 3. 检查配置，然后启动网关：
 
    ```sh
-   ./target/release/limen check --config local/basic/server.yaml
-   ./target/release/limen serve --config local/basic/server.yaml
+   ./target/release/limen check --config local/basic/server.toml
+   ./target/release/limen serve --config local/basic/server.toml
    ```
 
-默认监听 `127.0.0.1:8080`，`config.js` 始终从所选 YAML 文件的同目录加载。
+默认监听 `127.0.0.1:8080`，`config.js` 始终从所选服务配置文件的同目录加载。
 `check` 会执行顶层 JavaScript、导入模块和 top-level await，不连接 provider，也不运行请求阶段 hook。
 
 ### 调用 API
 
-将下方令牌替换为 YAML 中的客户端令牌。`chat` 是示例配置中的对外模型别名。
+将下方令牌替换为服务配置中的客户端令牌。`chat` 是示例配置中的对外模型别名。
 
 ```sh
 curl http://127.0.0.1:8080/v1/models \
@@ -104,7 +104,7 @@ cp -R examples/docker/. data/
 
 PowerShell 先执行 `New-Item -ItemType Directory -Path data -Force`，再执行
 `Copy-Item -Path examples/docker/* -Destination data -Recurse`。
-在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌。
+在 `data/config.js` 中填写上游配置，在 `data/server.toml` 中设置客户端令牌。
 这两个文件不会自动生成。准备好配置后执行：
 
 ```sh
@@ -115,7 +115,7 @@ docker compose logs -f
 ```
 
 使用 `docker compose down` 停止服务。Compose 将 `data/` 挂载到容器工作目录 `/data`，
-检查与启动默认读取 `/data/server.yaml`。仅向宿主的 `127.0.0.1:8080` 发布端口，
+检查与启动优先读取 `/data/server.toml`，仅在它不存在时读取 `/data/server.yaml`。仅向宿主的 `127.0.0.1:8080` 发布端口，
 容器配置监听 `0.0.0.0:8080`。entrypoint 启动时以 root 将部署目录的组改为 `10001`，
 设置组读取和目录访问权限，保留宿主文件属主，再以 `10001:10001` 执行 Limen。
 部署目录需要可写挂载以便初始化权限，容器根文件系统保持只读。
@@ -125,7 +125,7 @@ GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 
 ## 配置与运行
 
-- `server.yaml` 管理监听地址、客户端认证、资源限制和日志。
+- `server.toml` 或 `server.yaml` 管理监听地址、客户端认证、资源限制和日志，两种格式使用相同字段、默认值和校验规则。
 - 同目录的 `config.js` 导出 provider、模型别名、pipeline 和可选的全局 hook。
 - 客户端认证与上游认证相互独立，默认不转发客户端 Authorization 和 Cookie。
 - `onRequest` 后仅路由一次，每个阶段依次执行 provider 与 model 的步骤，数组内部保持正序。
@@ -134,7 +134,9 @@ GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 - 配置变更需要重启。Ctrl-C 停止监听并取消在途请求，Unix 下也支持 SIGTERM。
 
 使用 `limen --help`、`limen check --help` 或 `limen serve --help` 查看命令选项，
-`limen --version` 查看版本。不传 `--config` 时，两个命令均使用当前目录中的 `server.yaml`。
+`limen --version` 查看版本。不传 `--config` 时，两个命令优先读取当前目录中的 `server.toml`，
+仅在它不存在时读取 `server.yaml`；其他 TOML 错误直接终止，不合并文件。
+显式 `--config` 只读取指定文件，根据 `.toml`、`.yaml` 或 `.yml` 扩展名选择解析器。
 错误、退出码、资源限制和 hook 契约见[使用指南](docs/features.md)。
 
 ## 文档与开发

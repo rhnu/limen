@@ -6,7 +6,7 @@
 .
 ├── src/                 根包：CLI、bootstrap、JSON/SSE gateway、HTTP server 与日志
 ├── modules/
-│   ├── config/          limen-config：YAML/业务配置、资源 schema、配置诊断
+│   ├── config/          limen-config：TOML/YAML 与业务配置、资源 schema、配置诊断
 │   ├── script/          limen-script：ESM、只读环境变量、严格 JSON 桥接和有界 JS 调度
 │   └── chat/            limen-chat：SSE 编解码、chunk 校验、四路径转换与有界聚合
 ├── examples/            无真实凭据的基础配置与共享模块
@@ -109,7 +109,7 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 检查示例配置：
 
 ```sh
-cargo run --locked -- check --config examples/basic/server.yaml
+cargo run --locked -- check --config examples/basic/server.toml
 ```
 
 `check` 会执行顶层 JS，但不执行请求阶段 hook。CLI 退出码与操作边界见[功能指南](features.md#命令行与配置检查)。
@@ -170,6 +170,7 @@ Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创�
 | serde               | 1.0.229  | 1.56 | derive，强类型配置                                                             |
 | serde_json          | 1.0.154  | 1.71 | 默认 std，不启用无限深度或任意精度来掩盖 JS 数字边界                           |
 | serde-saphyr        | 2.0.0    | 1.89 | 禁用默认 features，仅 deserialize；配置解析预算和位置                          |
+| toml                | 1.1.8    | 1.85 | 禁用默认 features，仅 std、serde、parse；共用 schema，保留位置和递归深度保护   |
 | serde_path_to_error | 0.1.20   | 1.61 | 保留字段路径，输出前隐藏任意用户键名                                           |
 | url                 | 2.5.8    | 1.63 | URL 结构校验；额外禁止 userinfo、fragment、反斜杠与空白                        |
 | http                | 1.5.0    | 1.57 | 成熟的 header 名称和值解析                                                     |
@@ -207,6 +208,11 @@ HTTP 引入时重新核对了注册表及上游发布/feature：
 [reqwest features](https://docs.rs/crate/reqwest/0.13.5/features)。
 reqwest 0.13 的 `rustls` feature 使用平台证书验证与 AWS-LC；Windows 本机构建已验证，CMake 可用，
 Linux CI 与镜像构建已通过 C 编译；证书与运行环境验收按部署阶段单独安排。锁文件不代表已执行 TLS 真实上游验收。
+
+TOML 依赖核对了 [crates.io 注册表](https://crates.io/crates/toml/1.1.8+spec-1.1.0)、
+[上游发布记录](https://github.com/toml-rs/toml/blob/toml-v1.1.8/crates/toml/CHANGELOG.md)及发布清单。
+MSRV 1.85 兼容固定的 Rust 1.99.0，不启用 display、preserve_order、unbounded 或平台专用能力。
+服务配置按扩展名解析，共享 schema 和校验；默认选择及错误语义见[设计](design.md#31-服务配置进程与资源边界)。
 
 SSE 解码对照 WHATWG，并调查了 eventsource-stream、sse-codec 与 sse-stream；选用可独立于异步网络层使用的
 [sse-parse 发布](https://github.com/hey-jj/sse-parse/releases/tag/v0.1.0)与
@@ -273,7 +279,7 @@ workflow 发布的包自动关联仓库，并带 `org.opencontainers.image.sourc
 [Actions concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
 
 Compose 使用已发布的 `ghcr.io/rhnu/limen:latest`。首次将 `examples/docker/` 复制为 `data/`，
-填写 `data/server.yaml` 和 `data/config.js`，再执行：
+填写 `data/server.toml` 和 `data/config.js`，再执行：
 
 ```sh
 docker compose config
@@ -286,8 +292,9 @@ docker compose down
 需要从源码构建镜像时单独执行 `docker build --platform linux/amd64 -t limen:local .`；Compose 没有本地构建段。
 镜像默认工作目录或启动命令调整后，部署环境需先等待 CI 发布更新后的镜像，再执行 `docker compose pull`。
 
-Compose 用 `./data:/data` 挂载部署目录，容器工作目录为 `/data`；`CMD ["serve"]` 与检查命令均默认读取 `server.yaml`。
-Docker 示例独立提供 `server.yaml` 与 `config.js`，无需复制本机示例或共享规则；自行导入的模块需一同放入 `data/`。
+Compose 用 `./data:/data` 挂载部署目录，容器工作目录为 `/data`；`CMD ["serve"]` 与检查命令均优先读取 `server.toml`，
+仅缺失时尝试 `server.yaml`，不合并配置。
+Docker 示例独立提供 `server.toml`、等价的 `server.yaml` 与 `config.js`，无需复制本机示例或共享规则；自行导入的模块需一同放入 `data/`。
 首次准备使用 `mkdir -p data` 和 `cp -R examples/docker/. data/`，将文件直接放到部署目录根部。
 短挂载语法在宿主目录缺失时会创建空目录，不会生成配置文件；启动前必须完成示例复制和配置填写。
 `docker-entrypoint.sh` 在 root 启动路径执行 `chgrp -Rh 10001 /data` 和 `chmod -R g=rX /data`，

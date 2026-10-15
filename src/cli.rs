@@ -27,9 +27,9 @@ pub enum Command {
 /// Shared configuration options, with native filesystem path parsing.
 #[derive(Debug, PartialEq, Eq, Args)]
 pub struct ConfigArgs {
-    /// Path to the server YAML; config.js is resolved relative to this file.
-    #[arg(long, value_name = "PATH", default_value = "server.yaml")]
-    pub config: PathBuf,
+    /// Server TOML/YAML path; defaults to server.toml, then server.yaml if absent.
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }
 
 #[cfg(test)]

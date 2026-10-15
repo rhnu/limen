@@ -7,6 +7,21 @@ use serde_json::json;
 use super::{Error, shutdown_status, with_cleanup};
 
 #[test]
+fn server_errors_keep_their_phase_for_both_formats() {
+    for format in [
+        limen_config::ServerFormat::Toml,
+        limen_config::ServerFormat::Yaml,
+    ] {
+        let source = limen_config::ServerConfig::parse("", format).err().unwrap();
+        let error = Error::Config {
+            file: "server configuration",
+            source: Box::new(source),
+        };
+        assert_eq!(error.phase(), "server_config");
+    }
+}
+
+#[test]
 fn config_context_preserves_the_original_failure() {
     let source = BusinessConfig::from_value(json!({}), &ResourceLimits::default())
         .err()

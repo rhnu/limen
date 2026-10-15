@@ -53,7 +53,7 @@ continuations and quoting; adapt them for PowerShell and invoke `curl.exe`.
    cp -R examples local
    ```
 
-2. Edit `local/basic/server.yaml` and set your client bearer token. Edit `local/basic/config.js` with
+2. Edit `local/basic/server.toml` and set your client bearer token. Edit `local/basic/config.js` with
    your provider's **full Chat Completions URL**, upstream credentials, and upstream model name.
    The bundled `.invalid` URL and tokens are placeholders. Keep real configuration in `local/`.
    The example reads `UPSTREAM_API_KEY` when set; see the [environment variable guide](docs/features.md#从环境变量读取上游密钥).
@@ -61,17 +61,17 @@ continuations and quoting; adapt them for PowerShell and invoke `curl.exe`.
 3. Validate the configuration, then start the gateway:
 
    ```sh
-   ./target/release/limen check --config local/basic/server.yaml
-   ./target/release/limen serve --config local/basic/server.yaml
+   ./target/release/limen check --config local/basic/server.toml
+   ./target/release/limen serve --config local/basic/server.toml
    ```
 
 The default listener is `127.0.0.1:8080`. `config.js` is loaded from the directory containing the
-selected YAML file. `check` executes top-level JavaScript, including imported modules and top-level
+selected server file. `check` executes top-level JavaScript, including imported modules and top-level
 await; it does not call a provider or run request hooks.
 
 ### Call the API
 
-Replace the token below with the one in your YAML configuration. The `chat` model is the public alias
+Replace the token below with the one in your server configuration. The `chat` model is the public alias
 defined in the example configuration.
 
 ```sh
@@ -110,7 +110,7 @@ cp -R examples/docker/. data/
 
 In PowerShell, use `New-Item -ItemType Directory -Path data -Force`, then
 `Copy-Item -Path examples/docker/* -Destination data -Recurse`.
-Fill in the provider settings in `data/config.js` and the client bearer token in `data/server.yaml`.
+Fill in the provider settings in `data/config.js` and the client bearer token in `data/server.toml`.
 The configuration files are not generated automatically. Then run:
 
 ```sh
@@ -121,7 +121,7 @@ docker compose logs -f
 ```
 
 Stop the service with `docker compose down`. Compose mounts `data/` at `/data`, the container's
-working directory. Both commands use `/data/server.yaml` by default. The host port is bound to
+working directory. Both commands try `/data/server.toml` first, then `/data/server.yaml` only if TOML is absent. The host port is bound to
 `127.0.0.1:8080`; the container configuration listens on `0.0.0.0:8080`. The entrypoint starts as root,
 sets the data group to `10001` with group read and directory traversal permissions, and executes Limen
 as `10001:10001`. File owners are preserved. The data mount is writable for permission setup;
@@ -132,7 +132,8 @@ for details.
 
 ## Configuration and operation
 
-- `server.yaml` controls listening, client authentication, resource limits, and logging.
+- `server.toml` or `server.yaml` controls listening, client authentication, resource limits, and logging,
+  using the same fields, defaults, and validation rules.
 - The adjacent `config.js` exports providers, model aliases, pipelines, and optional global hooks.
 - Client credentials are separate from provider credentials. Client Authorization and Cookie headers
   are not forwarded by default.
@@ -146,8 +147,10 @@ for details.
   Unix also supports SIGTERM.
 
 Run `limen --help`, `limen check --help`, or `limen serve --help` for command options, and
-`limen --version` for the version. Without `--config`, both commands use `server.yaml` in the current
-directory. Detailed errors, exit codes, limits, and hook contracts are in the
+`limen --version` for the version. Without `--config`, both commands try `server.toml` in the current
+directory and use `server.yaml` only if TOML is absent. Any other TOML error stops startup; files are
+never merged. Explicit `--config` paths select just that file, using `.toml`, `.yaml`, or `.yml` to
+choose the parser. Detailed errors, exit codes, limits, and hook contracts are in the
 [usage guide](docs/features.md).
 
 ## Documentation and development

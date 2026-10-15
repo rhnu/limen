@@ -57,7 +57,7 @@ impl Error {
     pub fn phase(&self) -> &'static str {
         match self {
             Self::Config {
-                file: "server.yaml",
+                file: "server configuration",
                 ..
             } => "server_config",
             Self::Config { .. } | Self::StartupBudget => "business_config",
@@ -104,14 +104,14 @@ impl fmt::Display for Diagnostic<'_> {
 }
 
 impl Bootstrap {
-    /// Resolve the script relative to the selected YAML file, independent of later cwd changes.
-    pub async fn load(path: &Path, command: &'static str) -> Result<Self, Error> {
-        let server = load_server(path).map_err(|source| Error::Config {
-            file: "server.yaml",
+    /// Resolve the script relative to the selected server file, independent of later cwd changes.
+    pub async fn load(path: Option<&Path>, command: &'static str) -> Result<Self, Error> {
+        let (path, server) = load_server(path).map_err(|source| Error::Config {
+            file: "server configuration",
             source: Box::new(source),
         })?;
         crate::telemetry::initialize(&server.log).map_err(Error::Logging)?;
-        Self::start(path, server)
+        Self::start(&path, server)
             .instrument(tracing::info_span!(
                 "configuration",
                 command,

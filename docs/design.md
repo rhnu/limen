@@ -20,13 +20,14 @@
   的某个上游模型。
 - provider 与 model 都可定义请求头、请求体等处理，执行顺序必须直观、可控。
 - 基础服务配置与同目录 `config.js` 分工；JavaScript 为已选定的配置语言。
+- 基础配置支持 TOML 与 YAML，共用配置结构、默认值和校验；默认 TOML 优先，仅缺失时回退 YAML，不合并文件。
 - 配置脚本支持本地 ESM 导入，模块在启动时求值，不按请求重新加载配置文件。
 - 首版即支持异步 hook，为未来 I/O 留好运行时基础；当前不需要网络或文件 API。
 - 主要部署目标是 Linux Docker，不以原生 Windows 发布为首版目标。
 
 ### 建议默认
 
-- 基础配置使用 `server.yaml`；业务配置由 `config.js` 默认导出。
+- 业务配置由 `config.js` 默认导出。
 - 函数直接表达条件和动态计算，不设计表达式字符串、字段后缀语言或另一套脚本 DSL。
 - provider/model 各自拥有有序 `pipeline`；同一阶段先 provider 后 model，各数组内部正序执行。
 - hook 使用“修改当前 draft，完成值为 `undefined`”的单一契约，支持 `void | Promise<void>`。
@@ -60,7 +61,7 @@ Chat Completions 请求里的未知扩展字段默认保留。能够传递某个
 
 ## 3. 两层配置
 
-### 3.1 `server.yaml`：进程与资源边界
+### 3.1 服务配置：进程与资源边界
 
 基础配置只负责：
 
@@ -74,6 +75,19 @@ provider、模型映射或业务变换。这样无需先运行用户脚本，就
 
 最小示例：
 
+```toml
+listen = "127.0.0.1:8080"
+
+[client_auth]
+bearer = "example-limen-client-token"
+
+[log]
+level = "info"
+format = "text"
+```
+
+等价的 YAML 配置：
+
 ```yaml
 listen: 127.0.0.1:8080
 client_auth:
@@ -84,6 +98,11 @@ log:
 ```
 
 示例令牌只是占位文本，不是真实凭据。实际值可以直接保存在本地配置文件中，不强制通过环境变量提供。
+
+未传 `--config` 时先读取当前目录的 `server.toml`，仅在文件不存在时尝试 `server.yaml`。
+TOML 的权限、读取、编码、语法或校验错误直接终止；成功后不再读取 YAML，不做配置合并。
+两种格式反序列化到同一 schema，并通过同一套认证、监听和资源范围校验。
+显式 `--config` 只读取指定文件，由 `.toml`、`.yaml` 或 `.yml` 扩展名选择解析器，不猜测内容或回退其他文件。
 
 建议默认仅监听 `127.0.0.1`。需要局域网访问时显式修改监听地址，并配置客户端
 bearer
@@ -119,14 +138,15 @@ HTTP 路径接入正文、并发、deadline、hook 和清理限制；流路径�
 | `max_json_depth`       | 64       | 1–128              | JS/JSON 对象嵌套上限                   |
 | `max_json_nodes`       | 100000   | 1–1000000          | JS/JSON 值节点上限                     |
 
-基础 YAML 文件另外固定限制为 1 MiB、单文档和 16 层嵌套，拒绝重复键、merge key、anchor 和 alias。
-认证必须明确写成 `{bearer: "..."}` 或 `{none: true}`，不能同时提供两者；令牌必须符合 bearer token 字符集。
+两种基础配置文件均固定限制为 1 MiB，拒绝未知字段、重复键与错误类型；TOML 保留解析器的递归深度保护。
+YAML 另外限制单文档和 16 层嵌套，拒绝 merge key、anchor 和 alias。
+认证必须明确选择 `bearer` 或 `none = true`（YAML 为 `none: true`），不能同时提供两者；令牌必须符合 bearer token 字符集。
 `listen` 为非零端口的 IP socket 地址。`log.level` 接受 `error/warn/info/debug/trace`，
 `log.format` 接受 `text/json`，`log.output` 当前仅接受 `stderr`，默认分别为 `info/text/stderr`。
 
 ### 3.2 `config.js`：路由与变换
 
-默认读取 `server.yaml` 所在目录中的
+默认读取最终选中的 TOML 或 YAML 文件所在目录中的
 `config.js`。路径不依赖服务进程的当前工作目录。
 
 建议默认导出以下业务入口：
@@ -230,7 +250,7 @@ JS runtime 必须随服务存活。修改文件后重启服务才生效。
   接口按可信本地配置处理，可读取进程继承的任意变量，不是秘密隔离或权限沙箱。
 
 此接口只增加环境变量读取能力，不开放其他进程、网络、任意文件或 Node.js API。
-`server.yaml` 不执行环境变量插值；Docker 部署需显式将变量传入容器。
+TOML 与 YAML 服务配置均不执行环境变量插值；Docker 部署需显式将变量传入容器。
 
 ## 4. Provider 与模型的关系
 
@@ -298,7 +318,7 @@ hook。
 
 客户端访问 Limen 的认证，与 Limen 访问 provider 的认证是两套独立凭据：
 
-- `server.yaml` 中的 `client_auth` 验证来访客户端。
+- 服务配置中的 `client_auth` 验证来访客户端。
 - provider 的 `auth` 或静态认证头用于访问上游。
 - 客户端的 `Authorization`、Cookie 以及其他无关请求头不默认传给上游。
 
@@ -798,11 +818,12 @@ rquickjs 0.14 的安全 API 没有分配失败回调：如果 JS 自行捕获并
 CLI 使用 clap 定义两个基本入口：
 
 ```text
-limen serve --config ./server.yaml
-limen check --config ./server.yaml
+limen serve --config ./server.toml
+limen check --config ./server.toml
 ```
 
-默认配置路径是 `server.yaml`，支持 `--config PATH` 和 `--config=PATH`，按原生文件系统路径解析。
+默认先读 `server.toml`，仅缺失时尝试 `server.yaml`；具体选择与失败规则见[服务配置](#31-服务配置进程与资源边界)。
+支持 `--config PATH` 和 `--config=PATH`，按原生文件系统路径解析，显式路径不回退。
 顶层提供 `--help` / `-h` 和 `--version` / `-V`，两个子命令提供各自的帮助。
 帮助与版本输出到 stdout 并返回 `0`；参数错误输出到 stderr 并返回 `2`，不回显任意参数值。
 
@@ -815,7 +836,7 @@ provider，也不执行请求阶段 hook。
 
 建议检查：
 
-- YAML 类型、重复键、未知字段和资源配置范围。
+- TOML/YAML 类型、重复键、未知字段和资源配置范围。
 - 本地模块解析、语法、启动预算、默认导出形状。
 - provider/model 名称、模型引用、endpoint 和 header 合法性。
 - 管线结构、阶段名、步骤名及函数类型。
@@ -842,7 +863,7 @@ query。错误、调试日志和 JS 日志同样需要处理秘密，不能只�
 请求 ID 由 Rust 分配，并通过 `x-limen-request-id` 及统一错误对象返回。
 观察 stats 的 upstreamHeadersMs 表示从请求开始到收到上游头的时间。
 
-YAML 诊断提供清理后的 schema 字段路径以及解析器确实提供的行列；缺少位置时不伪造坐标。
+TOML/YAML 诊断提供清理后的 schema 字段路径以及解析器确实提供的行列；缺少位置时不伪造坐标。
 任意用户键名以 `*` 代替，避免把携密键名带入错误。求值生成的 JS 对象只报告静态 schema 路径，
 不假定对象属性有可靠源码映射。JS 异常目前输出阶段/固定分类，不回显 message、stack 或源码；
 不会为了位置而输出可能携密的异常文本。应用提供逻辑配置文件类别，不打印整份配置。
@@ -874,7 +895,8 @@ CLI 仍向 stderr 输出安全诊断。启动、关闭和 hook 操作使用稳�
 `config.js` 时不能遗漏它引用的文件。
 
 Compose 默认使用已发布的 `ghcr.io/rhnu/limen:latest`，将宿主 `data/` 挂载到容器工作目录 `/data`。
-检查与启动均使用当前目录的 `server.yaml`，业务配置位于 `/data/config.js`；Docker 示例可独立复制到 `data/`。
+检查与启动均优先读取当前目录的 `server.toml`，仅缺失时尝试 `server.yaml`，业务配置位于 `/data/config.js`；
+Docker 示例同时提供两种格式，可独立复制到 `data/`。
 配置文件由部署者准备，应用不自动生成。镜像 entrypoint 以 root 修正 `data/` 的组与组读取、目录访问权限，
 保留宿主文件属主，再通过 `setpriv` 清空附加组、继承和 ambient capabilities，禁止提权，以 `10001:10001` 执行应用。
 权限处理或降权失败时不启动应用；显式指定非 root 用户时跳过修复，由部署者准备读取权限。
@@ -903,6 +925,7 @@ Promise。
 | JSON       | Serde、serde_json           | 静态配置采用强类型；业务 JSON 保留动态结构                                  |
 | 日志       | tracing、tracing-subscriber | 请求上下文和结构化错误                                                      |
 | YAML       | serde-saphyr                | 当前优先候选；只启用所需解析能力，实施时核对新版本与 MSRV                   |
+| TOML       | toml                        | 强类型反序列化及字段位置；仅启用 std、serde、parse，保留递归深度保护        |
 | JavaScript | rquickjs                    | 使用异步/Promise 桥接能力；已有本机调度、取消与生命周期及 Linux CI 构建证据 |
 
 Tokio、Axum、reqwest、Rustls、serde_json 与 tracing
@@ -944,7 +967,7 @@ feature 文档为准，不照抄旧示例的 feature 字符串。
 | 位置              | Cargo 包       | 职责                                                                      | 边界                                                              |
 | ----------------- | -------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | 根包 `src/`       | `limen`        | CLI、启动组合、认证、单次路由、hook 顺序、上下游 HTTP、请求与进程生命周期 | 拥有产品策略与资源协调；初始化日志、处理信号并决定退出            |
-| `modules/config/` | `limen-config` | YAML/业务 schema、默认值、provider/model 引用、资源配置和安全配置诊断     | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线        |
+| `modules/config/` | `limen-config` | TOML/YAML 与业务 schema、默认值、provider/model 引用、资源配置和安全诊断  | 只加载和校验配置；不求值 JS，不发起 HTTP，不执行路由或管线        |
 | `modules/script/` | `limen-script` | 本地 ESM、函数登记、JS context/draft、JSON 桥接、VM 线程、Promise 与预算  | 只提供启动、调用、状态和关闭能力；不选择 provider，不编排请求阶段 |
 | `modules/chat/`   | `limen-chat`   | SSE 增量编解码、Chat chunk 语义、JSON↔SSE 转换、有界聚合与结束条件        | 纯逻辑库；不依赖配置、VM、HTTP 客户端或服务框架，不持有网络连接   |
 | `xtask/`          | `limen-xtask`  | 隔离 VM/HTTP 实验、实验构建、硬超时、进程树监督与临时文件清理             | 显式开发入口；VM 调用 script 公开 API，HTTP 启动 limen 可执行文件 |
