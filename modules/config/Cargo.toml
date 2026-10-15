@@ -3,6 +3,7 @@ name = "limen-config"
 description = "Validated configuration and shared contracts for Limen"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

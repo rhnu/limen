@@ -3,6 +3,7 @@ name = "limen-chat"
 description = "Bounded Chat Completions SSE framing and transport conversion"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

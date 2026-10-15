@@ -3,6 +3,7 @@
 **
 !Cargo.toml
 !Cargo.lock
+!LICENSE
 !rust-toolchain.toml
 !src/**/*.rs
 !modules/*/Cargo.toml

@@ -12,7 +12,9 @@
 ├── examples/            无真实凭据的基础配置与共享模块
 ├── xtask/               limen-xtask：Rust 编写的隔离 VM/HTTP 实验与进程监督
 ├── .cargo/config.toml   cargo xtask 别名
-├── docs/                设计、唯一实施路线图、开发指引
+├── docs/                功能使用指南、设计、唯一实施路线图、开发指引
+├── README.md            英文项目介绍与快速开始；中文版为 README.zh-CN.md
+├── LICENSE              GNU AGPLv3 完整许可证
 ├── Cargo.toml           根包、workspace、集中依赖和共享 lint
 ├── Cargo.lock           应用依赖解析结果，纳入版本控制
 ├── rust-toolchain.toml  固定 Rust 1.99.0、rustfmt 与 Clippy
@@ -60,7 +62,7 @@ cargo install --git https://github.com/rhnu/rusteward.git --locked rusteward
 文档修改收尾时仅传本次修改的 Markdown 文件，例如：
 
 ```sh
-rumdl check --fix README.md docs/design.md docs/roadmap.md docs/development.md
+rumdl check --fix README.md README.zh-CN.md docs/features.md docs/design.md docs/roadmap.md docs/development.md
 ```
 
 本机使用 rumdl 0.2.79，CI 同版本。可用时另运行 `actionlint .github/workflows/ci.yml`，并执行 `git diff --check`。
@@ -99,7 +101,7 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 cargo run --locked -- check --config examples/basic/server.yaml
 ```
 
-`check` 会执行顶层 JS，但不执行请求阶段 hook。CLI 退出码与操作边界见 README。
+`check` 会执行顶层 JS，但不执行请求阶段 hook。CLI 退出码与操作边界见[功能指南](features.md#命令行与配置检查)。
 运行时库只报告退役；HTTP 服务监听状态变更，停止监听、取消在途请求并非零退出，
 不继续接收依赖失效 VM 的请求，也不自动重放上游请求。
 
@@ -221,7 +223,9 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 - 提交遵循 Conventional Commits，描述具体行为或职责变化，不使用路线图阶段编号作为提交主题。
 - 保留 `Cargo.lock`。提交前检查暂存区，确保无真实配置、令牌、Cookie、携密源码或原始请求正文。
 - 实际部署配置集中在 `local/`；`examples/` 只放占位值。Git ignore 不能保证其他路径没有秘密。
-- 不从模板推断许可证、GitHub owner、公开性或镜像命名空间；发布前另行确定。
+- 项目许可证为 `AGPL-3.0-only`，完整条款来自 [GNU 官方文本](https://www.gnu.org/licenses/agpl-3.0.txt)，保存于根目录 [LICENSE](../LICENSE)。
+  `workspace.package.license` 集中声明许可证，根包、职责库和 xtask 均通过 `license.workspace = true` 继承，Cargo 包继续设置为不发布。
+- 不从模板推断 GitHub owner、公开性或镜像命名空间；发布前另行确定。
 
 ## GitHub CI 与容器构建
 
@@ -239,6 +243,8 @@ GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支
 CI 不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
 Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层只含二进制、CA 与运行依赖，使用非 root 用户。
 release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind 以维持运行时的异常清理边界。
+Dockerfile 声明 `org.opencontainers.image.licenses=AGPL-3.0-only`，运行层保留
+`/usr/share/doc/limen/LICENSE`；构建上下文允许清单包含根目录许可证。
 
 成功推送后，使用 GitHub Packages REST API 分页获取版本，确认 `latest` 的 digest 与本次 Buildx 输出一致，
 再删除该包的所有其他版本（包括无标签和带其他标签的历史版本）。重复推送同一 digest 时仍保留实际 `latest`，

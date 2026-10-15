@@ -35,6 +35,8 @@ RUN cargo build --release --locked --bin limen
 
 FROM debian:trixie-slim AS runtime
 
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
+
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates libgcc-s1 \
     && rm -rf /var/lib/apt/lists/* \
@@ -43,6 +45,7 @@ RUN apt-get update \
     && mkdir /config
 
 COPY --from=builder /build/target/release/limen /usr/local/bin/limen
+COPY LICENSE /usr/share/doc/limen/LICENSE
 
 WORKDIR /config
 USER 10001:10001
