@@ -5,8 +5,8 @@
 `limen check` 与 `limen serve` 已接通配置、本地 ESM、有界 JS 调度、独立客户端认证和单次路由。
 JSON→JSON、JSON→SSE、SSE→JSON、SSE→SSE 四路径及 provider → model 正序 hook 已实现。
 配置、脚本和 Chat 协议库分别位于 `modules/config/`、`modules/script/` 与 `modules/chat/`；根包协调 HTTP 和生命周期。
-开发实验统一在 Rust `xtask/` 包，既有 17 个 VM 与 12 个合成 HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证。
-VM 现共 18 项，已在 Windows 全部通过，新增环境变量读取实验的 Linux CI 运行待验证。
+服务配置支持 TOML 与 YAML，共用 schema 和校验，默认 TOML 优先，仅缺失时回退 YAML。
+开发实验统一在 Rust `xtask/` 包，全部 18 个 VM 与 12 个合成 HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证。
 CI 在单元测试后固定执行全部 VM 与 HTTP 高级测试，两个高级测试步骤均已通过。
 
 Dockerfile、Compose、精简运行层与入口降权、cargo-chef 依赖缓存、Rust 与 Buildx GHA 缓存已配置。
@@ -19,7 +19,7 @@ PR 和手动 CI 只构建，不推送。Linux CI 与容器镜像构建已跑通�
 ## 待验证与后续工作
 
 - 验证 Windows Job Object 在外部超时和父进程中断时的进程树回收与临时目录清理。
-- 在 Linux 上验证 TLS/CA、慢客户端、流背压及关闭传播。
+- 在目标 Linux 部署中验证 TLS/CA、慢客户端、流背压及其关闭传播。
 - 验证容器入口权限修复、降权及失败阻断，以及配置挂载、端口绑定和关闭行为。
 - 依据已跑通的 CI 配置分支保护。
 - release 和真实上游验收单独安排。

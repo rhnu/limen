@@ -91,12 +91,12 @@ cargo xtask probe runtime --list
 使用 `cargo xtask probe runtime --help` 查看单项实验、超时和列表选项。
 `--timeout` 默认 12 秒，接受 1–60 秒；`--list` 不启动实验 worker。
 Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调用，不应绕过外部超时保护直接使用。
-实验只使用临时合成配置；不会连接真实 provider，不属于 Linux、Docker 或 HTTP 端到端验收。
+实验只使用临时合成配置，不连接真实 provider，验证 VM 行为；Docker 部署与 HTTP 端到端验收分别执行。
 临时目录由 xtask 父进程统一持有和清理，覆盖正常完成、失败与外部超时终止。
 父进程监听 Ctrl-C 和 Unix SIGTERM，停止并回收进程树后再删除目录；实验失败以非零退出码汇总。
 退出码为 `0` 全部通过或列表/帮助成功，`1` 实验、构建或清理失败，`2` 参数错误。
 `context-stream` 另外检查流 draft 修改、替换、丢弃、拆分、重复设置、异步数组增长和取消后迟到结果；
-17 个 VM 实验（包含 `context-stream`）已通过 Linux 与 Windows 隔离运行验证。
+全部 18 个 VM 实验（包含 `environment` 与 `context-stream`）已通过 Linux CI 与 Windows 隔离运行验证。
 启动实验在成功返回后立即检查 `Ready`；`memory-limit` 另外覆盖同步抛出或 Promise rejection 携带
 `null` / 自身 `message: "out of memory"` 的保守退役边界；这些场景已通过 Windows 与 Linux CI 隔离运行。
 
@@ -104,7 +104,7 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 也不需要 `unsafe`。它覆盖顶层、本地 ESM、异步 hook 的密钥读取、缺失与空值、Unicode、
 非法参数、非 Unicode 值、名称/值字节上限、只读绑定、导入前命名空间冻结和失败后恢复；
 纯逻辑单元测试独立检查校验与错误来源。
-该新增实验的单项与完整 18 项 VM 实验均已在 Windows 通过，Linux 运行待既有 CI 的完整 VM 步骤验证。
+该实验与完整 18 项 VM 实验均已通过 Windows 与 Linux CI 隔离运行验证。
 
 检查示例配置：
 
@@ -145,8 +145,8 @@ VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixt
 并检查首个 DONE 后的错误事件位于同一块或延迟尾块时，JSON/SSE 下游均保持成功终结。
 该终结回归已在 Windows 与 Linux CI 通过；Windows 负向对照中临时恢复旧的块尾终结逻辑时，实验会拒绝其错误结果。
 全部 12 个 Rust HTTP 实验已通过 Windows 和 Linux CI 隔离运行验证，覆盖参数覆写、流变换、管线与终结分块一致性。
-Linux 的 127 项单元测试、17 个 VM 实验与 12 个 HTTP 实验均通过，证据见
-[`90a4cc9` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38661065836/job/116182161036)。
+Linux 的 149 项单元测试、18 个 VM 实验与 12 个 HTTP 实验均通过，证据见
+[`c562fa0` 的 CI Rust 任务](https://github.com/rhnu/limen/actions/runs/38674755676/job/116225705564)。
 Windows 关闭实验由两个短命 helper 显式脱离继承控制台，再创建或连接网关私有控制台，隔离 Ctrl-C 广播。
 正常实验清理与独立控制台 Ctrl-C 已有运行证据；Job Object 在外部超时和父进程中断时的回收仍待单独验证。
 纯逻辑测试不启动 HTTP 或 VM；JS 与 HTTP 驱动作为独立高级测试执行，CI 中固定排在单元测试之后。
@@ -264,6 +264,9 @@ release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind
 Dockerfile 声明 `org.opencontainers.image.licenses=AGPL-3.0-only`，运行层保留
 `/usr/share/doc/limen/LICENSE`；构建上下文允许清单包含根目录许可证。
 
+[`c562fa0` 的完整 CI](https://github.com/rhnu/limen/actions/runs/38674755676) 已通过 Rust、Markdown 和镜像任务，
+包括 Linux amd64 镜像构建、GHCR latest 发布与旧版本清理。
+
 成功推送后，使用 GitHub Packages REST API 分页获取版本，确认 `latest` 的 digest 与本次 Buildx 输出一致，
 再删除该包的所有其他版本（包括无标签和带其他标签的历史版本）。重复推送同一 digest 时仍保留实际 `latest`，
 不按版本创建时间判断。清理失败使 job 失败，已成功推送的 latest 保留；构建或推送失败不执行清理。
@@ -323,4 +326,4 @@ Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量
 [Build push action](https://github.com/docker/build-push-action)。
 GHCR 登录使用 [Docker login action v4](https://github.com/docker/login-action)，清理使用
 [GitHub Script v9](https://github.com/actions/github-script) 提供的 Octokit 分页和 REST 请求；两者使用 Node 24，适配 GitHub 托管 runner。
-容器运行与 Linux TLS/CA、SIGTERM、慢客户端及流背压验收按部署阶段单独安排。
+容器运行及容器内 SIGTERM 传播、Linux TLS/CA、慢客户端与流背压验收按部署阶段单独安排。

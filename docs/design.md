@@ -35,18 +35,19 @@
 - 不做自动重试、故障转移、热重载和上游模型自动发现。
 - 对外响应默认使用模型别名，允许显式响应 hook 改写；诊断信息另存真实路由和最终上游模型名。
 
-### 待验证
+### 验证证据与边界
 
-上述异步与平台选择已经确定，运行时与平台能力仍需实施验证。
+异步调度与 HTTP 四路径已有 Windows 和 Linux CI 运行证据；目标部署环境的验收范围仍见[路线图](roadmap.md)。
 
 - **已有本机证据：**Rust 与 QuickJS 引用关闭顺序、Promise 调度与取消、执行/内存预算和数字边界已通过隔离实验；已知限制见第 9 节。
-- **已有运行证据：**Rust xtask 的 17 个 VM 与 12 个本地合成 HTTP 实验在 Windows 和 Linux CI 通过，
+- **已有运行证据：**Rust xtask 的全部 18 个 VM 与 12 个本地合成 HTTP 实验在 Windows 和 Linux CI 通过，
   覆盖参数覆写、JSON/SSE 管线、认证隔离、单次发送、超时、客户端断开、启动就绪发布、DONE 分块一致性、
-  OOM 保守退役边界、Windows Ctrl-C 与 Linux SIGTERM 关闭。
-- **已有 CI 证据：**Linux CI 与 Docker 镜像构建已跑通。
+  OOM 保守退役边界、环境变量读取、Windows Ctrl-C 与 Linux SIGTERM 关闭。
+- **已有 CI 证据：**149 项单元测试、全部 VM/HTTP 实验、Markdown 检查和 Linux amd64 镜像构建、发布与旧版本清理均通过；
+  证据链接见[开发指引](development.md)。
 - **实施时验证：**目标部署环境的流背压、慢客户端与关闭传播。
 - **实施时验证：**Linux Docker 中的启动、配置挂载、端口绑定与关闭行为。
-- **实施时验证：**依赖最新稳定版本、MSRV、平台及 feature 兼容性；本文不把网页上的 `latest` 快照作为锁定版本。
+- **依赖维护：**版本、MSRV 与 features 的选择见开发指引；升级时重新核对注册表与上游，锁文件记录实际解析版本。
 
 ## 2. 最小对外接口
 
@@ -912,25 +913,24 @@ Docker 部署中，容器内通常需显式监听 `0.0.0.0`
 资源。容器终止宽限时间应覆盖这一过程；超出关闭预算时明确结束，不无限等待
 Promise。
 
-## 11. Rust 依赖候选
+## 11. Rust 依赖选择
 
 依赖职责尽量直接，不为了统一包装而完整复制成熟库 API。
 
-| 职责       | 候选                        | 设计阶段判断                                                                |
-| ---------- | --------------------------- | --------------------------------------------------------------------------- |
-| 异步运行时 | Tokio                       | 成熟生态；承担服务并发、取消、通道与超时                                    |
-| HTTP 入口  | Hyper、Axum                 | Hyper 拥有有界 HTTP/1 连接生命周期；Axum 提供 body/response 类型            |
-| 上游 HTTP  | reqwest                     | 复用连接池与流式 body；选用 Rustls TLS 路径                                 |
-| TLS        | Rustls                      | 优先由 HTTP 客户端集成，不为列依赖而重复直接依赖                            |
-| JSON       | Serde、serde_json           | 静态配置采用强类型；业务 JSON 保留动态结构                                  |
-| 日志       | tracing、tracing-subscriber | 请求上下文和结构化错误                                                      |
-| YAML       | serde-saphyr                | 当前优先候选；只启用所需解析能力，实施时核对新版本与 MSRV                   |
-| TOML       | toml                        | 强类型反序列化及字段位置；仅启用 std、serde、parse，保留递归深度保护        |
-| JavaScript | rquickjs                    | 使用异步/Promise 桥接能力；已有本机调度、取消与生命周期及 Linux CI 构建证据 |
+| 职责       | 依赖                        | 职责与依据                                                                       |
+| ---------- | --------------------------- | -------------------------------------------------------------------------------- |
+| 异步运行时 | Tokio                       | 成熟生态；承担服务并发、取消、通道与超时                                         |
+| HTTP 入口  | Hyper、Axum                 | Hyper 拥有有界 HTTP/1 连接生命周期；Axum 提供 body/response 类型                 |
+| 上游 HTTP  | reqwest                     | 复用连接池与流式 body；选用 Rustls TLS 路径                                      |
+| TLS        | Rustls                      | 优先由 HTTP 客户端集成，不为列依赖而重复直接依赖                                 |
+| JSON       | Serde、serde_json           | 静态配置采用强类型；业务 JSON 保留动态结构                                       |
+| 日志       | tracing、tracing-subscriber | 请求上下文和结构化错误                                                           |
+| YAML       | serde-saphyr                | 已用于配置装载，仅启用反序列化、解析预算和位置；升级时重新核对版本与 MSRV        |
+| TOML       | toml                        | 强类型反序列化及字段位置；仅启用 std、serde、parse，保留递归深度保护             |
+| JavaScript | rquickjs                    | 使用异步/Promise 桥接能力；调度、取消与生命周期已有 Windows 与 Linux CI 运行证据 |
 
-Tokio、Axum、reqwest、Rustls、serde_json 与 tracing
-的官方发布/文档已核验；具体依赖版本在实现时从注册表和上游发布记录再次核对，由
-`Cargo.lock` 记录实际解析结果。
+当前依赖的注册表、上游发布、features 与 MSRV 核对依据见[开发指引](development.md)，
+`Cargo.lock` 记录实际解析结果；引入或升级依赖时重新核对上游。
 
 YAML 选型不能只把 `serde_yaml` 换成名字相近的 fork：
 
@@ -940,7 +940,7 @@ YAML 选型不能只把 `serde_yaml` 换成名字相近的 fork：
 - `serde_yaml_ng`
   保留原库风格，但原始设计调查时看到的最新发布仍较旧，不能只凭名称断言维护活跃。
 - `serde-saphyr`
-  提供强类型反序列化、错误位置和解析预算，较符合小型服务配置；项目演进较快，仍需对实际采用版本验证。
+  提供强类型反序列化、错误位置和解析预算，已用于当前配置装载并通过 Windows 单元测试与 Linux CI；升级时重新核对上游。
 
 rquickjs 官方将绑定描述为 mostly stable，同时说明实验性 feature
 的限制。首版不依赖实验性的并行执行能力，也不把该状态当作本项目已经通过测试的证明。
