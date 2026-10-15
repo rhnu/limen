@@ -207,7 +207,7 @@ HTTP 引入时重新核对了注册表及上游发布/feature：
 [reqwest 发布](https://github.com/seanmonstar/reqwest/releases/tag/v0.13.5)与
 [reqwest features](https://docs.rs/crate/reqwest/0.13.5/features)。
 reqwest 0.13 的 `rustls` feature 使用平台证书验证与 AWS-LC；Windows 本机构建已验证，CMake 可用，
-Linux CI 与镜像构建已通过 C 编译；证书与运行环境验收按部署阶段单独安排。锁文件不代表已执行 TLS 真实上游验收。
+Linux CI 与镜像构建已通过 C 编译；运行镜像包含系统 CA 证书。
 
 TOML 依赖核对了 [crates.io 注册表](https://crates.io/crates/toml/1.1.8+spec-1.1.0)、
 [上游发布记录](https://github.com/toml-rs/toml/blob/toml-v1.1.8/crates/toml/CHANGELOG.md)及发布清单。
@@ -227,9 +227,17 @@ JSON→SSE 使用有界迭代，不缓存整段生成事件；SSE→JSON 聚合�
 错误通过 `thiserror` 的 `source`/`from` 或保留来源的转换传播；脚本错误手动实现 `source()`，
 直接返回共享原因的原始类型，避免 `Arc` 包装妨碍 downcast。主错误与清理失败分别保存。
 纯逻辑单元测试检查分类、来源类型、上下文及安全诊断，不执行 VM。
+JS 异常诊断另外保存固定内建类别、模块编号和可用行列，重分类与克隆不丢失这些信息，原始引擎错误仍保留为 source。
+`error/exception` 的纯逻辑测试验证栈位置匹配与安全输出；`rejection` 隔离 VM 实验验证启动语法错误、
+顶层 await、导入模块及同步/异步 hook 异常，以及 getter、Proxy、内建函数覆写和自定义栈下的诊断与失败后恢复。
+这些诊断场景纳入现有 `rejection` 实验，由本机检查与 Linux CI 运行。
 
 原始 `source()` 可能含配置、键名或源码，仅用于内部类型检查；CLI、日志与 Debug 使用安全诊断。
 库的 `diagnostic()` 输出有界原因分类，应用补充失败阶段和逻辑配置文件类别，避免直接格式化任意来源。
+入口模块使用固定标签 `config.js`，导入模块使用按首次加载顺序分配的 `import#N`；日志不输出实际模块路径、函数名或栈文本。
+诊断桥接在用户模块运行前捕获 QuickJS 内建栈 getter，直接读取 Error 的内部栈数据，绕过用户定义的访问器；
+只有不超过 4096 个 UTF-16 code unit 且 Unicode 有效的栈字符串进入 VM 线程内的位置解析器。
+解析器最多处理 16384 字节与 64 帧，仅匹配已登记模块并输出正整数行列；未知位置省略，异常 message 不提取。
 应用负责 subscriber 与最终失败报告；库仅建立操作 span，异步和线程入口显式传播上下文。
 默认等级为 info，格式为 text，输出为 stderr；日志配置被拒绝时不静默回退。
 预期配置拒绝为 warn，操作失败为 error；过滤不能让 CLI 失去失败原因。panic payload 不进入输出。
@@ -314,7 +322,7 @@ Compose 移除其余 capabilities，仅保留权限初始化与降权所需的 C
 Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量或吞吐承诺；
 入口为 UID/GID 10001 准备读取权限。Windows NTFS/共享权限、rootless/userns-remap 的
 宿主 ID 映射和 SELinux 标签仍由部署环境提供；不支持修改属组或模式的挂载会使初始化失败，不静默跳过。
-部署时用 `docker compose run --rm limen check` 验证真实挂载下的读取和配置装载；本机检查不能代替容器运行验收。
+部署时用 `docker compose run --rm limen check` 检查真实挂载下的读取和配置装载。
 挂载和 `security_opt` 的规则见 [Compose 官方服务配置参考](https://docs.docker.com/reference/compose-file/services/)，
 宿主约束见 [bind mounts](https://docs.docker.com/engine/storage/bind-mounts/) 和
 [用户命名空间映射](https://docs.docker.com/engine/security/userns-remap/)。
@@ -326,4 +334,3 @@ Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量
 [Build push action](https://github.com/docker/build-push-action)。
 GHCR 登录使用 [Docker login action v4](https://github.com/docker/login-action)，清理使用
 [GitHub Script v9](https://github.com/actions/github-script) 提供的 Octokit 分页和 REST 请求；两者使用 Node 24，适配 GitHub 托管 runner。
-容器运行及容器内 SIGTERM 传播、Linux TLS/CA、慢客户端与流背压验收按部署阶段单独安排。

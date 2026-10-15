@@ -2,7 +2,7 @@
 
 本文介绍 Limen 当前已实现的功能和配置方式。安装与快速开始见
 [英文 README](../README.md) 或[中文 README](../README.zh-CN.md)，完整契约见[设计](design.md)，
-开发检查命令见[开发指引](development.md)，尚未完成的验证只在[路线图](roadmap.md)中跟踪。
+开发检查命令见[开发指引](development.md)，后续工作在[路线图](roadmap.md)中跟踪。
 
 ## 功能概览
 
@@ -519,6 +519,15 @@ Limen 不跟随上游重定向、不自动重试、不使用环境代理，也�
 日志默认写 stderr，提供请求 ID、路由、阶段、状态、预算与结果元数据。
 正文、令牌、Cookie、原始 query 和携密源码不进入日志；目标只记录 scheme、host 和 port。
 诊断中的字段路径和位置也会清理，不通过开启 debug 来回显 JS 异常全文。
+JS 异常保留 `SyntaxError`、`ReferenceError`、`TypeError`、`Error` 等固定类别及可用行列。例如：
+
+```text
+JavaScript runtime: Module; exception=Error, module=import#1, line=4, column=25; cause: quickjs=Exception
+```
+
+`module=config.js` 表示配置入口；`import#N` 表示按首次加载顺序编号的本地模块，不是文件名。
+模块路径、函数名、异常 message 和 stack 可能携密，因此不输出；栈缺失、被自定义、格式不匹配或超限时可能没有行列。
+`Module` 包括启动阶段的脚本求值失败，并不只表示导入文件找不到。
 
 ### 命令行与配置检查
 
@@ -582,6 +591,9 @@ environment:
 
 设置宿主环境变量后再运行前述 `docker compose run` 和 `up`，两者会使用同一环境配置。
 Compose 的变量替换发生在容器启动之前；宿主 `.env` 文件不会由 Limen 脚本自行加载。
+仅把 `.env` 放在 `compose.yaml` 旁边也不会自动把其中的变量传入容器；仍需上述 `environment` 映射，
+或在服务下显式配置 `env_file`。变量名必须与 `config.js` 及其导入模块中 `limen.env(...)` 的参数完全一致，
+本地导入模块也需一并上传。
 
 镜像 entrypoint 启动时以 root 执行 `chgrp -Rh 10001 /data` 和 `chmod -R g=rX /data`：
 保留宿主文件属主，将组权限设为读取及目录访问，不跟随树内符号链接修改外部目标。
@@ -608,6 +620,5 @@ CI 在 main push 检查通过后构建并推送 `ghcr.io/rhnu/limen:latest`；PR
 自动重试、故障转移、热重载、上游模型发现、多租户或配额。
 传递请求扩展字段不等于实现相应 API 或完整多模态跨形态转换。
 
-Windows 和 Linux CI 已有纯逻辑测试、隔离 VM 与本地合成 HTTP 实验的运行证据，
-Linux 镜像构建也已跑通。真实上游验收、Linux TLS/CA、目标环境慢客户端和流背压，
-以及容器启动、挂载权限与关闭行为仍需单独验证；详见[路线图](roadmap.md)。
+Windows 和 Linux CI 覆盖纯逻辑测试、隔离 VM 与本地合成 HTTP 实验；
+CI 同时负责 Linux 镜像构建与 main 分支的镜像发布。部署操作见上文 Docker 部署章节。

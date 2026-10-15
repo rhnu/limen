@@ -20,7 +20,7 @@ responses with local JavaScript modules. Linux Docker is the primary deployment 
 - Configuration validation, structured metadata logs, and a non-root service process in Docker.
 
 See the [feature and usage guide](docs/features.md) (Chinese) for configuration and hook examples.
-The [roadmap](docs/roadmap.md) tracks remaining deployment validation. Limen currently focuses on Chat
+The [roadmap](docs/roadmap.md) tracks remaining work. Limen currently focuses on Chat
 Completions; automatic retries, failover, hot reload, model discovery, UI, and other API families are
 outside its scope.
 

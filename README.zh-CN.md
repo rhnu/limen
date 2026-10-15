@@ -18,7 +18,7 @@ Limen 是使用 Rust 编写的 Chat Completions 网关，面向个人和内网�
 - 有界请求、队列、JavaScript 执行、事件展开和流聚合，明确报告超时与流截断。
 - 配置检查、结构化元数据日志和 Docker 内的非 root 服务进程。
 
-配置和 hook 示例见[功能与使用指南](docs/features.md)，部署验证的剩余工作见[路线图](docs/roadmap.md)。
+配置和 hook 示例见[功能与使用指南](docs/features.md)，后续工作见[路线图](docs/roadmap.md)。
 当前专注于 Chat Completions；自动重试、故障转移、热重载、模型发现、UI 和其他 API 不在实现范围内。
 
 ## 从源码构建
@@ -144,7 +144,7 @@ GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 - [功能与使用指南](docs/features.md)：配置、API、hook、流处理和故障排查。
 - [设计](docs/design.md)：架构与契约，区分已确认决定和待验证事项。
 - [开发指引](docs/development.md)：构建、Rusteward、单元测试与隔离运行时实验。
-- [路线图](docs/roadmap.md)：剩余任务与部署验收。
+- [路线图](docs/roadmap.md)：剩余任务与后续工作。
 
 参与开发前请阅读[工作区约定](AGENTS.md)和开发指引。修改中不得包含真实凭据，
 验证结果应区分纯逻辑单元测试、运行时实验和部署验收。
