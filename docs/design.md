@@ -262,7 +262,8 @@ userinfo 中。需要静态 query 参数时保留，但日志不输出原始 que
 provider；可用普通 JS 常量、函数或对象展开复用重复配置。
 
 当前 schema 要求 1–1024 个 provider、1–4096 个 model；每条 pipeline 最多 256 步，步名在该数组内唯一。
-provider 名、模型别名与步名为 1–128 字节的 ASCII 字母、数字或 `-._/`；`upstream` 为 1–1024 字节且不含控制字符。
+provider 名与步名为 1–128 字节的 ASCII 字母、数字或 `-._/`；模型别名另允许冒号 `:`，长度同为 1–128 字节。
+模型别名按完整字符串精确匹配，冒号不隐式指定 provider 或服务档位；`upstream` 为 1–1024 字节且不含控制字符。
 endpoint 最多 8192 字节，显式使用 `http://` 或 `https://` 前缀（scheme 忽略大小写），拒绝空白、反斜杠、userinfo 和 fragment，
 保留原始完整路径与 query。静态 `headers` 是字符串到字符串的对象，拒绝大小写重复的头名及 Rust 管理的传输头。
 可选字段通过省略表达缺失，显式 `null` 不能代替 auth、hook 或其他配置记录；defaults 内的 JSON `null` 保留。

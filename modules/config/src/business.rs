@@ -107,14 +107,14 @@ impl BusinessConfig {
             ));
         }
         for (name, provider) in &config.providers {
-            validate_name(name, "providers.*")?;
+            validate_name(name, "providers.*", b"-._/")?;
             validate_endpoint(&provider.endpoint)?;
             validate_headers(provider)?;
             validate_defaults(&provider.defaults, "providers.*.defaults")?;
             validate_pipeline(&provider.pipeline, "providers.*.pipeline")?;
         }
         for (name, model) in &config.models {
-            validate_name(name, "models.*")?;
+            validate_name(name, "models.*", b"-._/:")?;
             if !config.providers.contains_key(&model.provider) {
                 return Err(ConfigError::new(
                     ConfigErrorKind::Reference,
@@ -139,12 +139,12 @@ impl BusinessConfig {
     }
 }
 
-fn validate_name(name: &str, field: &str) -> Result<(), ConfigError> {
+fn validate_name(name: &str, field: &str, punctuation: &[u8]) -> Result<(), ConfigError> {
     if name.is_empty()
         || name.len() > 128
         || !name
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._/".contains(&byte))
+            .all(|byte| byte.is_ascii_alphanumeric() || punctuation.contains(&byte))
     {
         return Err(ConfigError::new(
             ConfigErrorKind::Schema,
@@ -272,7 +272,7 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
     }
     let mut names = BTreeSet::new();
     for step in pipeline {
-        validate_name(&step.name, field)?;
+        validate_name(&step.name, field, b"-._/")?;
         let hooks = [
             step.before_send,
             step.after_receive,

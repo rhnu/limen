@@ -12,6 +12,58 @@ fn parse(value: Value) -> Result<BusinessConfig, ConfigError> {
 }
 
 #[test]
+fn model_aliases_accept_colons_and_preserve_distinct_mappings() {
+    for alias in [
+        "Vendor/model_v1.2:vertex:flex".to_owned(),
+        format!("{}:", "a".repeat(127)),
+    ] {
+        let mut value = basic();
+        value["models"][&alias] = json!({"provider": "primary", "upstream": "variant-model"});
+        let config = parse(value).unwrap();
+        assert_eq!(config.models[&alias].upstream, "variant-model");
+        assert_eq!(config.models["chat"].upstream, "actual-model");
+    }
+}
+
+#[test]
+fn model_aliases_still_reject_invalid_characters_and_lengths() {
+    for alias in [
+        String::new(),
+        "chat:has space".to_owned(),
+        "chat:flex\n".to_owned(),
+        "chat:\0flex".to_owned(),
+        "chat:模型".to_owned(),
+        "chat@flex".to_owned(),
+        format!("{}:", "a".repeat(128)),
+    ] {
+        let mut value = basic();
+        value["models"][&alias] = json!({"provider": "primary", "upstream": "variant-model"});
+        let error = parse(value).err().unwrap();
+        assert_eq!(error.kind, ConfigErrorKind::Schema);
+        assert_eq!(error.field, "models.*");
+    }
+}
+
+#[test]
+fn colons_remain_invalid_in_provider_and_step_names() {
+    let mut value = basic();
+    let provider = value["providers"]["primary"].clone();
+    value["providers"] = json!({"primary:region": provider});
+    value["models"]["chat"]["provider"] = json!("primary:region");
+    let error = parse(value).err().unwrap();
+    assert_eq!(error.kind, ConfigErrorKind::Schema);
+    assert_eq!(error.field, "providers.*");
+
+    for (layer, name) in [("providers", "primary"), ("models", "chat")] {
+        let mut value = basic();
+        value[layer][name]["pipeline"] = json!([{"name": "step:flex", "beforeSend": 1}]);
+        let error = parse(value).err().unwrap();
+        assert_eq!(error.kind, ConfigErrorKind::Schema);
+        assert_eq!(error.field, format!("{layer}.*.pipeline"));
+    }
+}
+
+#[test]
 fn preserves_endpoint_query_defaults_and_hook_order() {
     let mut value = basic();
     value["onRequest"] = json!(0);

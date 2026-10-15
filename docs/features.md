@@ -133,7 +133,8 @@ Model 字段为 `provider`、`upstream`、`defaults` 与 `pipeline`；模型的�
 配置记录拒绝未知字段，可选字段用省略表达缺失，不能用 `null` 替代配置对象或函数。
 
 可配置 1–1024 个 provider、1–4096 个 model，每条 pipeline 最多 256 步。
-Provider 名、模型别名与步骤名使用 ASCII 字母、数字或 `-._/`，长度为 1–128 字节。
+Provider 名与步骤名使用 ASCII 字母、数字或 `-._/`；模型别名另允许冒号 `:`，三者长度均为 1–128 字节。
+例如 `chat:vertex:flex` 可作为模型别名，按完整字符串精确匹配；冒号不隐式指定 provider 或服务档位。
 同一条 pipeline 内步骤名必须唯一，每个步骤至少包含一个阶段函数。
 
 ### 从环境变量读取上游密钥

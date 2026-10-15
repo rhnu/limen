@@ -264,10 +264,15 @@ fn endpoint_uses_complete_url_and_diagnostics_remove_secrets() {
 
 #[test]
 fn model_list_contains_only_explicit_aliases() {
-    let output = models_json(&config());
+    let mut config = config();
+    config
+        .models
+        .insert("chat:vertex:flex".to_owned(), config.models["chat"].clone());
+    let output = models_json(&config);
     assert_eq!(output["object"], "list");
-    assert_eq!(output["data"].as_array().unwrap().len(), 1);
+    assert_eq!(output["data"].as_array().unwrap().len(), 2);
     assert_eq!(output["data"][0]["id"], "chat");
+    assert_eq!(output["data"][1]["id"], "chat:vertex:flex");
     assert!(!output.to_string().contains("real-model"));
     assert!(!output.to_string().contains("fictional.invalid"));
 }
