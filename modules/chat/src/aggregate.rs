@@ -143,7 +143,7 @@ impl Aggregator {
                 let target_call = target.tools.entry(index).or_insert_with(|| json!({}));
                 let target_call = target_call.as_object_mut().ok_or(Error::InvalidChunk)?;
                 append_field(target_call, "id", call.get("id"))?;
-                if let Some(kind) = call.get("type") {
+                if let Some(kind) = call.get("type").filter(|value| !value.is_null()) {
                     if kind.as_str() != Some("function") {
                         return Err(Error::Unsupported);
                     }
@@ -267,7 +267,8 @@ fn append_field(
     key: &str,
     source: Option<&Value>,
 ) -> Result<(), Error> {
-    if let Some(source) = source {
+    // A null continuation adds no fragment and cannot supply a required complete field.
+    if let Some(source) = source.filter(|value| !value.is_null()) {
         let fragment = source.as_str().ok_or(Error::Unsupported)?;
         let value = target
             .entry(key)

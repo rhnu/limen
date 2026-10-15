@@ -539,10 +539,13 @@ hook 选择其他 origin 时使用不保留空闲连接的短期客户端；活�
 - JSON ↔ SSE 首版转换覆盖文本、refusal、function tool calls、多 choice（按 index
   独立处理）、finish reason 和 usage；tool call 的 ID、函数名和 arguments
   分片都须正确归并或拆分。
+- 工具调用 delta 的可选 `id`、`type`、`function.name` 和 `function.arguments` 为 `null` 时表示本块没有新增值；
+  同形态传递保留这些值，聚合时跳过，最终完整工具仍须具备 ID、`function` 类型、函数名和 arguments。
 - 不支持的跨形态结构返回明确错误，不静默丢字段或拼成假文本。
 
 首版不把“能转发音频/图片相关字段”宣传成“已实现完整多模态跨形态转换”。字段结构以
 [OpenAI Chat Completions 官方参考](https://developers.openai.com/api/reference/resources/chat)
+及[函数调用流式指南](https://developers.openai.com/api/docs/guides/function-calling#streaming)
 为依据；这里的支持范围是 Limen 的建议契约，不代表上游全部能力。
 
 ## 8. 流、错误与取消

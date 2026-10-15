@@ -40,6 +40,118 @@ fn decode(input: &[u8], limit: usize) -> Result<Vec<Event>, Error> {
     Ok(events)
 }
 
+fn nullable_tool_chunks() -> Vec<Value> {
+    vec![
+        one(
+            0,
+            json!({"role":"assistant","tool_calls":[
+                {"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":"{"}}
+            ]}),
+            Value::Null,
+        ),
+        one(
+            0,
+            json!({"tool_calls":[
+                {"index":0,"id":null,"type":null,"function":{"name":null,"arguments":null}}
+            ]}),
+            Value::Null,
+        ),
+        one(
+            0,
+            json!({"tool_calls":[
+                {"index":0,"id":null,"type":null,"function":{"name":null,"arguments":"\"city\":\"Paris\"}"}}
+            ]}),
+            Value::Null,
+        ),
+        one(0, json!({}), json!("tool_calls")),
+    ]
+}
+
+#[test]
+fn nullable_tool_deltas_survive_decoding_encoding_and_completion_tracking() {
+    let chunks = nullable_tool_chunks();
+    let mut input = Vec::new();
+    for chunk in &chunks {
+        input.extend_from_slice(format!("data: {chunk}\n\n").as_bytes());
+    }
+    input.extend_from_slice(DONE);
+    let decoded = decode(&input, 4096).unwrap();
+    assert_eq!(decoded.len(), chunks.len() + 1);
+    let mut tracker = ChunkTracker::new(1);
+    let mut encoded = Vec::new();
+    for (event, expected) in decoded.iter().zip(&chunks) {
+        let Event::Chunk(event) = event else {
+            panic!("expected tool delta before DONE")
+        };
+        assert_eq!(event, expected);
+        tracker.push(event).unwrap();
+        encoded.extend_from_slice(&encode_chunk(event, 4096).unwrap());
+    }
+    assert!(matches!(decoded.last(), Some(Event::Done)));
+    tracker.finish().unwrap();
+    encoded.extend_from_slice(DONE);
+    assert_eq!(encoded, input);
+}
+
+#[test]
+fn aggregation_ignores_null_tool_fragments_without_erasing_identifiers() {
+    let mut aggregate = Aggregator::new(100_000, 10);
+    for chunk in nullable_tool_chunks() {
+        aggregate.push(chunk).unwrap();
+    }
+    let output = aggregate.finish().unwrap();
+    assert_eq!(
+        output["choices"][0]["message"]["tool_calls"],
+        json!([
+            {"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}
+        ])
+    );
+}
+
+#[test]
+fn null_tool_fields_do_not_satisfy_complete_tool_requirements() {
+    for pointer in ["/id", "/type", "/function/name", "/function/arguments"] {
+        let mut tool = json!({"index":0,"id":"call_1","type":"function",
+            "function":{"name":"weather","arguments":"{}"}});
+        *tool.pointer_mut(pointer).unwrap() = Value::Null;
+        let mut aggregate = Aggregator::new(10_000, 10);
+        aggregate
+            .push(one(
+                0,
+                json!({"role":"assistant","tool_calls":[tool]}),
+                json!("tool_calls"),
+            ))
+            .unwrap();
+        assert!(
+            aggregate.finish().is_err(),
+            "required tool field: {pointer}"
+        );
+    }
+}
+
+#[test]
+fn tool_deltas_still_reject_non_strings_and_unsupported_conversion_types() {
+    for pointer in ["/id", "/type", "/function/name", "/function/arguments"] {
+        let mut tool = json!({"index":0,"id":"call_1","type":"function",
+            "function":{"name":"weather","arguments":"{}"}});
+        *tool.pointer_mut(pointer).unwrap() = json!(42);
+        let chunk = one(0, json!({"tool_calls":[tool]}), Value::Null);
+        assert!(
+            matches!(validate_chunk(&chunk), Err(Error::InvalidChunk)),
+            "invalid tool field: {pointer}"
+        );
+    }
+    let chunk = one(
+        0,
+        json!({"tool_calls":[{"index":0,"type":"unsupported"}]}),
+        Value::Null,
+    );
+    assert!(matches!(
+        Aggregator::new(10_000, 10).push(chunk),
+        Err(Error::Unsupported)
+    ));
+}
+
 #[test]
 fn decoder_accepts_utf8_bom_comments_multiline_and_all_line_endings() {
     let value = one(

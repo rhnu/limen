@@ -76,12 +76,12 @@ pub fn validate_chunk(value: &Value) -> Result<(), Error> {
                 if !seen.insert(index(call.get("index").ok_or(Error::InvalidChunk)?)?) {
                     return Err(Error::InvalidChunk);
                 }
-                optional_string(call, "id", false)?;
-                optional_string(call, "type", false)?;
+                optional_string(call, "id", true)?;
+                optional_string(call, "type", true)?;
                 if let Some(function) = call.get("function") {
                     let function = object(function)?;
-                    optional_string(function, "name", false)?;
-                    optional_string(function, "arguments", false)?;
+                    optional_string(function, "name", true)?;
+                    optional_string(function, "arguments", true)?;
                 }
             }
         }

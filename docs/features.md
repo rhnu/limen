@@ -423,6 +423,8 @@ JSON → SSE 必须等待上游完整 JSON，不会缩短上游生成造成的�
 
 跨形态转换支持文本、refusal、function tool calls（含 ID、函数名与 arguments 分片）、
 按 index 区分的多 choice、finish reason 与 usage。
+工具调用续块中可选的 `id`、`type`、`function.name` 和 `function.arguments` 为 `null` 时，
+表示该字段本块没有新增值；SSE 透传保留，聚合时跳过，最终完整工具的必要字段仍须齐全。
 同形态保留合法扩展字段；跨形态遇到不支持的字段或结构明确失败，不能承诺任意多模态转换。
 
 SSE 按事件解析，支持跨网络分块 UTF-8、多种换行与多行 `data:`。
