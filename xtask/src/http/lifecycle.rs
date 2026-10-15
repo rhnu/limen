@@ -194,11 +194,21 @@ pub async fn resources(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     item.upstream.controls.lock().await.records.is_empty(),
                     "oversized request never sent"
                 );
+                Ok(())
+            },
+        )
+        .await?;
+    laboratory
+        .with_fixture(
+            Options {
+                config: Some(PENDING_CONFIG),
+                ..Options::default()
+            },
+            async |item| {
                 let held = [
                     item.open_request(request(&[("wait", json!(true))])).await?,
                     item.open_request(request(&[("wait", json!(true))])).await?,
                 ];
-                sleep(Duration::from_millis(100)).await;
                 item.request(request(&[])).await?.error(
                     429,
                     "busy",

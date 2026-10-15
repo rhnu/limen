@@ -134,6 +134,8 @@ HTTP 外部上限默认 18 秒，接受 5–60 秒。未提供 `--executable` �
 Unix 使用独立进程 session，Windows 使用 Job Object；超时、失败及父进程中断均清理整棵进程树。
 VM 与 HTTP 的临时根都由父进程持有；HTTP worker 在其中创建 fixture 子目录。
 合成上游复用 Hyper，客户端复用 reqwest；客户端断开实验另外持有原始 TCP socket。
+持有请求通过 `Expect: 100-continue` 确认网关已分配请求许可，再发送正文；不以 socket 写入完成或固定休眠推断准入。
+`resources` 的超大正文与并发上限检查使用独立实例，避免前一个请求的异步观察清理影响容量断言。
 实验覆盖认证/路由、非流管线、失败状态与媒体类型、资源上限、观察预算、deadline、断开、关闭和 VM 退役。
 `request-overrides` 检查上游实际收到的参数、URL 和请求头，覆盖 provider/model/client/hook 优先级、
 对象与数组的浅层替换、显式 null、字段删除、多模态/工具/扩展字段保留，以及改写 model 后不重新路由。

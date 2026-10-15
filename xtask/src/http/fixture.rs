@@ -10,7 +10,7 @@ use anyhow::{Context, Result, ensure};
 use http::{HeaderMap, Method};
 use serde_json::{Value, json};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     time::{Instant, sleep, timeout},
 };
@@ -289,7 +289,7 @@ impl Fixture {
         })
     }
 
-    /// Send a complete request and retain the socket so experiments control disconnection.
+    /// Confirm admission with 100 Continue before sending the body and retaining the socket.
     pub async fn open_request(&self, body: Value) -> Result<TcpStream> {
         let raw = serde_json::to_vec(&body).context("encode held experiment request")?;
         let mut stream = timeout(
@@ -300,16 +300,38 @@ impl Fixture {
         .context("held request connection deadline")?
         .context("connect held experiment request")?;
         let header = format!(
-            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-client-secret\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-client-secret\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
             raw.len()
         );
         timeout(Duration::from_secs(2), async {
             stream.write_all(header.as_bytes()).await?;
-            stream.write_all(&raw).await
+            // Hyper requests the body only after the gateway acquires a permit.
+            // A completed socket write alone does not establish request admission.
+            let mut interim = Vec::new();
+            while !interim.ends_with(b"\r\n\r\n") {
+                ensure!(
+                    interim.len() < 32 * 1024,
+                    "held request interim headers exceeded limit"
+                );
+                interim.push(
+                    stream
+                        .read_u8()
+                        .await
+                        .context("read held request admission response")?,
+                );
+            }
+            ensure!(
+                interim.starts_with(b"HTTP/1.1 100 "),
+                "held request was rejected before body admission"
+            );
+            stream
+                .write_all(&raw)
+                .await
+                .context("write admitted request body")
         })
         .await
-        .context("held request write deadline")?
-        .context("write held experiment request")?;
+        .context("held request admission deadline")?
+        .context("admit held experiment request")?;
         Ok(stream)
     }
 
