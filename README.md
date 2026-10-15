@@ -1,186 +1,38 @@
 # Limen
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md)
 
-Limen is a configurable Chat Completions gateway written in Rust for personal and private-network use.
-Expose a small set of model aliases, connect them to your upstream providers, and adapt requests and
-responses with local JavaScript modules. Linux Docker is the primary deployment target.
-
-## Features
-
-- OpenAI-style `POST /v1/chat/completions` and `GET /v1/models` endpoints.
-- Explicit model aliases with reusable provider settings and independent client and upstream authentication.
-- Ordered provider → model pipelines for request bodies, URLs, headers, responses, and streaming events.
-- Synchronous and asynchronous JavaScript hooks, local ESM imports, and per-request state.
-- Optional JSDoc type checking and offline script tests with synthetic JSON/SSE responses.
-- Explicit request policy rejection and read-only access to allowlisted client headers.
-- Read upstream credentials from process environment variables with `limen.env(name)`.
-- JSON and SSE in all four upstream/downstream combinations, including text, refusal, function tool calls,
-  multiple choices, finish reasons, and usage when converting between formats.
-- Bounded requests, queues, JavaScript execution, event expansion, and stream aggregation, with explicit
-  timeout and truncated-stream errors.
-- Configuration validation, structured metadata logs, and a non-root service process in Docker.
-
-See the [feature and usage guide](docs/features.md) (Chinese) for configuration and hook examples.
-The [roadmap](docs/roadmap.md) tracks remaining work. Limen currently focuses on Chat
-Completions; automatic retries, failover, hot reload, model discovery, UI, and other API families are
-outside its scope.
-
-## Build from source
-
-Requirements:
-
-- Rustup and the toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml).
-- A C/C++ build toolchain, CMake, and platform development tools for QuickJS and AWS-LC.
-  On Debian/Ubuntu, install `build-essential`, `cmake`, and `pkg-config`. On Windows, use the MSVC
-  build tools and CMake.
-
-```sh
-git clone https://github.com/rhnu/limen.git
-cd limen
-cargo build --release --locked --bin limen
-```
-
-The binary is `target/release/limen` (`target/release/limen.exe` on Windows).
+Limen is a Rust Chat Completions gateway for personal and private-network use. Local JavaScript adapts providers and request/response handling, while explicit model aliases give clients stable names.
 
 ## Quick start
 
-The commands below use a POSIX shell. In PowerShell, copy the configuration tree with
-`Copy-Item -LiteralPath examples -Destination local -Recurse`. The curl examples use POSIX line
-continuations and quoting; adapt them for PowerShell and invoke `curl.exe`.
-
-1. Copy the entire example tree, preserving the shared module imports:
-
-   ```sh
-   cp -R examples local
-   ```
-
-2. Edit `local/basic/server.toml` and set your client bearer token. Edit `local/basic/config.js` with
-   your provider's **full Chat Completions URL**, upstream credentials, and upstream model name.
-   The bundled `.invalid` URL and tokens are placeholders. Keep real configuration in `local/`.
-   The example reads `UPSTREAM_API_KEY` when set; see the [environment variable guide](docs/features.md#从环境变量读取上游密钥).
-
-3. Validate the configuration, then start the gateway:
-
-   ```sh
-   ./target/release/limen check --config local/basic/server.toml
-   ./target/release/limen serve --config local/basic/server.toml
-   ```
-
-The default listener is `127.0.0.1:8080`. `config.js` is loaded from the directory containing the
-selected server file. `check` executes top-level JavaScript, including imported modules and top-level
-await; it does not call a provider or run request hooks.
-
-Test request hooks without networking using the [offline example](examples/testing):
-
-```sh
-./target/release/limen test --config examples/testing/server.toml --cases examples/testing
-```
-
-Each case gets a fresh VM and runs through the production pipeline with a synthetic upstream response.
-Case fields and assertions are described in the [offline testing guide](docs/features.md#离线脚本测试).
-For editor feedback and static checking of JavaScript configurations, see the
-[development guide](docs/development.md#脚本静态检查). Node.js is only needed for development checks and
-optional library bundling. The [library example](docs/features.md#第三方库接入) demonstrates Valibot validation,
-request rejection, and client header access with synthetic offline cases.
-
-### Call the API
-
-Replace the token below with the one in your server configuration. The `chat` model is the public alias
-defined in the example configuration.
-
-```sh
-curl http://127.0.0.1:8080/v1/models \
-  -H 'Authorization: Bearer example-limen-client-token'
-
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer example-limen-client-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"chat","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-For streaming, use `curl -N` and add `"stream":true` to the request body:
-
-```sh
-curl -N http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer example-limen-client-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"chat","messages":[{"role":"user","content":"Hello"}],"stream":true}'
-```
-
-Clients with a configurable Chat Completions base URL can use `http://127.0.0.1:8080/v1`, the client
-bearer token, and a configured model alias. Select their Chat Completions mode.
-
-## Docker
-
-Docker Engine or Docker Desktop with Linux containers and Docker Compose is required. Compose uses
-the published `ghcr.io/rhnu/limen:latest` image for Linux `amd64`.
-
-Prepare `data/` and copy the standalone Docker example before the first deployment:
+Get a checkout of this repository and install Docker Compose, then run the following from the repository root in a POSIX shell. The supplied image targets Linux amd64.
 
 ```sh
 mkdir -p data
-cp -R examples/docker/. data/
+cp examples/docker/server.toml examples/docker/config.js data/
 ```
 
-In PowerShell, use `New-Item -ItemType Directory -Path data -Force`, then
-`Copy-Item -Path examples/docker/* -Destination data -Recurse`.
-Fill in the provider settings in `data/config.js` and the client bearer token in `data/server.toml`.
-The configuration files are not generated automatically. Then run:
+Edit the copied configuration:
+
+- In `data/server.toml`, replace `client_auth.bearer` with your client token.
+- In `data/config.js`, set the complete upstream Chat Completions URL, separate upstream credentials, and the upstream model name.
+
+Validate and start the gateway:
 
 ```sh
-docker compose pull
 docker compose run --rm limen check
 docker compose up -d
-docker compose logs -f
 ```
 
-Stop the service with `docker compose down`. Compose mounts `data/` at `/data`, the container's
-working directory. Both commands try `/data/server.toml` first, then `/data/server.yaml` only if TOML is absent. The host port is bound to
-`127.0.0.1:8080`; the container configuration listens on `0.0.0.0:8080`. The entrypoint starts as root,
-sets the data group to `10001` with group read and directory traversal permissions, and executes Limen
-as `10001:10001`. File owners are preserved. The data mount is writable for permission setup;
-the container root filesystem remains read-only.
-Local credentials are excluded from the image build context. GHCR package access
-depends on its visibility and your registry credentials. See the [deployment guide](docs/features.md#docker-部署)
-for details.
+The gateway listens at `http://127.0.0.1:8080`. See the deployment guide for PowerShell preparation, environment variables, and operations.
 
-## Configuration and operation
+## Documentation
 
-- `server.toml` or `server.yaml` controls listening, client authentication, resource limits, and logging,
-  using the same fields, defaults, and validation rules.
-- The adjacent `config.js` exports providers, model aliases, pipelines, and optional global hooks.
-- Client credentials are separate from provider credentials. Client Authorization and Cookie headers
-  are not forwarded by default.
-- Model routing happens once, after `onRequest`. Each pipeline stage runs provider steps first, then
-  model steps, in array order.
-- The original client `stream` setting selects the downstream format. Hooks can independently choose
-  the upstream format. JSON → SSE waits for the complete upstream JSON response.
-- A successful SSE response ends with `[DONE]`. A failure after streaming starts sends `event: error`
-  and closes the stream without a success marker.
-- Configuration changes require a restart. Ctrl-C stops the listener and cancels in-flight requests;
-  Unix also supports SIGTERM.
+Detailed guides are in Simplified Chinese:
 
-Run `limen --help`, `limen check --help`, `limen serve --help`, or `limen test --help` for command options, and
-`limen --version` for the version. Without `--config`, both commands try `server.toml` in the current
-directory and use `server.yaml` only if TOML is absent. Any other TOML error stops startup; files are
-never merged. Explicit `--config` paths select just that file, using `.toml`, `.yaml`, or `.yml` to
-choose the parser. Detailed errors, exit codes, limits, and hook contracts are in the
-[usage guide](docs/features.md).
+- [Documentation index](docs/README.md)
+- [Build from source and development](docs/development.md)
+- [Deployment guide](docs/features/deployment.md)
 
-## Documentation and development
-
-The detailed documentation is currently in Chinese:
-
-- [Features and usage](docs/features.md): configuration, API calls, hooks, streaming, and troubleshooting.
-- [Design](docs/design.md): architecture and contracts, including confirmed decisions and validation gaps.
-- [Development](docs/development.md): build requirements, Rusteward, JavaScript types, regular tests, and isolated boundary tests.
-- [Roadmap](docs/roadmap.md): remaining work and deployment acceptance.
-
-For contributions, read the [workspace conventions](AGENTS.md) and development guide. Keep real
-credentials out of changes and distinguish static checks, regular tests, offline cases, and deployment validation.
-
-## License
-
-Limen is licensed under the GNU Affero General Public License, version 3 only
-(`AGPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
+Licensed under [AGPL-3.0-only](LICENSE).
