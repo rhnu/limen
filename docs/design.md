@@ -216,7 +216,8 @@ JS runtime 必须随服务存活。修改文件后重启服务才生效。
 
 脚本通过全局只读接口 `limen.env(name)` 同步读取 Limen 进程继承的单个环境变量。
 配置顶层、本地导入模块和 hook 均可调用；`limen` 与它的 `env` 属性不可替换或删除。
-接口由脚本库在用户模块求值前安装，JS 句柄和宿主回调始终留在拥有 VM 的线程。
+`limen` 命名空间发布前冻结，脚本不能添加属性或改变其原型。
+接口由脚本库的统一宿主入口在用户模块求值前安装，JS 句柄和宿主回调始终留在拥有 VM 的线程。
 
 - `name` 必须为非空字符串，不得包含 `=` 或 NUL；不隐式转换其他 JS 类型。
 - 已设置返回 Unicode 字符串，保留空字符串与首尾空白；未设置返回 `undefined`。
@@ -711,6 +712,14 @@ QuickJS 是 JavaScript 引擎，并不自动提供
 Node.js、`fetch`、定时器或浏览器标准库。首版不承诺这些能力；配置复用依靠本地模块和普通
 JS。宿主仅另外提供第 3.4 节的只读 `limen.env(name)` 接口。
 
+脚本可访问的宿主能力由 `host::install` 集中注册：创建命名空间、显式注册函数、冻结对象，
+最后以不可替换、不可删除的全局 `limen` 绑定发布。该入口在 VM/context 创建并设置预算后、
+用户模块求值前调用一次。各能力模块只构造函数及维护自身参数、预算和错误语义，不自行写入全局对象。
+当前 `host/env` 实现环境变量读取，无需动态注册表或插件机制。
+
+`limen` 保存 VM 级宿主能力；每次 hook 的 `ctx` 继续承载请求、draft 与 state。
+JSON 桥接的代理检查和 header 校验通过工厂参数私有传入，不加入公开 `limen` 命名空间。
+
 ### 9.4 超时、取消与共享 VM 边界
 
 区分“某次调用不再等待”和“JS 执行已被中止”，不把取消 Rust future
@@ -960,8 +969,8 @@ SSE 解码复用 `sse-parse`，逐字节推进避免单网络块形成无界事�
 ### 12.4 库内模块与依赖方向
 
 `config` 保留 `server`、`business`、`error`；静态配置只保存 owned 数据与 hook ID。
-`script` 保留 `loader`、`environment`、`json`、`context`、`engine`、`error`，
-`environment` 安装只读环境变量接口，`engine/startup` 与 `engine/scheduler` 分工不变。
+`script` 保留 `loader`、`host`、`json`、`context`、`engine`、`error`，
+`host` 集中安装公开宿主 API，`host/env` 实现环境变量读取；`engine/startup` 与 `engine/scheduler` 分工不变。
 `lib.rs` 的公开调用与通道入口只有在职责或维护需要时再移入 `runtime.rs`，不把 VM 内部类型公开给根包。
 
 `chat` 库内部按 `sse`（分块解码与 framing）、`chunk`（Chat 事件与结束校验）、

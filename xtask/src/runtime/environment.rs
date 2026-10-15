@@ -35,13 +35,16 @@ pub(super) async fn run(fixture: &Fixture) -> ProbeResult {
         "token.mjs",
         r"
         export const token = limen.env('LIMEN_PROBE_ENV_TOKEN');
+        export const frozen = Object.isFrozen(limen)
+            && !Reflect.defineProperty(limen, 'moduleExtra', { value: true });
     ",
     )?;
     let path = fixture.write("config.js", r"
-        import { token } from './token.mjs';
+        import { token, frozen } from './token.mjs';
         const unicode = await Promise.resolve(limen.env('LIMEN_PROBE_ENV_UNICODE'));
         export default {
             providers: { p: { auth: { bearer: token } } },
+            frozen,
             unicode,
             missing: limen.env('LIMEN_PROBE_ENV_MISSING') === undefined,
             empty: limen.env('LIMEN_PROBE_ENV_EMPTY'),
@@ -73,6 +76,9 @@ pub(super) async fn run(fixture: &Fixture) -> ProbeResult {
                 rejected(() => { limen.env = () => 'changed'; }, TypeError);
                 rejected(() => { globalThis.limen = {}; }, TypeError);
                 rejected(() => { delete limen.env; }, TypeError);
+                rejected(() => { delete globalThis.limen; }, TypeError);
+                rejected(() => { limen.extra = true; }, TypeError);
+                rejected(() => Object.setPrototypeOf(limen, {}), TypeError);
                 ctx.checked = true;
             }
         };
@@ -90,10 +96,11 @@ pub(super) async fn run(fixture: &Fixture) -> ProbeResult {
     .await?;
     ensure(
         config["providers"]["p"]["auth"]["bearer"] == "synthetic-upstream-token"
+            && config["frozen"] == true
             && config["unicode"] == "密钥-é"
             && config["missing"] == true
             && config["empty"] == "",
-        "module environment lookup lost token, Unicode, absence or empty string",
+        "module host API lost freezing, token, Unicode, absence or empty string",
     )?;
     let id = hook(&config, "onRequest")?;
     let output = runtime

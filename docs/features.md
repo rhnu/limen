@@ -185,6 +185,7 @@ $env:UPSTREAM_API_KEY = 'example-upstream-token'
 非 Unicode 环境值抛出 `Error`。诊断不回显变量名、值或任意 JS 异常文本。
 
 该接口只按名称读取，不提供枚举、写入或 `.env` 自动加载；`limen` 和 `limen.env` 不可替换或删除。
+`limen` 命名空间已冻结，不能添加属性或改变其原型。
 配置是可信本地脚本，可读取进程继承的任意环境变量。顶层读取的密钥随配置在启动时固定；
 修改外部环境后需重启服务。`server.yaml` 不支持 `${...}` 插值，客户端 bearer 仍由 YAML 独立配置。
 

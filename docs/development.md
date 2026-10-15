@@ -27,6 +27,8 @@ Chat 库仅消费 owned 字节与 JSON，不持有连接，也不依赖配置或
 全 workspace 检查与测试继续显式使用 `--workspace`。`limen-xtask` 是独立开发工具包，
 通过 `cargo xtask` 显式调用；应用与职责库不依赖它。
 跨线程仅传 owned JSON、ID、deadline 与取消信号，库的公开 API 不暴露 rquickjs 句柄。
+脚本公开宿主能力在 `modules/script/src/host.rs` 的 `install` 中统一注册、冻结并发布到 `limen`；
+`host/env.rs` 只构造环境读取函数，单元测试随模块保存在 `host/env/tests.rs`。
 根包 gateway 模块负责路由、管线与错误，server 模块拥有连接、关闭和 VM 退役传播。
 短目录名表示职责，Cargo 包名使用 `limen-` 前缀；路径依赖由根清单显式指定。
 公开错误码、状态映射和安全错误对象属于根包 gateway；职责见
@@ -98,7 +100,8 @@ Cargo 首次仍需构建 xtask。内部 `__worker` 等子命令供监督器调�
 
 `environment` 通过父进程的子进程启动配置注入合成变量，不修改多线程进程的全局环境，
 也不需要 `unsafe`。它覆盖顶层、本地 ESM、异步 hook 的密钥读取、缺失与空值、Unicode、
-非法参数、非 Unicode 值、名称/值字节上限、只读绑定和失败后恢复；纯逻辑单元测试独立检查校验与错误来源。
+非法参数、非 Unicode 值、名称/值字节上限、只读绑定、导入前命名空间冻结和失败后恢复；
+纯逻辑单元测试独立检查校验与错误来源。
 该新增实验的单项与完整 18 项 VM 实验均已在 Windows 通过，Linux 运行待既有 CI 的完整 VM 步骤验证。
 
 检查示例配置：

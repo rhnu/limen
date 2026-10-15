@@ -2,7 +2,7 @@
 
 use std::env::VarError;
 
-use rquickjs::{Ctx, Exception, Function, Object};
+use rquickjs::{Ctx, Exception, Function};
 
 #[derive(Debug, thiserror::Error)]
 enum ReadError {
@@ -36,10 +36,9 @@ fn read_with(
     }
 }
 
-/// Install before user modules run; neither binding can be replaced or deleted.
-pub(crate) fn install(ctx: &Ctx<'_>, max_bytes: usize) -> rquickjs::Result<()> {
-    let namespace = Object::new(ctx.clone())?;
-    let env = Function::new(
+/// Build the bounded lookup function; the host module owns namespace publication.
+pub(super) fn function<'js>(ctx: &Ctx<'js>, max_bytes: usize) -> rquickjs::Result<Function<'js>> {
+    Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, name: rquickjs::String<'_>| {
             let name = name.to_string()?;
@@ -55,9 +54,7 @@ pub(crate) fn install(ctx: &Ctx<'_>, max_bytes: usize) -> rquickjs::Result<()> {
                 }
             })
         },
-    )?;
-    namespace.prop("env", env)?;
-    ctx.globals().prop("limen", namespace)
+    )
 }
 
 #[cfg(test)]

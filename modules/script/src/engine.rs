@@ -15,7 +15,7 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::{
-    Command, HookId, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, environment,
+    Command, HookId, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, host,
     json::{self, Bridge},
 };
 
@@ -111,7 +111,7 @@ pub(crate) async fn run(
     budget.arm(startup_deadline.min(Instant::now() + options.execution_timeout));
     let bridge = match context
         .with(|ctx| {
-            environment::install(&ctx, options.json_limits.max_bytes)
+            host::install(&ctx, options.json_limits.max_bytes)
                 .map_err(|error| json::failure(&ctx, error))?;
             json::bridge(&ctx, options.json_limits, options.max_output_events)
         })
