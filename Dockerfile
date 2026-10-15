@@ -38,17 +38,18 @@ FROM debian:trixie-slim AS runtime
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates libgcc-s1 \
+    && apt-get install --no-install-recommends -y ca-certificates libgcc-s1 util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 limen \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin limen
 
 COPY --from=builder /build/target/release/limen /usr/local/bin/limen
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/limen-entrypoint
 COPY LICENSE /usr/share/doc/limen/LICENSE
 
 WORKDIR /data
-USER 10001:10001
+USER 0:0
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/limen"]
+ENTRYPOINT ["/usr/local/bin/limen-entrypoint"]
 CMD ["serve"]

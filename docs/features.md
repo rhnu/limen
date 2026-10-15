@@ -8,18 +8,18 @@
 
 Limen 将显式配置的模型别名映射到上游 Chat Completions 服务，并在请求和响应之间执行本地 JavaScript 变换。
 
-| 功能           | 使用入口                           | 当前行为                                      |
-| -------------- | ---------------------------------- | --------------------------------------------- |
-| 模型列表       | `GET /v1/models`                   | 只列出 `models` 中的别名，不请求上游发现模型  |
-| 对话生成       | `POST /v1/chat/completions`        | 接受模型别名与消息，支持 JSON 或 SSE 下游     |
-| 客户端认证     | `server.yaml` 的 `client_auth`     | 两个接口共用 bearer token 或显式无认证配置    |
-| 上游连接       | `config.js` 的 `providers`         | 完整 endpoint、独立认证、静态头与默认参数     |
-| 模型映射       | `config.js` 的 `models`            | 选择 provider、上游模型名、模型默认参数和管线 |
-| 请求与响应变换 | 全局 hook 和 `pipeline`            | 每个阶段按 provider → model 正序执行          |
-| 流式变换       | `onUpstreamEvent`、`onStreamEvent` | 修改、丢弃或展开合法 Chat SSE JSON 事件       |
-| 配置复用       | 本地 `.js` / `.mjs` ESM            | 相对导入、共享规则、同步或异步 hook           |
-| 运行保护       | `limits`                           | 限制并发、队列、VM 执行、正文、流事件和聚合   |
-| 部署与诊断     | CLI、日志、Docker Compose          | 配置检查、安全错误、非 root 容器和信号关闭    |
+| 功能           | 使用入口                           | 当前行为                                       |
+| -------------- | ---------------------------------- | ---------------------------------------------- |
+| 模型列表       | `GET /v1/models`                   | 只列出 `models` 中的别名，不请求上游发现模型   |
+| 对话生成       | `POST /v1/chat/completions`        | 接受模型别名与消息，支持 JSON 或 SSE 下游      |
+| 客户端认证     | `server.yaml` 的 `client_auth`     | 两个接口共用 bearer token 或显式无认证配置     |
+| 上游连接       | `config.js` 的 `providers`         | 完整 endpoint、独立认证、静态头与默认参数      |
+| 模型映射       | `config.js` 的 `models`            | 选择 provider、上游模型名、模型默认参数和管线  |
+| 请求与响应变换 | 全局 hook 和 `pipeline`            | 每个阶段按 provider → model 正序执行           |
+| 流式变换       | `onUpstreamEvent`、`onStreamEvent` | 修改、丢弃或展开合法 Chat SSE JSON 事件        |
+| 配置复用       | 本地 `.js` / `.mjs` ESM            | 相对导入、共享规则、同步或异步 hook            |
+| 运行保护       | `limits`                           | 限制并发、队列、VM 执行、正文、流事件和聚合    |
+| 部署与诊断     | CLI、日志、Docker Compose          | 配置检查、安全错误、非 root 服务进程和信号关闭 |
 
 ## 配置服务与模型
 
@@ -520,10 +520,12 @@ Compose 直接使用已发布的 Linux `amd64` 镜像 `ghcr.io/rhnu/limen:latest
 先将独立的 Docker 示例复制到 `data/`：
 
 ```sh
-cp -R examples/docker data
+mkdir -p data
+cp -R examples/docker/. data/
 ```
 
-PowerShell 使用 `Copy-Item -LiteralPath examples/docker -Destination data -Recurse`。
+PowerShell 先执行 `New-Item -ItemType Directory -Path data -Force`，再执行
+`Copy-Item -Path examples/docker/* -Destination data -Recurse`。
 在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌，然后执行：
 
 ```sh
@@ -534,9 +536,10 @@ docker compose logs -f
 docker compose down
 ```
 
-Compose 使用 `./data:/data:ro` 挂载，容器工作目录为 `/data`，默认配置为 `/data/server.yaml`，
+Compose 使用 `./data:/data` 挂载，容器工作目录为 `/data`，默认配置为 `/data/server.yaml`，
 同目录加载 `config.js`。Docker 示例不依赖 `basic/` 或 `shared/`；自行添加的本地模块也应放在 `data/` 中并保留相对导入关系。
-启动前先复制并填写配置；短挂载语法会在源目录缺失时自动创建空目录，缺少 `server.yaml` 或 `config.js` 会导致检查或启动失败。
+启动前先复制并填写配置；短挂载语法会在源目录缺失时自动创建空目录，但不会生成 `server.yaml` 或 `config.js`。
+缺少任一配置文件，检查和启动都会失败。
 容器内显式监听 `0.0.0.0:8080`，宿主默认仅发布 `127.0.0.1:8080`。
 需要内网访问时同时考虑宿主端口绑定和客户端认证。
 
@@ -550,9 +553,18 @@ environment:
 设置宿主环境变量后再运行前述 `docker compose run` 和 `up`，两者会使用同一环境配置。
 Compose 的变量替换发生在容器启动之前；宿主 `.env` 文件不会由 Limen 脚本自行加载。
 
-运行用户为 UID/GID `10001`，挂载的 YAML、JS 和共享模块必须对其可读。
-示例启用只读根文件系统、移除 capabilities、禁止提权、512 MiB 内存和 128 PID 上限，
+镜像 entrypoint 启动时以 root 执行 `chgrp -Rh 10001 /data` 和 `chmod -R g=rX /data`：
+保留宿主文件属主，将组权限设为读取及目录访问，不跟随树内符号链接修改外部目标。
+随后通过 `setpriv` 清空附加组、继承和 ambient capabilities，禁止提权，以 UID/GID `10001` 执行 Limen。
+entrypoint 使用 `exec`，Limen 接替 PID 1，直接接收容器停止信号。权限处理或降权失败时不会启动应用。
+配置检查、启动和容器重启都会经过相同入口；显式使用非 root `--user` 时跳过权限修复，需自行确保配置可读。
+
+`data/` 必须可写挂载，供入口修改权限；它不是只读挂载。Limen 不需要写配置，普通宿主用户拥有的文件由组读取权限提供访问。
+容器根文件系统保持只读，Compose 仅为入口保留 CHOWN、DAC_OVERRIDE、FOWNER、SETUID 和 SETGID，
+应用以非 root 运行并禁止提权。内存和 PID 上限为 512 MiB 与 128，
 终止宽限时间为 15 秒，`restart: unless-stopped`。自定义关闭预算时相应调整终止宽限时间。
+Windows Docker Desktop 的文件访问还受 NTFS 权限和目录共享控制；rootless、userns-remap 或 SELinux 环境
+也需满足相应宿主映射或标签要求。权限初始化不会绕过这些限制；部署时以容器内的 `check` 结果确认。
 真实配置不会进入允许清单控制的构建上下文，运行镜像保留 `/usr/share/doc/limen/LICENSE`。
 
 CI 在 main push 检查通过后构建并推送 `ghcr.io/rhnu/limen:latest`；PR 与手动 CI 只构建。

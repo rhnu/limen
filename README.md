@@ -17,7 +17,7 @@ responses with local JavaScript modules. Linux Docker is the primary deployment 
   multiple choices, finish reasons, and usage when converting between formats.
 - Bounded requests, queues, JavaScript execution, event expansion, and stream aggregation, with explicit
   timeout and truncated-stream errors.
-- Configuration validation, structured metadata logs, and a non-root Docker image.
+- Configuration validation, structured metadata logs, and a non-root service process in Docker.
 
 See the [feature and usage guide](docs/features.md) (Chinese) for configuration and hook examples.
 The [roadmap](docs/roadmap.md) tracks remaining deployment validation. Limen currently focuses on Chat
@@ -101,15 +101,17 @@ bearer token, and a configured model alias. Select their Chat Completions mode.
 Docker Engine or Docker Desktop with Linux containers and Docker Compose is required. Compose uses
 the published `ghcr.io/rhnu/limen:latest` image for Linux `amd64`.
 
-Copy the standalone Docker example to `data/` (`Copy-Item -LiteralPath examples/docker -Destination data -Recurse`
-in PowerShell):
+Prepare `data/` and copy the standalone Docker example before the first deployment:
 
 ```sh
-cp -R examples/docker data
+mkdir -p data
+cp -R examples/docker/. data/
 ```
 
+In PowerShell, use `New-Item -ItemType Directory -Path data -Force`, then
+`Copy-Item -Path examples/docker/* -Destination data -Recurse`.
 Fill in the provider settings in `data/config.js` and the client bearer token in `data/server.yaml`.
-Then run:
+The configuration files are not generated automatically. Then run:
 
 ```sh
 docker compose pull
@@ -118,10 +120,13 @@ docker compose up -d
 docker compose logs -f
 ```
 
-Stop the service with `docker compose down`. Compose mounts `data/` read-only at `/data`, the container's
+Stop the service with `docker compose down`. Compose mounts `data/` at `/data`, the container's
 working directory. Both commands use `/data/server.yaml` by default. The host port is bound to
-`127.0.0.1:8080`; the container configuration listens on `0.0.0.0:8080`. Mounted files must be readable
-by UID/GID `10001`. Local credentials are excluded from the image build context. GHCR package access
+`127.0.0.1:8080`; the container configuration listens on `0.0.0.0:8080`. The entrypoint starts as root,
+sets the data group to `10001` with group read and directory traversal permissions, and executes Limen
+as `10001:10001`. File owners are preserved. The data mount is writable for permission setup;
+the container root filesystem remains read-only.
+Local credentials are excluded from the image build context. GHCR package access
 depends on its visibility and your registry credentials. See the [deployment guide](docs/features.md#docker-部署)
 for details.
 

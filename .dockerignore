@@ -5,6 +5,7 @@
 !Cargo.lock
 !LICENSE
 !rust-toolchain.toml
+!docker-entrypoint.sh
 !src/**/*.rs
 !modules/*/Cargo.toml
 !modules/*/src/**/*.rs

@@ -16,7 +16,7 @@ Limen 是使用 Rust 编写的 Chat Completions 网关，面向个人和内网�
 - 上下游 JSON/SSE 四种组合；跨形态转换支持文本、refusal、function tool calls、
   多 choice、finish reason 和 usage。
 - 有界请求、队列、JavaScript 执行、事件展开和流聚合，明确报告超时与流截断。
-- 配置检查、结构化元数据日志和非 root Docker 镜像。
+- 配置检查、结构化元数据日志和 Docker 内的非 root 服务进程。
 
 配置和 hook 示例见[功能与使用指南](docs/features.md)，部署验证的剩余工作见[路线图](docs/roadmap.md)。
 当前专注于 Chat Completions；自动重试、故障转移、热重载、模型发现、UI 和其他 API 不在实现范围内。
@@ -95,14 +95,17 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 需要 Docker Engine 或启用 Linux 容器的 Docker Desktop，以及 Docker Compose。
 Compose 使用已发布的 Linux `amd64` 镜像 `ghcr.io/rhnu/limen:latest`。
 
-将独立的 Docker 示例复制到 `data/`（PowerShell 使用
-`Copy-Item -LiteralPath examples/docker -Destination data -Recurse`）：
+首次部署前创建 `data/`，将独立的 Docker 示例复制进去：
 
 ```sh
-cp -R examples/docker data
+mkdir -p data
+cp -R examples/docker/. data/
 ```
 
-在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌，然后执行：
+PowerShell 先执行 `New-Item -ItemType Directory -Path data -Force`，再执行
+`Copy-Item -Path examples/docker/* -Destination data -Recurse`。
+在 `data/config.js` 中填写上游配置，在 `data/server.yaml` 中设置客户端令牌。
+这两个文件不会自动生成。准备好配置后执行：
 
 ```sh
 docker compose pull
@@ -111,9 +114,12 @@ docker compose up -d
 docker compose logs -f
 ```
 
-使用 `docker compose down` 停止服务。Compose 将 `data/` 只读挂载到容器工作目录 `/data`，
+使用 `docker compose down` 停止服务。Compose 将 `data/` 挂载到容器工作目录 `/data`，
 检查与启动默认读取 `/data/server.yaml`。仅向宿主的 `127.0.0.1:8080` 发布端口，
-容器配置监听 `0.0.0.0:8080`。挂载文件需要允许 UID/GID `10001` 读取，真实配置与凭据不进入镜像构建上下文。
+容器配置监听 `0.0.0.0:8080`。entrypoint 启动时以 root 将部署目录的组改为 `10001`，
+设置组读取和目录访问权限，保留宿主文件属主，再以 `10001:10001` 执行 Limen。
+部署目录需要可写挂载以便初始化权限，容器根文件系统保持只读。
+真实配置与凭据不进入镜像构建上下文。
 GHCR 拉取权限取决于包可见性和本机的 registry 登录凭据。
 详细说明见[部署指南](docs/features.md#docker-部署)。
 

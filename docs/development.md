@@ -250,7 +250,8 @@ GitHub 远程为 `rhnu/limen`，Linux CI 与容器镜像构建已跑通，分支
 仅 `main` push 使用 `GITHUB_TOKEN` 登录 GHCR 并推送 `ghcr.io/<小写 owner>/<小写 repo>:latest`，
 当前仓库为 `ghcr.io/rhnu/limen:latest`。PR 和手动触发使用 `cacheonly` 完成构建，不登录、不推送、不清理。
 CI 不运行容器。Dockerfile 使用 cargo-chef 依赖层与独立源码构建层，减少只改应用源码时的依赖重编译；
-Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层只含二进制、CA 与运行依赖，使用非 root 用户。
+Rust 1.99.0 slim trixie 构建，Debian trixie slim 运行。运行层包含二进制、入口脚本、CA 与运行依赖；
+入口以 root 修正权限后降权执行应用。
 release 启用 thin LTO、单 codegen unit 和去除调试信息，保留 unwind 以维持运行时的异常清理边界。
 Dockerfile 声明 `org.opencontainers.image.licenses=AGPL-3.0-only`，运行层保留
 `/usr/share/doc/limen/LICENSE`；构建上下文允许清单包含根目录许可证。
@@ -283,15 +284,28 @@ docker compose down
 需要从源码构建镜像时单独执行 `docker build --platform linux/amd64 -t limen:local .`；Compose 没有本地构建段。
 镜像默认工作目录或启动命令调整后，部署环境需先等待 CI 发布更新后的镜像，再执行 `docker compose pull`。
 
-Compose 用 `./data:/data:ro` 只读挂载部署目录，容器工作目录为 `/data`；`CMD ["serve"]` 与检查命令均默认读取 `server.yaml`。
+Compose 用 `./data:/data` 挂载部署目录，容器工作目录为 `/data`；`CMD ["serve"]` 与检查命令均默认读取 `server.yaml`。
 Docker 示例独立提供 `server.yaml` 与 `config.js`，无需复制本机示例或共享规则；自行导入的模块需一同放入 `data/`。
-短挂载语法在宿主目录缺失时会创建空目录，启动前必须完成示例复制和配置填写。
-容器内 `0.0.0.0:8080`，宿主默认仅绑定回环地址；只读根文件系统、移除 capabilities，禁止提权。
+首次准备使用 `mkdir -p data` 和 `cp -R examples/docker/. data/`，将文件直接放到部署目录根部。
+短挂载语法在宿主目录缺失时会创建空目录，不会生成配置文件；启动前必须完成示例复制和配置填写。
+`docker-entrypoint.sh` 在 root 启动路径执行 `chgrp -Rh 10001 /data` 和 `chmod -R g=rX /data`，
+保留文件属主，不跟随树内符号链接修改外部目标；组仅保留读取与目录访问权限。
+随后用 Debian `util-linux` 的 `setpriv` 清空附加组、继承和 ambient capabilities，设置 `no_new_privs`，
+通过 `exec` 以 UID/GID 10001 运行 Limen，保留 PID 1 和信号传播。任一步骤失败即退出，不继续以 root 启动应用。
+显式指定非 root `--user` 时直接执行应用，由调用者确保配置可读；正常启动、检查与重启均经过入口。
+`util-linux` 来自运行镜像相同的 trixie 仓库；核对了 [Debian 包与文件清单](https://packages.debian.org/trixie/amd64/util-linux/filelist)
+和 [setpriv 手册](https://manpages.debian.org/trixie/util-linux/setpriv.1.en.html)，不额外下载降权程序。
+Compose 移除其余 capabilities，仅保留权限初始化与降权所需的 CHOWN、DAC_OVERRIDE、FOWNER、SETUID、SETGID。
+容器内 `0.0.0.0:8080`，宿主默认仅绑定回环地址；根文件系统只读，部署目录读写挂载以修改权限，应用不需要写配置。
 终止宽限时间覆盖 HTTP 与 VM 的有限关闭预算。`.dockerignore` 使用允许清单控制构建上下文，
 不拷贝 `local/`、`data/`、示例、Git 历史或任意未列入的文件。
 Compose 的 512 MiB 内存与 128 PID 限制是示例运行上界，不是容量或吞吐承诺；
-配置需允许 UID/GID 10001 读取，尤其留意宿主上仅所有者可读的凭据文件。
-挂载和 `security_opt` 的简写规则见 [Compose 官方服务配置参考](https://docs.docker.com/reference/compose-file/services/)。
+入口为 UID/GID 10001 准备读取权限。Windows NTFS/共享权限、rootless/userns-remap 的
+宿主 ID 映射和 SELinux 标签仍由部署环境提供；不支持修改属组或模式的挂载会使初始化失败，不静默跳过。
+部署时用 `docker compose run --rm limen check` 验证真实挂载下的读取和配置装载；本机检查不能代替容器运行验收。
+挂载和 `security_opt` 的规则见 [Compose 官方服务配置参考](https://docs.docker.com/reference/compose-file/services/)，
+宿主约束见 [bind mounts](https://docs.docker.com/engine/storage/bind-mounts/) 和
+[用户命名空间映射](https://docs.docker.com/engine/security/userns-remap/)。
 
 构建工具 cargo-chef 固定为 0.1.78，版本来源为
 [官方发布](https://github.com/LukeMathWalker/cargo-chef/releases/tag/v0.1.78)。

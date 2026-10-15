@@ -5,10 +5,17 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data:ro
+      - ./data:/data
     read_only: true
     cap_drop:
       - ALL
+    # The entrypoint repairs permissions, then drops to UID/GID 10001.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges
     pids_limit: 128
