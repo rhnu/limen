@@ -71,3 +71,5 @@ rumdl check --deny-config-warnings
 文件参数应替换为实际改动文件。内容变动时同时修复相对链接和锚点；架构结论更新到 `design.md`，工具入口维护在本文，剩余任务只留在 `roadmap.md`。
 
 提交前检查暂存区，确认没有混入 `local/`、`data/`、打包产物或任意位置的秘密。报告验证时区分编译与静态检查、常规测试、离线用例、隔离测试和部署验收；只报告实际执行的层次。
+
+main 推送成功发布镜像并清理旧版本后，CI 可通过 OliveTin webhook 触发部署。仓库 Secrets 需同时配置 `CF_ACCESS_CLIENT_ID`、`CF_ACCESS_CLIENT_SECRET`、`WEBHOOK_TOKEN` 和 `WEBHOOK_URL`；全部缺省时跳过，部分配置时报错。`WEBHOOK_URL` 使用 HTTPS 并指向 OliveTin `/webhooks` 端点。请求使用 `limen` 标识与已发布镜像的 `latest` 标签；webhook 返回确认只表示收到请求，实际动作执行结果需在 OliveTin 查看。
