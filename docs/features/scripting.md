@@ -188,6 +188,33 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 安装、构建、静态检查命令统一见[开发指引](../development.md#javascript-静态检查)。打包后执行配置检查及[对应离线用例](testing.md#运行示例)，验证真实 QuickJS 行为。
 
+## 可复用策略库
+
+[`policies/index.js`](../../policies/index.js) 是只依赖 ECMAScript 的本地 ESM，工厂返回现有 `PipelineStep`，按原有 provider → model 顺序执行。它不需要 Node.js 或额外宿主能力：
+
+```js
+import { capCompletionTokens, dropRequestFields, forwardClientHeader }
+  from "../../policies/index.js";
+
+const pipeline = [
+  capCompletionTokens({ name: "cap-output", max: 4096 }),
+  dropRequestFields({ name: "remove-store", fields: ["store"] }),
+  forwardClientHeader({ name: "forward-profile", from: "x-profile", to: "x-profile" }),
+];
+```
+
+示例路径适用于仓库的 `examples/basic/config.js`；按部署位置调整导入路径，并把 `pipeline` 放入所需 provider 或 model。工厂创建时验证参数并保存配置副本，返回的 step 冻结，同一个 step 可在多个请求中复用。请求数据仍留在当前上下文。
+
+| 工厂                                                    | 行为                                                                                                                                                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `capCompletionTokens({ name, max, field?, onChange? })` | `max` 为正安全整数；默认操作 `max_completion_tokens`，可显式选择 `max_tokens`。选定字段缺失时设置 max，超过时裁剪；已有值必须是正安全整数，否则拒绝 422。另一种预算字段出现时也拒绝 422，不自动转换或选优先级 |
+| `dropRequestFields({ name, fields, onChange? })`        | 删除指定自有字段，保留其他扩展。fields 必须为非空字符串数组，不得重复，禁止 model/messages/stream。配置数组之后被修改不会改变已创建策略                                                                       |
+| `forwardClientHeader({ name, from, to })`               | 大小写无关地读取显式暴露的客户端业务头。缺失时保留原目标头，单值时 set，重复值拒绝 422。工厂拒绝非法、敏感及传输头名；读取仍受服务白名单和 Connection 指名剔除规则约束                                        |
+
+name 遵循 pipeline step 名称规则，同一 pipeline 内不得重复。错误配置抛出固定 TypeError，不回显参数。前两个工厂的 `onChange` 可填写已注册观测名，只在实际设置、裁剪或删除时记录一次；它使用[受控观测](#受控观测)的提交与容量规则。静态类型能检查参数形状，但不能代替运行时数值、头名或注册表校验。
+
+库源码与声明一起供编辑器使用；部署只需运行时 JS。保留相对关系复制模块，或复用[第三方库示例](#第三方库)的 esbuild 流程打包为单个 ESM。basic 示例直接导入库，libraries 示例把这些策略与 Valibot 一起打包；回归用例见 [`fixtures/gateway/policies/`](../../fixtures/gateway/policies/)。
+
 ## 脚本静态检查
 
 [`types/limen.d.ts`](../../types/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，不是可导入的运行时模块。在默认导出的配置对象前添加 JSDoc：

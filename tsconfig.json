@@ -12,6 +12,6 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["types/**/*.d.ts", "types/tests/**/*.js", "examples/**/*.js", "examples/**/*.mjs"],
+  "include": ["types/**/*.d.ts", "types/tests/**/*.js", "policies/**/*.js", "policies/**/*.d.ts", "examples/**/*.js", "examples/**/*.mjs"],
   "exclude": ["examples/libraries/**"]
 }

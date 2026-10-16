@@ -26,7 +26,8 @@
     "outbound": {
       "body": {
         "model": "demo-model",
-        "messages": [{ "role": "user", "content": "Hello" }]
+        "messages": [{ "role": "user", "content": "Hello" }],
+        "max_completion_tokens": 4096
       }
     },
     "response": { "status": 200 }

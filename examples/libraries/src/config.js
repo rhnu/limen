@@ -1,4 +1,5 @@
 import { integer, maxValue, minValue, number, object, optional, pipe, safeParse } from "valibot";
+import { capCompletionTokens, dropRequestFields } from "../../../policies/index.js";
 
 // These validators use ordinary ECMAScript only; no URL, DOM or Node.js APIs.
 const requestOptions = object({
@@ -24,22 +25,22 @@ export default {
   providers: {
     demo: {
       endpoint: "https://example.invalid/v1/chat/completions",
-      pipeline: [{
-        name: "request-policy",
-        beforeSend(ctx) {
-          // This example provider does not support logprobs, even when false.
-          if ("logprobs" in ctx.body) {
-            ctx.reject(400);
-            return;
-          }
-          if (ctx.body.max_completion_tokens !== undefined) {
-            ctx.body.max_completion_tokens = Math.min(ctx.body.max_completion_tokens, 4096);
-          }
-          delete ctx.body.store;
-          // Reading client headers does not forward them; this value is explicit.
-          ctx.headers.set("X-Policy", "validated");
+      pipeline: [
+        {
+          name: "request-policy",
+          beforeSend(ctx) {
+            // This example provider does not support logprobs, even when false.
+            if ("logprobs" in ctx.body) {
+              ctx.reject(400);
+              return;
+            }
+            // Reading client headers does not forward them; this value is explicit.
+            ctx.headers.set("X-Policy", "validated");
+          },
         },
-      }],
+        capCompletionTokens({ name: "cap-output", max: 4096 }),
+        dropRequestFields({ name: "remove-store", fields: ["store"] }),
+      ],
     },
   },
   models: { chat: { provider: "demo", upstream: "demo-model" } },

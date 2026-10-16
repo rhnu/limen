@@ -1,0 +1,72 @@
+{
+  "name": "repeated-client-header-rejects",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "max_completion_tokens": 128,
+    "store": true
+  },
+  "clientHeaders": {
+    "X-Profile": [
+      "one",
+      "two"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 422
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "capped",
+          "phase": "beforeSend",
+          "step": "provider-cap",
+          "count": 1
+        },
+        {
+          "event": "scrubbed",
+          "phase": "beforeSend",
+          "step": "privacy",
+          "count": 1
+        }
+      ],
+      "dropped": 0
+    },
+    "error": {
+      "code": "request_rejected",
+      "status": 422,
+      "phase": "beforeSend"
+    }
+  }
+}

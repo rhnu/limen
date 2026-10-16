@@ -10,7 +10,7 @@ local/
   config.js
 ```
 
-也可将整个 `examples/` 复制到 `local/examples/`，从其中的 `basic/` 开始修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/examples/basic/server.toml`。basic 示例导入 `../shared/rules.mjs`，不能只复制该目录中的 `config.js`。
+也可将整个 `examples/` 与 `policies/` 一起复制到 `local/` 下，从 `local/examples/basic/` 开始修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/examples/basic/server.toml`。basic 示例导入 `../../policies/index.js`，需保留这层相对关系；不能只复制 `config.js`。
 
 未指定 `--config` 时，先读当前目录的 `server.toml`，仅在它不存在时尝试 `server.yaml`。文件存在但无效不会回退；不同文件不会合并。配置按扩展名解析，必须是 UTF-8。
 

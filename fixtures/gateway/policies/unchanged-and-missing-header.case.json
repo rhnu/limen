@@ -1,0 +1,92 @@
+{
+  "name": "unchanged-and-missing-header",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "max_completion_tokens": 8,
+    "vendor": {
+      "keep": true
+    }
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "policy",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    },
+    "observations": {
+      "events": [],
+      "dropped": 0
+    },
+    "outbound": {
+      "body": {
+        "model": "real-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "synthetic"
+          }
+        ],
+        "max_completion_tokens": 8,
+        "vendor": {
+          "keep": true
+        }
+      },
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-upstream-profile": [
+          "static"
+        ]
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { limitOutput } from "../shared/rules.mjs";
+import { capCompletionTokens } from "../../policies/index.js";
 
 /** @satisfies {import("../../types/limen").Config} */
 export default {
@@ -15,7 +15,7 @@ export default {
       provider: "primary",
       upstream: "fictional-chat-model",
       defaults: { temperature: 0.4 },
-      pipeline: [limitOutput],
+      pipeline: [capCompletionTokens({ name: "limit-output", max: 4096 })],
     },
   },
 };

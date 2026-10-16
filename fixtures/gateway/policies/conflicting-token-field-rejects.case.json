@@ -1,0 +1,52 @@
+{
+  "name": "conflicting-token-field-rejects",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "max_tokens": 8
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 422
+    },
+    "observations": {
+      "events": [],
+      "dropped": 0
+    },
+    "error": {
+      "code": "request_rejected",
+      "status": 422,
+      "phase": "beforeSend"
+    }
+  }
+}

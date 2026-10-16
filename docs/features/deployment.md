@@ -28,7 +28,7 @@ New-Item -ItemType Directory -Path data -Force | Out-Null
 Copy-Item -LiteralPath 'examples/docker/server.toml', 'examples/docker/config.js' -Destination data
 ```
 
-在 `data/server.toml` 设置客户端 token，在 `data/config.js` 设置完整上游 Chat Completions URL、独立上游凭据和模型名；该示例不依赖 shared 模块。随后验证并启动：
+在 `data/server.toml` 设置客户端 token，在 `data/config.js` 设置完整上游 Chat Completions URL、独立上游凭据和模型名；该示例可单文件加载。随后验证并启动：
 
 ```sh
 docker compose run --rm limen check

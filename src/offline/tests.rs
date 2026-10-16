@@ -10,6 +10,7 @@ use super::{Error, Report, discover, header_map, read, run_case, schema::Case, s
 use crate::bootstrap::Bootstrap;
 
 mod observation_output;
+mod policies;
 mod statistics;
 
 fn fixtures(group: &str) -> PathBuf {

@@ -1,0 +1,126 @@
+{
+  "name": "provider-model-compose",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "max_completion_tokens": 128,
+    "store": true,
+    "metadata": {
+      "private": "synthetic"
+    },
+    "vendor": {
+      "keep": [
+        1,
+        null
+      ]
+    }
+  },
+  "clientHeaders": {
+    "X-Profile": [
+      "editor"
+    ]
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "policy",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "policy",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "capped",
+          "phase": "beforeSend",
+          "step": "provider-cap",
+          "count": 1
+        },
+        {
+          "event": "scrubbed",
+          "phase": "beforeSend",
+          "step": "privacy",
+          "count": 1
+        },
+        {
+          "event": "capped",
+          "phase": "beforeSend",
+          "step": "model-cap",
+          "count": 1
+        }
+      ],
+      "dropped": 0
+    },
+    "outbound": {
+      "body": {
+        "model": "real-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "synthetic"
+          }
+        ],
+        "max_completion_tokens": 16,
+        "vendor": {
+          "keep": [
+            1,
+            null
+          ]
+        }
+      },
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "x-upstream-profile": [
+          "editor"
+        ]
+      }
+    }
+  }
+}
