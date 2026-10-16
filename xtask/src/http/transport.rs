@@ -1,6 +1,7 @@
 //! Check the real HTTP read boundary after an explicit SSE terminator.
 
 use anyhow::{Result, ensure};
+use http::Method;
 use serde_json::json;
 
 use super::fixture::{Laboratory, Options, request};
@@ -23,7 +24,10 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 upstream.split_at = split_at;
             }
             for stream in [false, true] {
-                let reply = item.request(request(&[("stream", json!(stream))])).await?;
+                // Retain the connection until the gateway has observed body drain;
+                // receiving DONE alone does not establish the final lifecycle outcome.
+                let reply = item.send(request(&[("stream", json!(stream))]), Method::POST,
+                    "/v1/chat/completions", &[("Connection", None)]).await?;
                 ensure!(reply.status == 200, "first DONE terminates independently of network splitting");
                 if stream {
                     let text = reply.text()?;
@@ -31,6 +35,20 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     ensure!(text.matches("[DONE]").count() == 1, "terminator must be emitted once");
                 } else {
                     ensure!(reply.body["choices"][0]["message"]["content"] == "hello", "trailing error invalidated JSON aggregation");
+                }
+                let log = item.statistics(reply.request_id()?, &[]).await?;
+                log.outcome("success", None)?;
+                let statistics = log.event("request statistics")?;
+                ensure!(statistics["upstream_completed"] == true && statistics["usage_source"] == "sse", "completed SSE lost its source facts");
+                for field in ["upstream_headers_wait_ms", "upstream_first_byte_ms", "upstream_first_chunk_ms", "upstream_read_wait_ms"] {
+                    super::statistics::duration(statistics, field)?;
+                }
+                if stream {
+                    for field in ["downstream_first_event_ms", "downstream_queue_wait_ms", "downstream_drain_ms"] {
+                        super::statistics::duration(statistics, field)?;
+                    }
+                } else {
+                    ensure!(statistics["downstream_first_event_ms"].is_null(), "JSON aggregation fabricated a downstream SSE sample");
                 }
             }
         }

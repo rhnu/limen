@@ -26,6 +26,7 @@ pub const PENDING_CONFIG: &str = include_str!("../../fixtures/http/pending.js");
 pub struct Options<'a> {
     pub config: Option<&'a str>,
     pub limits: &'a str,
+    pub observation_names: &'a [&'a str],
 }
 
 pub struct Laboratory<'a> {
@@ -102,6 +103,15 @@ pub struct Reply {
 }
 
 impl Reply {
+    /// Correlate transport replies with structured terminal and timing events.
+    pub fn request_id(&self) -> Result<&str> {
+        self.headers
+            .get("x-limen-request-id")
+            .context("response request ID missing")?
+            .to_str()
+            .context("response request ID was not text")
+    }
+
     /// Access SSE text while JSON replies retain their structured representation.
     pub fn text(&self) -> Result<&str> { self.body.as_str().context("expected SSE response text") }
 
@@ -149,8 +159,10 @@ impl Fixture {
         )
         .context("write synthetic HTTP script")?;
         let auth = "bearer: synthetic-client-secret";
+        let observation_names = serde_json::to_string(options.observation_names)
+            .context("encode HTTP fixture observation registry")?;
         let yaml = format!(
-            "listen: 127.0.0.1:{port}\nclient_auth: {{{auth}}}\nlog: {{level: debug, format: json}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
+            "listen: 127.0.0.1:{port}\nclient_auth: {{{auth}}}\nlog: {{level: debug, format: json}}\nobservability: {{events: {observation_names}}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
             options.limits
         );
         let config_path = directory.join("server.yaml");
@@ -333,10 +345,41 @@ impl Fixture {
             .filter(|line| line.ends_with('\n'))
             .map(|line| {
                 serde_json::from_str::<Value>(line)
-                    .map(|event| event["fields"].clone())
+                    .map(|event| {
+                        let mut fields = event["fields"].clone();
+                        if fields["request_id"].is_null()
+                            && let Some(request_id) = event["span"]["request_id"].as_str()
+                        {
+                            fields["request_id"] = Value::String(request_id.to_owned());
+                        }
+                        fields
+                    })
                     .context("decode gateway JSON log event")
             })
             .collect()
+    }
+
+    /// Await a complete structured event; the event is the synchronization signal.
+    pub async fn wait_event(
+        &self,
+        message: &str,
+        accepts: impl Fn(&Value) -> bool,
+    ) -> Result<Value> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(event) = self
+                .events()?
+                .into_iter()
+                .find(|event| event["message"] == message && accepts(event))
+            {
+                return Ok(event);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "gateway log event not observed: {message}"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Poll until disconnected requests have released their admission permits.

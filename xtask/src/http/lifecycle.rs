@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::json;
 use tokio::time::Instant;
 
@@ -18,9 +18,8 @@ pub async fn deadline(laboratory: &mut Laboratory<'_>) -> Result<()> {
             },
             async |item| {
                 let started = Instant::now();
-                item.request(request(&[("wait", json!(true))]))
-                    .await?
-                    .error(504, "deadline_exceeded", "hook waiting deadline")?;
+                let reply = item.request(request(&[("wait", json!(true))])).await?;
+                reply.error(504, "deadline_exceeded", "hook waiting deadline")?;
                 ensure!(
                     started.elapsed() < Duration::from_secs(2),
                     "deadline bounded"
@@ -29,6 +28,15 @@ pub async fn deadline(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     item.upstream.controls.lock().await.records.is_empty(),
                     "timed out request does not send"
                 );
+                let log = item
+                    .statistics(
+                        reply.request_id()?,
+                        &[("onRequest", false), ("onFinish", true)],
+                    )
+                    .await?;
+                log.outcome("failed", Some("deadline_exceeded"))?;
+                log.interrupted_hook("onRequest", false, false)?;
+                log.no_upstream_samples()?;
                 ensure!(
                     item.request(request(&[])).await?.status == 200,
                     "ordinary timeout retains healthy VM"
@@ -40,12 +48,12 @@ pub async fn deadline(laboratory: &mut Laboratory<'_>) -> Result<()> {
     laboratory
         .with_fixture(Options::default(), async |item| {
             item.upstream.controls.lock().await.delay = true;
-            item.request(request(&[])).await?.error(
-                504,
-                "deadline_exceeded",
-                "upstream request deadline",
-            )?;
-            item.upstream.wait(Duration::from_secs(1), true).await
+            let reply = item.request(request(&[])).await?;
+            reply.error(504, "deadline_exceeded", "upstream request deadline")?;
+            item.upstream.wait(Duration::from_secs(1), true).await?;
+            let log = item.statistics(reply.request_id()?, &[]).await?;
+            log.outcome("failed", Some("deadline_exceeded"))?;
+            log.no_upstream_samples()
         })
         .await
 }
@@ -62,7 +70,21 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 let stream = item.open_request(request(&[("wait", json!(true))])).await?;
                 item.wait_pending(1).await?;
                 drop(stream);
-                item.wait_cancelled(1).await
+                item.wait_cancelled(1).await?;
+                let finished = item
+                    .wait_event("request finished", |event| event["outcome"] == "cancelled")
+                    .await?;
+                let log = item
+                    .statistics(
+                        finished["request_id"]
+                            .as_str()
+                            .context("cancelled request ID missing")?,
+                        &[("onRequest", false), ("onFinish", true)],
+                    )
+                    .await?;
+                log.outcome("cancelled", Some("cancelled"))?;
+                log.interrupted_hook("onRequest", false, true)?;
+                log.no_upstream_samples()
             },
         )
         .await?;
@@ -72,7 +94,20 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
             let stream = item.open_request(request(&[])).await?;
             item.upstream.wait(Duration::from_secs(1), false).await?;
             drop(stream);
-            item.upstream.wait(Duration::from_millis(800), true).await
+            item.upstream.wait(Duration::from_millis(800), true).await?;
+            let finished = item
+                .wait_event("request finished", |event| event["outcome"] == "cancelled")
+                .await?;
+            let log = item
+                .statistics(
+                    finished["request_id"]
+                        .as_str()
+                        .context("cancelled request ID missing")?,
+                    &[],
+                )
+                .await?;
+            log.outcome("cancelled", Some("cancelled"))?;
+            log.no_upstream_samples()
         })
         .await
 }
@@ -122,6 +157,27 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
                         == 1,
                     "shutdown attempts onFinish exactly once"
                 );
+                let finished = events
+                    .iter()
+                    .find(|event| {
+                        event["message"] == "request finished" && event["outcome"] == "cancelled"
+                    })
+                    .context("shutdown terminal event missing")?;
+                let log = item
+                    .statistics(
+                        finished["request_id"]
+                            .as_str()
+                            .context("shutdown request ID missing")?,
+                        &[("onRequest", false), ("onFinish", true)],
+                    )
+                    .await?;
+                log.outcome("cancelled", Some("cancelled"))?;
+                log.interrupted_hook("onRequest", false, true)?;
+                log.no_upstream_samples()?;
+                ensure!(
+                    log.hook("onFinish", true)?["failed_calls"] == 1,
+                    "failed shutdown observer lost its own cleanup summary"
+                );
                 Ok(())
             },
         )
@@ -136,10 +192,11 @@ pub async fn retirement(laboratory: &mut Laboratory<'_>) -> Result<()> {
             Options {
                 config: Some(config),
                 limits: "  execution_ms: 20\n",
+                ..Options::default()
             },
             async |item| {
                 match item.request(request(&[])).await {
-                    Ok(_) => {},
+                    Ok(reply) => ensure!(reply.status >= 400, "retired VM returned HTTP success"),
                     // Retirement may close HTTP before an error response is delivered.
                     Err(error)
                         if error
@@ -163,6 +220,21 @@ pub async fn retirement(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     item.logs()?.contains("HTTP listener stopped"),
                     "retirement stops listener"
                 );
+                let finished = item.wait_event("request finished", |_| true).await?;
+                ensure!(
+                    finished["outcome"] != "success",
+                    "retirement recorded a successful request"
+                );
+                let log = item
+                    .statistics(
+                        finished["request_id"]
+                            .as_str()
+                            .context("retirement request ID missing")?,
+                        &[("onRequest", false)],
+                    )
+                    .await?;
+                log.no_upstream_samples()?;
+                super::statistics::duration(log.hook("onRequest", false)?, "wall_ms")?;
                 Ok(())
             },
         )
@@ -176,6 +248,7 @@ pub async fn resources(laboratory: &mut Laboratory<'_>) -> Result<()> {
             Options {
                 config: Some(PENDING_CONFIG),
                 limits: "  max_body_bytes: 300\n",
+                ..Options::default()
             },
             async |item| {
                 item.request(request(&[("large", json!("x".repeat(400)))]))
