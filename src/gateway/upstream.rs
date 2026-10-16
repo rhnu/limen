@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::{
     Gateway,
     error::{ErrorCode, Failure, validate_response_status},
-    events::EventBudget,
+    events::{EventBudget, EventConsumer},
     json,
     lifecycle::Lifecycle,
     logic,
@@ -201,7 +201,7 @@ impl Gateway {
                                 provider,
                                 model,
                                 event,
-                                "onUpstreamEvent",
+                                EventConsumer::Upstream,
                                 &mut budget,
                                 lifecycle,
                             )
@@ -268,15 +268,23 @@ impl Gateway {
         if alias {
             apply_alias(&mut event, lifecycle);
         }
-        let events = self
-            .event_hooks(provider, model, event, "onStreamEvent", budget, lifecycle)
-            .await?;
-        for event in events {
-            tracker
-                .push(&event)
-                .map_err(|source| hook_protocol(source, "onStreamEvent"))?;
-            let bytes = limen_chat::encode_chunk(&event, self.server.limits.max_event_bytes)
-                .map_err(|source| hook_protocol(source, "onStreamEvent"))?;
+        let mut frames = Vec::new();
+        self.event_hooks(
+            provider,
+            model,
+            event,
+            EventConsumer::Stream {
+                tracker,
+                frames: &mut frames,
+                max_event_bytes: self.server.limits.max_event_bytes,
+            },
+            budget,
+            lifecycle,
+        )
+        .await?;
+        // Hook expansion bounds the accumulated JSON payloads and event count;
+        // encoding adds only the fixed framing bytes for each bounded event.
+        for bytes in frames {
             lifecycle.output_bytes = lifecycle.output_bytes.saturating_add(bytes.len());
             lifecycle.phase = "response";
             lifecycle.step = None;

@@ -9,6 +9,49 @@ use super::{
     pipeline::{commit_effects, hook_invalid},
 };
 
+/// Downstream batches must be fully encodable before their hook effects commit.
+pub(super) enum EventConsumer<'a> {
+    Upstream,
+    Stream {
+        tracker: &'a mut limen_chat::ChunkTracker,
+        frames: &'a mut Vec<Vec<u8>>,
+        max_event_bytes: usize,
+    },
+}
+
+impl EventConsumer<'_> {
+    fn phase(&self) -> &'static str {
+        match self {
+            Self::Upstream => "onUpstreamEvent",
+            Self::Stream { .. } => "onStreamEvent",
+        }
+    }
+
+    fn consume(&mut self, events: &[Value]) -> Result<(), Failure> {
+        if let Self::Stream {
+            tracker,
+            frames,
+            max_event_bytes,
+        } = self
+        {
+            let mut batch = Vec::with_capacity(events.len());
+            for event in events {
+                // A failure terminates the request, so tracker changes need no rollback.
+                tracker.push(event).map_err(stream_failure)?;
+                batch.push(
+                    limen_chat::encode_chunk(event, *max_event_bytes).map_err(stream_failure)?,
+                );
+            }
+            frames.extend(batch);
+        }
+        Ok(())
+    }
+}
+
+fn stream_failure(source: limen_chat::Error) -> Failure {
+    Failure::new(ErrorCode::HookFailed, "onStreamEvent").with_source(source)
+}
+
 /// One source event shares this work allowance through both streaming phases.
 pub(super) struct EventBudget {
     events: usize,
@@ -47,10 +90,11 @@ impl Gateway {
         provider: &Provider,
         model: &Model,
         event: Value,
-        phase: &'static str,
+        mut consumer: EventConsumer<'_>,
         budget: &mut EventBudget,
         lifecycle: &mut Lifecycle,
     ) -> Result<Vec<Value>, Failure> {
+        let phase = consumer.phase();
         validate_event(
             &event,
             &self.server.limits,
@@ -58,15 +102,21 @@ impl Gateway {
             phase,
         )?;
         let mut events = vec![event];
+        let mut remaining = provider
+            .pipeline
+            .iter()
+            .chain(&model.pipeline)
+            .filter(|step| event_hook(step, phase).is_some())
+            .count();
+        if remaining == 0 {
+            consumer.consume(&events)?;
+        }
         for step in provider.pipeline.iter().chain(&model.pipeline) {
-            let hook = match phase {
-                "onUpstreamEvent" => step.on_upstream_event,
-                "onStreamEvent" => step.on_stream_event,
-                _ => None,
-            };
-            let Some(hook) = hook else {
+            let Some(hook) = event_hook(step, phase) else {
                 continue;
             };
+            remaining -= 1;
+            let final_hook = remaining == 0;
             let mut next = Vec::new();
             for event in events {
                 let mut context = lifecycle.context(phase);
@@ -92,6 +142,11 @@ impl Gateway {
                         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
                 })?;
                 budget.charge(produced.len(), bytes, &self.server.limits, phase)?;
+                // Earlier steps may still transform these events. The final step's
+                // whole batch must satisfy its consumer before any of its effects commit.
+                if final_hook {
+                    consumer.consume(produced)?;
+                }
                 commit_effects(lifecycle, &mut output)?;
                 let Value::Array(produced) = output.context["events"].take() else {
                     return Err(hook_invalid(phase, &step.name));
@@ -101,6 +156,14 @@ impl Gateway {
             events = next;
         }
         Ok(events)
+    }
+}
+
+fn event_hook(step: &limen_config::PipelineStep, phase: &str) -> Option<limen_script::HookId> {
+    match phase {
+        "onUpstreamEvent" => step.on_upstream_event,
+        "onStreamEvent" => step.on_stream_event,
+        _ => None,
     }
 }
 

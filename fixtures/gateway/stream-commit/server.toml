@@ -1,0 +1,9 @@
+[client_auth]
+none = true
+
+[observability]
+events = ["provider", "model", "private", "finish"]
+
+[limits]
+max_event_bytes = 512
+max_observations_per_hook = 1
