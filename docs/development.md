@@ -30,7 +30,7 @@ cargo test --workspace --lib --bins --locked
 cargo test --locked --package limen-chat --lib
 ```
 
-常规测试包括纯逻辑、有限 VM 调用和合成上游的离线管线测试。新增测试验证输入、输出和失败后的状态，不断言源码文本或文件布局。
+常规测试包括纯逻辑、有限 VM 调用和合成上游的离线管线测试，已覆盖 `examples/testing` 的四种传输路径。CI 在打包后另行通过 CLI 运行 `examples/libraries`，验证打包产物及命令入口。新增测试验证输入、输出和失败后的状态，不断言源码文本或文件布局。
 
 ## 隔离测试
 

@@ -55,10 +55,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Bundle the library example
         run: npm run build:examples
-      - name: Offline script examples
-        run: |
-          cargo run --locked -- test --config examples/testing/server.toml --cases examples/testing
-          cargo run --locked -- test --config examples/libraries/server.toml --cases examples/libraries
+      - name: Bundled library example
+        run: cargo run --locked -- test --config examples/libraries/server.toml --cases examples/libraries
       - name: Isolated boundary tests
         run: cargo xtask test --isolated
 
