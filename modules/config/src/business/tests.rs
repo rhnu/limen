@@ -80,6 +80,42 @@ fn preserves_endpoint_query_defaults_and_hook_order() {
 }
 
 #[test]
+fn error_response_hooks_register_globally_and_as_the_only_pipeline_phase() {
+    let mut value = basic();
+    value["onErrorResponse"] = json!(1);
+    value["providers"]["primary"]["pipeline"] =
+        json!([{"name": "provider-error", "onErrorResponse": 2}]);
+    value["models"]["chat"]["pipeline"] = json!([{"name": "model-error", "onErrorResponse": 3}]);
+    let config = parse(value).unwrap();
+    assert_eq!(config.on_error_response, Some(1));
+    assert_eq!(
+        config.providers["primary"].pipeline[0].on_error_response,
+        Some(2)
+    );
+    assert_eq!(config.models["chat"].pipeline[0].on_error_response, Some(3));
+}
+
+#[test]
+fn error_response_hook_types_report_safe_schema_paths() {
+    for invalid in [Value::Null, json!("private-function"), json!({}), json!(-1)] {
+        let mut value = basic();
+        value["onErrorResponse"] = invalid.clone();
+        let error = parse(value).err().unwrap();
+        assert_eq!(error.kind, ConfigErrorKind::Schema);
+        assert_eq!(error.field, "onErrorResponse");
+        for (layer, name) in [("providers", "primary"), ("models", "chat")] {
+            let mut value = basic();
+            value[layer][name]["pipeline"] =
+                json!([{"name": "private-step", "onErrorResponse": invalid}]);
+            let error = parse(value).err().unwrap();
+            assert_eq!(error.kind, ConfigErrorKind::Schema);
+            assert_eq!(error.field, format!("{layer}.*.pipeline.*.onErrorResponse"));
+            assert!(!format!("{error:?}").contains("private-"));
+        }
+    }
+}
+
+#[test]
 fn rejects_unsafe_or_repaired_endpoints() {
     for endpoint in [
         "ftp://example.invalid/v1",

@@ -273,6 +273,7 @@ fn schema_name(key: &str) -> &str {
         | "pipeline"
         | "name"
         | "onRequest"
+        | "onErrorResponse"
         | "onError"
         | "onFinish"
         | "beforeSend"

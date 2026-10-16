@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{
     Gateway,
-    error::{ErrorCode, Failure, validate_response_status},
+    error::{ErrorCode, Failure, FailureResponse, validate_response_status},
     events::{EventBudget, EventConsumer},
     json,
     lifecycle::Lifecycle,
@@ -44,9 +44,9 @@ impl Gateway {
         lifecycle.step = None;
         lifecycle.response_headers = headers.clone();
         if !(200..300).contains(&original_status) {
-            let mut error = Failure::new(ErrorCode::UpstreamFailed, "upstream_status");
-            error.status = Some(status);
-            return Err(error);
+            return Err(self
+                .receive_failure(status, &mut response, lifecycle)
+                .await?);
         }
         if matches!(original_status, 204 | 205) || media == "other" {
             return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_media"));
@@ -121,25 +121,48 @@ impl Gateway {
         Ok(None)
     }
 
+    async fn receive_failure(
+        &self,
+        status: u16,
+        response: &mut super::transport::Incoming,
+        lifecycle: &mut Lifecycle,
+    ) -> Result<Failure, Failure> {
+        if !(300..600).contains(&response.status()) {
+            return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_status"));
+        }
+        let mut error = Failure::new(ErrorCode::UpstreamFailed, "upstream_status");
+        error.status = Some(status);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .filter(|_| !logic::connection_nominated(response.headers(), "content-type"))
+            .cloned();
+        let content_encoding =
+            if logic::connection_nominated(response.headers(), "content-encoding") {
+                Vec::new()
+            } else {
+                response
+                    .headers()
+                    .get_all(header::CONTENT_ENCODING)
+                    .iter()
+                    .cloned()
+                    .collect()
+            };
+        let body = self.receive_bytes(response, lifecycle).await?;
+        error.response = Some(Box::new(FailureResponse {
+            body,
+            content_type,
+            content_encoding,
+        }));
+        Ok(error)
+    }
+
     async fn receive_json(
         &self,
         response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
-        let mut bytes = Vec::new();
-        while let Some(chunk) = read_chunk(response, lifecycle).await? {
-            if chunk.len()
-                > self
-                    .server
-                    .limits
-                    .max_output_bytes
-                    .saturating_sub(bytes.len())
-            {
-                return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
-            }
-            bytes.extend_from_slice(&chunk);
-            lifecycle.upstream_bytes = bytes.len();
-        }
+        let bytes = self.receive_bytes(response, lifecycle).await?;
         let body: Value = serde_json::from_slice(&bytes).map_err(|source| {
             Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source)
         })?;
@@ -157,6 +180,28 @@ impl Gateway {
         lifecycle.statistics.usage.observe(body.get("usage"));
         lifecycle.statistics.upstream_completed = true;
         Ok(body)
+    }
+
+    async fn receive_bytes(
+        &self,
+        response: &mut super::transport::Incoming,
+        lifecycle: &mut Lifecycle,
+    ) -> Result<Vec<u8>, Failure> {
+        let mut bytes = Vec::new();
+        while let Some(chunk) = read_chunk(response, lifecycle).await? {
+            if chunk.len()
+                > self
+                    .server
+                    .limits
+                    .max_output_bytes
+                    .saturating_sub(bytes.len())
+            {
+                return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
+            }
+            bytes.extend_from_slice(&chunk);
+            lifecycle.upstream_bytes = bytes.len();
+        }
+        Ok(bytes)
     }
 
     async fn receive_sse(
@@ -305,11 +350,7 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<(u16, http::HeaderMap), Failure> {
         let original_status = response.status();
-        let mut status = if (300..600).contains(&original_status) {
-            502
-        } else {
-            original_status
-        };
+        let mut status = original_status;
         let mut headers = logic::response_headers(response.headers());
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             if let Some(hook) = step.after_receive {

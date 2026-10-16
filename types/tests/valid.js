@@ -80,6 +80,21 @@ export const config = {
     const model = ctx.meta.model;
     void [outcome, code, model, ctx.error.status, ctx.error.request_id, ctx.error.phase, ctx.error.step];
   },
+  async onErrorResponse(ctx) {
+    await Promise.resolve();
+    ctx.status = 503;
+    ctx.headers.set("retry-after", "5");
+    ctx.body = ctx.body === null ? null : JSON.stringify({ message: ctx.body });
+    ctx.contentType = ctx.body === null ? null : "application/json";
+    ctx.state.calls = (ctx.state.calls ?? 0) + 1;
+    ctx.state.details?.tags.push("error-translated");
+    ctx.observe.record("error_translated");
+    /** @type {string | null} */
+    const provider = ctx.meta.provider;
+    /** @type {"onErrorResponse"} */
+    const phase = ctx.meta.phase;
+    void [provider, phase, ctx.error.code, ctx.client.headers.getAll("x-client-name")];
+  },
   async onFinish(ctx) {
     ctx.observe.record("request_finished");
     await Promise.resolve();
@@ -148,5 +163,16 @@ export const asyncRejection = {
   async beforeSend(ctx) {
     await Promise.resolve();
     if (ctx.body.unsupported === true) return ctx.reject(422);
+  },
+};
+
+/** @type {import("../limen").PipelineStep<RequestState>} */
+export const errorResponseOnly = {
+  name: "error-response",
+  onErrorResponse(ctx) {
+    ctx.body = "Translated upstream failure";
+    ctx.contentType = "text/plain";
+    ctx.status = 502;
+    ctx.state.details = { tags: [ctx.error.code] };
   },
 };

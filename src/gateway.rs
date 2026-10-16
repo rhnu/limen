@@ -1,4 +1,5 @@
 mod error;
+mod error_response;
 mod events;
 mod json;
 mod lifecycle;
@@ -103,22 +104,26 @@ impl Gateway {
     ) -> Response {
         let request_id = format!("limen-{}", self.requests.fetch_add(1, Ordering::Relaxed));
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
-            let failure = Failure::new(ErrorCode::Busy, "admission");
+            let mut failure = Failure::new(ErrorCode::Busy, "admission");
             let mut lifecycle = self.lifecycle(request_id.clone(), Cancellation::new());
+            let cleanup_deadline =
+                Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms);
             lifecycle
                 .statistics
                 .freeze(lifecycle.started, Instant::now());
+            self.prepare_error(&mut failure, &mut lifecycle, cleanup_deadline)
+                .await;
             // HTTP/1 drivers bound these rejected lifetimes too. Their observations
             // await inline and cannot create an unbounded second task queue.
-            self.observe(
-                &mut lifecycle,
-                Some(&failure),
-                Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms),
-            )
-            .await;
+            self.observe(&mut lifecycle, Some(&failure), cleanup_deadline)
+                .await;
+            let response = error_response_with_headers(
+                &failure,
+                &request_id,
+                lifecycle.response_headers.clone(),
+            );
             lifecycle.record(&Err(failure), &self.server.observability.events);
-            let failure = Failure::new(ErrorCode::Busy, "admission");
-            return error_response(&failure, &request_id);
+            return response;
         };
         let cancellation = Cancellation::new();
         let mut cancel_on_drop = CancelOnDrop(Some(cancellation.clone()));
@@ -158,7 +163,10 @@ impl Gateway {
                     if let Some(response) = response { delivery.send_json(response); }
                     Ok(())
                 },
-                Err(failure) => {
+                Err(mut failure) => {
+                    if delivery.pending() {
+                        gateway.prepare_error(&mut failure, &mut lifecycle, cleanup_deadline).await;
+                    }
                     // Terminal writes have a finite budget even after the request
                     // deadline; a slow or disconnected consumer cannot retain a permit.
                     let _finished = tokio::time::timeout_at(
@@ -253,8 +261,22 @@ fn error_response(failure: &Failure, request_id: &str) -> Response {
 fn error_response_with_headers(
     failure: &Failure,
     request_id: &str,
-    headers: http::HeaderMap,
+    mut headers: http::HeaderMap,
 ) -> Response {
+    if let Some(payload) = &failure.response {
+        if let Some(value) = &payload.content_type {
+            headers.insert(header::CONTENT_TYPE, value.clone());
+        }
+        for value in &payload.content_encoding {
+            headers.append(header::CONTENT_ENCODING, value.clone());
+        }
+        return raw_response(
+            failure.http_status(),
+            headers,
+            payload.body.clone(),
+            request_id,
+        );
+    }
     // The Rust-owned envelope has fixed messages and a gateway-assigned ID. Its
     // small encoding remains independent of user-configured model output limits.
     json_response(
@@ -275,6 +297,15 @@ fn json_response(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
+    raw_response(status, headers, body, request_id)
+}
+
+fn raw_response(
+    status: u16,
+    mut headers: http::HeaderMap,
+    body: Vec<u8>,
+    request_id: &str,
+) -> Response {
     if let Ok(id) = HeaderValue::from_str(request_id) {
         headers.insert("x-limen-request-id", id);
     }

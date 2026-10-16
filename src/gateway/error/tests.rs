@@ -4,8 +4,13 @@ use super::*;
 
 #[test]
 fn public_error_keeps_fixed_message_and_request_id_without_raw_cause() {
-    let failure = Failure::new(ErrorCode::InvalidRequest, "request_body")
+    let mut failure = Failure::new(ErrorCode::InvalidRequest, "request_body")
         .with_source(io::Error::other("secret body token Cookie source"));
+    failure.response = Some(Box::new(FailureResponse {
+        body: b"secret upstream body".to_vec(),
+        content_type: Some(http::HeaderValue::from_static("secret-media")),
+        content_encoding: Vec::new(),
+    }));
     let public = failure.error_json("request-7");
     assert_eq!(public["error"]["code"], "invalid_request");
     assert_eq!(public["error"]["request_id"], "request-7");
@@ -32,14 +37,19 @@ fn script_classification_preserves_source_and_step_context() {
 }
 
 #[test]
-fn status_override_cannot_turn_failure_into_success_or_redirect() {
+fn status_override_preserves_upstream_redirects_but_cannot_turn_failure_into_success() {
     let mut failure = Failure::new(ErrorCode::UpstreamFailed, "after_receive");
     failure.status = Some(429);
     assert_eq!(failure.http_status(), 429);
-    for status in [0, 200, 204, 302, 600] {
+    failure.status = Some(302);
+    assert_eq!(failure.http_status(), 302);
+    for status in [0, 200, 204, 600] {
         failure.status = Some(status);
         assert_eq!(failure.http_status(), 502);
     }
+    let mut failure = Failure::new(ErrorCode::InvalidRequest, "request_body");
+    failure.status = Some(302);
+    assert_eq!(failure.http_status(), 400);
 }
 
 #[test]
@@ -103,7 +113,7 @@ fn status_mapping_preserves_success_and_body_semantics() {
     assert!(validate_response_status(302, 502).is_ok());
     for upstream in [302, 400, 500] {
         assert!(validate_response_status(upstream, 200).is_err());
-        assert!(validate_response_status(upstream, 302).is_err());
+        assert!(validate_response_status(upstream, 302).is_ok());
     }
     assert!(validate_response_status(999, 500).is_err());
 }

@@ -158,18 +158,33 @@ pub fn response_headers(upstream: &HeaderMap) -> HeaderMap {
     for (name, value) in upstream {
         if matches!(
             name.as_str(),
-            "content-language" | "x-request-id" | "retry-after"
-        ) && !upstream.get_all(header::CONNECTION).iter().any(|value| {
-            value.to_str().is_ok_and(|value| {
-                value
-                    .split(',')
-                    .any(|token| token.trim().eq_ignore_ascii_case(name.as_str()))
-            })
-        }) {
+            "content-language"
+                | "x-request-id"
+                | "retry-after"
+                | "www-authenticate"
+                | "location"
+                | "ratelimit"
+                | "ratelimit-policy"
+        ) || name.as_str().starts_with("x-ratelimit-")
+            || name.as_str().starts_with("ratelimit-")
+        {
+            if connection_nominated(upstream, name.as_str()) {
+                continue;
+            }
             headers.append(name.clone(), value.clone());
         }
     }
     headers
+}
+
+pub fn connection_nominated(headers: &HeaderMap, name: &str) -> bool {
+    headers.get_all(header::CONNECTION).iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case(name))
+        })
+    })
 }
 
 pub fn headers_to_json(headers: &HeaderMap) -> Result<Value, Failure> {

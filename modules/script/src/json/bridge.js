@@ -45,7 +45,7 @@
     return value !== null && typeof value === "object" && !isProxy(value)
       && (proto(value) === plain || proto(value) === null);
   }
-  const stages = ["beforeSend", "afterReceive", "onResponse", "onUpstreamEvent", "onStreamEvent"];
+  const stages = ["beforeSend", "afterReceive", "onResponse", "onUpstreamEvent", "onStreamEvent", "onErrorResponse"];
   function convert(root, capture) {
     const hooks = setProto([], null);
     const slots = new WeakMapType();
@@ -61,7 +61,7 @@
     }
     if (capture) {
       if (!object(root)) fail();
-      save(root, "onRequest"); save(root, "onError"); save(root, "onFinish");
+      save(root, "onRequest"); save(root, "onErrorResponse"); save(root, "onError"); save(root, "onFinish");
       for (let categoryIndex = 0; categoryIndex < 2; categoryIndex++) {
         const category = categoryIndex === 0 ? "providers" : "models";
         if (descriptor(root, category) === undefined) continue;

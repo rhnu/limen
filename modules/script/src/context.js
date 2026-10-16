@@ -103,7 +103,7 @@
     const phase = read(meta, "phase");
     if (phase !== "onRequest" && phase !== "beforeSend" && phase !== "afterReceive"
         && phase !== "onResponse" && phase !== "onUpstreamEvent" && phase !== "onStreamEvent"
-        && phase !== "onError" && phase !== "onFinish") fail();
+        && phase !== "onErrorResponse" && phase !== "onError" && phase !== "onFinish") fail();
     const observer = phase === "onError" || phase === "onFinish";
     const stream = phase === "onUpstreamEvent" || phase === "onStreamEvent";
     const state = read(root, "state");
@@ -131,17 +131,19 @@
       const key = keys[i];
       let value = read(root, key), writable = false;
       if (key === "headers") {
-        headers = headerDraft(value, !observer && (phase === "beforeSend" || phase === "afterReceive"));
+        headers = headerDraft(value, phase === "beforeSend" || phase === "afterReceive" || phase === "onErrorResponse");
         value = headers.api;
       } else if (key === "client") {
         if (value === null || typeof value !== "object" || isArray(value)) fail();
         client = deepFreeze(value);
         value = freeze({ headers: headerDraft(read(client, "headers"), false, true).api });
-      } else if (key === "body" && !observer && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse")) {
+      } else if (key === "body" && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse" || phase === "onErrorResponse")) {
         writable = true;
       } else if (key === "event" && stream) {
         writable = true;
-      } else if ((key === "url" && phase === "beforeSend") || (key === "status" && phase === "afterReceive")) {
+      } else if ((key === "url" && phase === "beforeSend")
+          || (key === "status" && (phase === "afterReceive" || phase === "onErrorResponse"))
+          || (key === "contentType" && phase === "onErrorResponse")) {
         writable = true;
       } else if (key !== "state" || observer) {
         deepFreeze(value);

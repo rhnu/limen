@@ -57,8 +57,8 @@ impl ErrorCode {
     }
 }
 
-/// Success remains a body-bearing 2xx response; failures can map only to 4xx/5xx.
-/// Informational statuses, redirects, and bodyless 204/205 cannot represent completions.
+/// Success remains a body-bearing 2xx response; upstream failures retain 3xx/4xx/5xx.
+/// Informational statuses and bodyless 204/205 cannot represent completions.
 ///
 /// # Errors
 /// Returns `HookFailed` when the requested mapping changes success semantics.
@@ -66,7 +66,7 @@ pub fn validate_response_status(upstream: u16, downstream: u16) -> Result<(), Er
     let allowed = if (200..300).contains(&upstream) {
         (200..300).contains(&downstream) && !matches!(downstream, 204 | 205)
     } else {
-        (300..600).contains(&upstream) && (400..600).contains(&downstream)
+        (300..600).contains(&upstream) && (300..600).contains(&downstream)
     };
     if allowed {
         Ok(())
@@ -75,13 +75,21 @@ pub fn validate_response_status(upstream: u16, downstream: u16) -> Result<(), Er
     }
 }
 
-/// Safe request failure metadata; raw sources are retained only for typed inspection.
+/// Request failure with safe diagnostics, typed sources and private response data.
 pub struct Failure {
     pub code: ErrorCode,
     pub phase: &'static str,
     pub step: Option<String>,
     pub status: Option<u16>,
+    pub response: Option<Box<FailureResponse>>,
     source: Option<Box<dyn Error + Send + Sync>>,
+}
+
+/// Private response data is never included in failure diagnostics or observations.
+pub struct FailureResponse {
+    pub body: Vec<u8>,
+    pub content_type: Option<http::HeaderValue>,
+    pub content_encoding: Vec<http::HeaderValue>,
 }
 
 impl Failure {
@@ -91,6 +99,7 @@ impl Failure {
             phase,
             step: None,
             status: None,
+            response: None,
             source: None,
         }
     }
@@ -144,8 +153,19 @@ impl Failure {
 
     pub fn http_status(&self) -> u16 {
         self.status
-            .filter(|status| (400..600).contains(status))
+            .filter(|status| {
+                (400..600).contains(status)
+                    || (self.code == ErrorCode::UpstreamFailed && (300..400).contains(status))
+            })
             .unwrap_or_else(|| self.code.status())
+    }
+
+    pub fn observer_error(&self, request_id: &str) -> Value {
+        let mut error = self.error_json(request_id)["error"].take();
+        error["status"] = json!(self.http_status());
+        error["phase"] = json!(self.phase);
+        error["step"] = json!(self.step);
+        error
     }
 
     pub fn error_json(&self, request_id: &str) -> Value {

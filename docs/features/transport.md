@@ -15,7 +15,7 @@
 
 `onResponse` 不参与 SSE → SSE，`onUpstreamEvent` 不参与 JSON 上游，`onStreamEvent` 只在向客户端输出 SSE 时执行。别名只替换已有 `model` 字段；响应 hook 之后不再强制覆盖，因此脚本可明确设置对外模型名。
 
-所有路径都先执行 `afterReceive`。接受的上游媒体类型为 `application/json` 与 `text/event-stream`，不区分大小写且允许参数；缺失、其他媒体类型、204/205 或无法解析的正文会失败，不根据内容猜格式。
+所有路径都先执行 `afterReceive`。上游成功响应接受的媒体类型为 `application/json` 与 `text/event-stream`，不区分大小写且允许参数；缺失、其他媒体类型、204/205 或无法解析的正文会失败，不根据内容猜格式。上游 HTTP 失败走下面的错误响应路径。
 
 ## 同形传递与跨形转换
 
@@ -41,11 +41,13 @@ JSON → SSE 按角色、内容、工具、完成原因和 usage 生成增量事
 
 ## 状态、响应头与错误
 
-上游原始 2xx 走正文处理，`afterReceive.status` 只能映射为带正文的 2xx，不能映射为 204/205。上游原始 3xx/4xx/5xx 默认变为 502，可映射为 4xx/5xx；不能把上游失败改成成功。上游错误正文不透传，重定向不跟随。
+上游原始 2xx 走正文处理，`afterReceive.status` 只能映射为带正文的 2xx，不能映射为 204/205。上游原始 3xx/4xx/5xx 默认保留状态，可显式映射为其他 3xx/4xx/5xx，不能把上游失败改成成功。重定向不跟随。
 
-响应媒体类型由 Rust 最终设置。JSON 使用 `application/json`，SSE 使用 `text/event-stream` 并设置 `Cache-Control: no-cache`；Limen 响应附带 `X-Limen-Request-Id` 便于关联日志。响应头 draft 的权限见[脚本文档](scripting.md#头部与客户端上下文)。
+上游 HTTP 失败的正文按字节透传，保留原始 `Content-Type` 与 `Content-Encoding`，不要求 JSON 或 Chat schema，不改模型别名；空正文、文本、HTML 和非 UTF-8 正文都可传递。即使客户端请求了流，也返回上游错误响应，不包装成成功 SSE。读取仍受请求期限与 `max_output_bytes` 限制；读取失败、超限或截断不能作为完整上游错误返回，使用相应网关错误。
 
-JSON 错误使用固定 envelope：
+成功响应媒体类型由 Rust 最终设置。JSON 使用 `application/json`，SSE 使用 `text/event-stream` 并设置 `Cache-Control: no-cache`；Limen 响应附带 `X-Limen-Request-Id` 便于关联日志。默认转发的元数据和响应头 draft 权限见[脚本文档](scripting.md#头部与客户端上下文)。
+
+网关自身错误默认使用固定 JSON envelope：
 
 ```json
 {
@@ -59,14 +61,15 @@ JSON 错误使用固定 envelope：
 
 常见 code 与 HTTP 状态：
 
-| 类别             | code                                                             | 默认状态                  |
-| ---------------- | ---------------------------------------------------------------- | ------------------------- |
-| 输入、路由、认证 | `invalid_request` / `unknown_model` / `unauthorized`             | 400 / 400 / 401           |
-| 脚本策略拒绝     | `request_rejected`                                               | 400，可指定 403/422       |
-| 容量与期限       | `payload_too_large` / `busy` / `deadline_exceeded` / `cancelled` | 413 / 429 / 504 / 499     |
-| 脚本或内部故障   | `hook_failed` / `internal_error` / `unavailable`                 | 500 / 500 / 503           |
-| 上游与协议       | `upstream_failed` / `upstream_protocol`                          | 502，前者可按上述规则映射 |
+| 类别             | code                                                             | 默认状态              |
+| ---------------- | ---------------------------------------------------------------- | --------------------- |
+| 输入、路由、认证 | `invalid_request` / `unknown_model` / `unauthorized`             | 400 / 400 / 401       |
+| 脚本策略拒绝     | `request_rejected`                                               | 400，可指定 403/422   |
+| 容量与期限       | `payload_too_large` / `busy` / `deadline_exceeded` / `cancelled` | 413 / 429 / 504 / 499 |
+| 脚本或内部故障   | `hook_failed` / `internal_error` / `unavailable`                 | 500 / 500 / 503       |
+| 上游 HTTP 失败   | 内部归类为 `upstream_failed`，正文保留上游格式                   | 上游原状态            |
+| 网络与协议       | `upstream_failed` / `upstream_protocol`                          | 502，超时为 504       |
 
-日志和观察 hook 额外提供 phase、step 与清理后的错误分类，不输出任意上游、脚本异常消息或正文。排错见[部署与运维](deployment.md#排错)。
+需要统一供应商错误格式或自定义网关错误时，配置 [`onErrorResponse`](scripting.md#错误响应适配)。它可修改尚未发出的错误响应，保留失败分类；已经开始的 SSE 仍按流内错误规则结束。日志和观察 hook 只提供 phase、step 与清理后的错误分类，不输出上游正文或任意脚本异常消息。排错见[部署与运维](deployment.md#排错)。
 
 协议权威实现：[`modules/chat/src/`](../../modules/chat/src/)、[`src/gateway/upstream.rs`](../../src/gateway/upstream.rs)、[`src/gateway/response.rs`](../../src/gateway/response.rs)。

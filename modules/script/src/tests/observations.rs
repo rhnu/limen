@@ -49,6 +49,7 @@ async fn sync_async_and_observer_phases_export_private_bounded_batches() -> Test
         "onResponse",
         "onUpstreamEvent",
         "onStreamEvent",
+        "onErrorResponse",
         "onError",
         "onFinish",
     ] {

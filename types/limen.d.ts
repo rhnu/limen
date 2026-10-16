@@ -14,7 +14,7 @@ export type DeepReadonly<T> = {
 };
 
 export type Phase = "onRequest" | "beforeSend" | "afterReceive" | "onResponse"
-  | "onUpstreamEvent" | "onStreamEvent" | "onError" | "onFinish";
+  | "onUpstreamEvent" | "onStreamEvent" | "onErrorResponse" | "onError" | "onFinish";
 export type UpstreamContentType = "json" | "sse" | "other";
 
 /** Null values mean that routing or receipt of upstream headers has not happened. */
@@ -166,6 +166,22 @@ export interface EventContext<P extends "onUpstreamEvent" | "onStreamEvent", Sta
 export type UpstreamEventContext<State extends JsonObject = JsonObject> = EventContext<"onUpstreamEvent", State>;
 export type StreamEventContext<State extends JsonObject = JsonObject> = EventContext<"onStreamEvent", State>;
 
+/** Runs before an error response is sent; routing and upstream receipt may be absent. */
+export interface ErrorResponseContext<State extends JsonObject = JsonObject> extends ObservationContext {
+  readonly client: ClientContext;
+  readonly meta: Meta<"onErrorResponse">;
+  readonly state: State;
+  /** Original failure classification, unaffected by response edits. */
+  readonly error: DeepReadonly<ObserverError>;
+  /** Rust requires an error status; a failure cannot become success. */
+  status: number;
+  readonly headers: HeadersDraft;
+  /** UTF-8 error text. null preserves the current bytes, including non-text bodies. */
+  body: string | null;
+  /** null removes Content-Type. Rust validates non-null header values. */
+  contentType: string | null;
+}
+
 export type ErrorCode = "invalid_request" | "unauthorized" | "unknown_model"
   | "payload_too_large" | "busy" | "deadline_exceeded" | "cancelled"
   | "request_rejected" | "hook_failed" | "upstream_failed" | "upstream_protocol" | "internal_error" | "unavailable";
@@ -219,7 +235,7 @@ export interface HookTimingSummary {
   readonly inputBridge: TimingSample;
   readonly outputBridge: TimingSample;
 }
-export type RequestHookPhase = Exclude<Phase, "onError" | "onFinish">;
+export type RequestHookPhase = Exclude<Phase, "onErrorResponse" | "onError" | "onFinish">;
 export interface RequestTimings {
   readonly requestMs: number | null;
   readonly requestDecodeMs: number | null;
@@ -260,6 +276,7 @@ interface PipelineHooks<State extends JsonObject> {
   onResponse: Hook<ResponseContext<State>>;
   onUpstreamEvent: Hook<UpstreamEventContext<State>>;
   onStreamEvent: Hook<StreamEventContext<State>>;
+  onErrorResponse: Hook<ErrorResponseContext<State>>;
 }
 type AtLeastOne<T> = Partial<T> & { [Key in keyof T]: Pick<T, Key> }[keyof T];
 /** Steps require a name and at least one phase hook. */
@@ -291,6 +308,7 @@ export interface Config<State extends JsonObject = JsonObject> {
   providers: Record<string, Provider<State>>;
   models: Record<string, Model<State>>;
   onRequest?: Hook<RequestContext<State>>;
+  onErrorResponse?: Hook<ErrorResponseContext<State>>;
   onError?: Hook<ErrorContext<State>>;
   onFinish?: Hook<FinishContext<State>>;
 }

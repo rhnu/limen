@@ -10,16 +10,17 @@
 
 全局 `onRequest` 在路由之前执行。路由后，每个阶段都遍历 provider.pipeline，再遍历 model.pipeline，均按数组正序；step 名称在所属 pipeline 内必须唯一，每个 step 至少有一个 hook。是否进入响应或事件阶段取决于[四种传输路径](transport.md#四种传输路径)。
 
-| Hook              | 触发点                            | 可修改内容                                       |
-| ----------------- | --------------------------------- | ------------------------------------------------ |
-| `onRequest`       | 认证、正文校验后，路由前          | `body`、`state`；可 `reject()`                   |
-| `beforeSend`      | defaults 合并后，发送前           | `body`、`url`、`headers`、`state`；可 `reject()` |
-| `afterReceive`    | 收到上游头后，读正文前            | `status`、响应 `headers`、`state`                |
-| `onUpstreamEvent` | 每个真实上游 SSE chunk            | `event`、事件替换、`state`                       |
-| `onResponse`      | 完整 JSON，包括 SSE 聚合结果      | `body`、`state`                                  |
-| `onStreamEvent`   | 每个即将发给客户端的 chunk        | `event`、事件替换、`state`                       |
-| `onError`         | 请求失败或取消后                  | 只读观察                                         |
-| `onFinish`        | 每个终态，失败时位于 `onError` 后 | 只读观察                                         |
+| Hook              | 触发点                            | 可修改内容                                          |
+| ----------------- | --------------------------------- | --------------------------------------------------- |
+| `onRequest`       | 认证、正文校验后，路由前          | `body`、`state`；可 `reject()`                      |
+| `beforeSend`      | defaults 合并后，发送前           | `body`、`url`、`headers`、`state`；可 `reject()`    |
+| `afterReceive`    | 收到上游头后，读正文前            | `status`、响应 `headers`、`state`                   |
+| `onUpstreamEvent` | 每个真实上游 SSE chunk            | `event`、事件替换、`state`                          |
+| `onResponse`      | 完整 JSON，包括 SSE 聚合结果      | `body`、`state`                                     |
+| `onStreamEvent`   | 每个即将发给客户端的 chunk        | `event`、事件替换、`state`                          |
+| `onErrorResponse` | 失败已确定、错误响应尚未发出      | `status`、`body`、`contentType`、`headers`、`state` |
+| `onError`         | 请求失败或取消后                  | 只读观察                                            |
+| `onFinish`        | 每个终态，失败时位于 `onError` 后 | 只读观察                                            |
 
 所有 hook 必须返回 `undefined` 或最终 resolve 为 `undefined` 的原生 Promise。通过修改 `ctx` 工作，不返回替代正文、事件、上下文或错误对象；`return ctx.body` 和 `return null` 都违反契约。
 
@@ -57,7 +58,34 @@ const tenantPolicy = {
 };
 ```
 
-将 `tenantPolicy.onRequest` 设为配置对象的全局 `onRequest`，并配合下面的头部白名单。只有当前 hook 成功、草稿合法时拒绝才生效；此时有效 `state` 会提交，后续请求处理停止。throw、Promise 拒绝或破坏正文后再 `reject()` 会作为 hook 错误处理。客户端只收到固定的 `request_rejected` 错误，不会收到自定义正文。
+将 `tenantPolicy.onRequest` 设为配置对象的全局 `onRequest`，并配合下面的头部白名单。只有当前 hook 成功、草稿合法时拒绝才生效；此时有效 `state` 会提交，后续请求处理停止。throw、Promise 拒绝或破坏正文后再 `reject()` 会作为 hook 错误处理。默认返回固定 `request_rejected` 错误；自定义正文使用下面的错误响应适配。
+
+## 错误响应适配
+
+`onErrorResponse` 可放在 provider/model 的 pipeline step，也可放在配置对象顶层。请求失败且响应尚未开始时，按 provider → model → 全局顺序执行；路由前失败只执行全局 hook。它与只读 `onError` 分开：适配完成后先发送错误，再由 `onError` 和 `onFinish` 观察最终失败。
+
+```js
+const normalizeErrors = {
+  name: "normalize-errors",
+  onErrorResponse(ctx) {
+    if (ctx.meta.upstreamStatus === 429) {
+      ctx.body = JSON.stringify({
+        error: { code: "rate_limited", message: "Try again later" },
+      });
+      ctx.contentType = "application/json";
+      ctx.headers.set("Retry-After", "30");
+      ctx.state.rateLimited = true;
+    }
+  },
+};
+// 将 normalizeErrors 放入 provider 或 model 的 pipeline。
+```
+
+`ctx.status` 初始为实际待发状态；上游 HTTP 失败可映射为 3xx/4xx/5xx，网关错误仅可映射为 4xx/5xx。`ctx.body` 是原始正文的 UTF-8 字符串，JSON 错误可用 `JSON.parse`/`JSON.stringify` 适配。二进制、非 UTF-8 或带 `Content-Encoding` 的正文以 `null` 暴露；保持或设置为 `null` 表示保留当前原始字节。设置字符串表示显式替换正文，并移除原始 `Content-Encoding`。正文不要求是 JSON 对象，替换仍受 `max_output_bytes` 限制。
+
+`ctx.contentType` 可设为合法头值或 `null`（移除媒体类型），`ctx.headers` 使用普通受控头 API。`ctx.error` 只读，包含清理后的原始失败 code、phase、step 和本次调用前的 HTTP status；原始网络、解析或 JS 异常不会暴露。`meta` 保留原始上游事实，`state` 字段可修改且引用固定。修改响应不改变请求失败分类，也不触发重新路由、重试或成功完成。
+
+每次调用成功且整个草稿有效后，状态、头、正文、state 与观测一并提交。抛错、非法返回或非法草稿、超时会丢弃当前调用并停止后续适配，保留最后有效响应；不会递归触发错误 hook。没有有效适配时保留默认透传或网关 envelope。`onErrorResponse`、错误写出和两个观察 hook 共享 `cleanup_ms`，每个适配调用还受 `hook_ms` 限制。已超时的请求可在清理预算内适配错误，晚到结果无提交资格；VM 不可用时保留默认响应。已开始的 SSE 不执行此 hook，按[流错误规则](transport.md#sse-完成与失败)结束。
 
 ## 头部与客户端上下文
 
@@ -82,7 +110,7 @@ const forwardTenant = {
 
 将 `forwardTenant` 放入所需 provider 或 model 的 pipeline。`ctx.headers` 的 `getAll`、`append`、`set`、`delete` 操作也不区分大小写。`getAll` 返回副本，`append` 保留重复值，`set` 替换同名所有值。API 引用和方法固定，内容可以通过这些方法变更。
 
-`Host`、`Content-Length`、`Content-Type`、`Content-Encoding` 及逐跳传输头由 Rust 管理，不能通过 headers draft 设置或删除。`afterReceive` 的初始响应头只保留上游 `Content-Language`、`X-Request-Id`、`Retry-After` 中可转发的值；它可以再添加业务响应头。
+`Host`、`Content-Length`、`Content-Type`、`Content-Encoding` 及逐跳传输头由 Rust 管理，不能通过 headers draft 设置或删除；错误响应媒体类型用 `contentType` 修改。初始响应头保留上游 `Content-Language`、`X-Request-Id`、`Retry-After`、`WWW-Authenticate`、`Location`、`RateLimit`、`RateLimit-Policy` 以及 `RateLimit-*`、`X-RateLimit-*` 字段；`Connection` 指名字段剔除，不自动转发 Cookie 或认证凭据。响应 hook 可以再添加业务响应头。
 
 ## 元数据、状态与观察
 
@@ -90,7 +118,7 @@ const forwardTenant = {
 
 `onError` 与 `onFinish` 获得只读的 `state`、`meta`、`client`、`stats` 和终态 `outcome`。失败时附带经过清理的 `error`，含 code、HTTP status、request_id、phase 和 step。stats 提供字节数、上游响应头耗时、总耗时、实际发送模型与去除路径和 query 的目标 origin；没有正文。
 
-观察 hook 共享有限清理预算。观察失败只产生诊断，不改变请求终态；前一个观察耗尽预算或 VM 已退役时，后续观察可能不执行。不要依赖它们保证外部副作用完成。
+观察 hook 与错误响应适配和写出共享有限清理预算。观察失败只产生诊断，不改变请求终态；前序工作耗尽预算或 VM 已退役时，后续观察可能不执行。不要依赖它们保证外部副作用完成。
 
 ### 原生用量与阶段耗时
 

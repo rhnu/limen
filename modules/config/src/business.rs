@@ -22,6 +22,8 @@ pub struct BusinessConfig {
     #[serde(default, deserialize_with = "present_option")]
     pub on_request: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
+    pub on_error_response: Option<HookId>,
+    #[serde(default, deserialize_with = "present_option")]
     pub on_error: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
     pub on_finish: Option<HookId>,
@@ -72,6 +74,8 @@ pub struct PipelineStep {
     pub on_upstream_event: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
     pub on_stream_event: Option<HookId>,
+    #[serde(default, deserialize_with = "present_option")]
+    pub on_error_response: Option<HookId>,
 }
 
 impl BusinessConfig {
@@ -279,6 +283,7 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
             step.on_response,
             step.on_upstream_event,
             step.on_stream_event,
+            step.on_error_response,
         ];
         if !names.insert(&step.name) || hooks.iter().all(Option::is_none) {
             return Err(ConfigError::new(

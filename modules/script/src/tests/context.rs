@@ -4,6 +4,7 @@ use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
 use crate::{RuntimeStatus, ScriptErrorKind};
 
 mod client;
+mod error_response;
 mod rejection;
 
 fn draft(phase: &str) -> Value {
@@ -16,6 +17,12 @@ fn draft(phase: &str) -> Value {
             value["body"] = json!({"model": "synthetic", "nested": {"value": 1}});
         },
         "afterReceive" => value["status"] = json!(200),
+        "onErrorResponse" => {
+            value["status"] = json!(502);
+            value["body"] = json!("synthetic upstream error");
+            value["contentType"] = json!("text/plain");
+            value["error"] = json!({"code": "upstream_failed", "status": 502});
+        },
         "onUpstreamEvent" | "onStreamEvent" => value["event"] = json!({"text": "synthetic"}),
         "onError" | "onFinish" => {
             value["outcome"] = json!("success");
@@ -26,7 +33,7 @@ fn draft(phase: &str) -> Value {
         },
         _ => panic!("unsupported test phase"),
     }
-    if matches!(phase, "beforeSend" | "afterReceive") {
+    if matches!(phase, "beforeSend" | "afterReceive" | "onErrorResponse") {
         value["headers"] = json!([
             {"name": "X-Example", "value": "first"},
             {"name": "x-example", "value": "second"}

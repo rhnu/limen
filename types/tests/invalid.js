@@ -103,6 +103,38 @@ export const config = {
     const outcome = ctx.outcome;
     void outcome;
   },
+  onErrorResponse(ctx) {
+    // @ts-expect-error The original error classification is readonly.
+    ctx.error.code = "internal_error";
+    // @ts-expect-error The error reference is fixed.
+    ctx.error = ctx.error;
+    // @ts-expect-error Metadata remains readonly while editing an error response.
+    ctx.meta.phase = "onErrorResponse";
+    // @ts-expect-error The metadata reference is fixed.
+    ctx.meta = ctx.meta;
+    // @ts-expect-error The state reference is fixed even though its fields are mutable.
+    ctx.state = {};
+    // @ts-expect-error Error bodies are nullable text, not JSON objects.
+    ctx.body = { error: "changed" };
+    // @ts-expect-error A binary error body may not be text.
+    ctx.body.toUpperCase();
+    // @ts-expect-error Content-Type must be text or null.
+    ctx.contentType = 1;
+    // @ts-expect-error Status remains numeric.
+    ctx.status = "503";
+    // @ts-expect-error Header draft references cannot be replaced.
+    ctx.headers = ctx.headers;
+    // @ts-expect-error Header methods are frozen.
+    ctx.headers.set = () => {};
+    // @ts-expect-error Routing may not have happened.
+    ctx.meta.provider.toUpperCase();
+    // @ts-expect-error This phase cannot record request rejection.
+    ctx.reject(400);
+    /** @type {import("../limen").RequestHookPhase} */
+    // @ts-expect-error Request timings exclude cleanup phases.
+    const timing = "onErrorResponse";
+    void timing;
+  },
   onFinish(ctx) {
     // @ts-expect-error A successful outcome has no error object.
     ctx.error.code.toUpperCase();
@@ -210,6 +242,21 @@ export const model = {
 /** @type {import("../limen").PipelineStep} */
 // @ts-expect-error A pipeline step must define at least one phase hook.
 export const emptyStep = { name: "empty" };
+
+/** @type {import("../limen").PipelineStep} */
+export const errorResponseReturn = {
+  name: "error-return",
+  // @ts-expect-error Error response hooks cannot return replacement bodies.
+  onErrorResponse() { return "replacement"; },
+};
+
+/** @type {import("../limen").Config} */
+export const errorResponseAsyncReturn = {
+  providers: {},
+  models: {},
+  // @ts-expect-error Async error response completion must be undefined.
+  async onErrorResponse() { return {}; },
+};
 
 // @ts-expect-error Optional state generics must describe JSON objects.
 /** @type {import("../limen").Config<{ callback: () => void }>} */

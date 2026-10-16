@@ -64,6 +64,8 @@ impl Delivery {
         self.headers = headers;
     }
 
+    pub fn pending(&self) -> bool { self.reply.is_some() }
+
     pub fn send_json(&mut self, response: Response) {
         if let Some(reply) = self.reply.take() {
             let _delivered = reply.send(response);
