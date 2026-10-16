@@ -7,6 +7,8 @@ use crate::{
     validate_chunk,
 };
 
+mod compatibility;
+
 fn chunk(choices: Value) -> Value {
     let mut value = json!({"id":"c1", "object":"chat.completion.chunk", "created":1,
         "model":"alias"});

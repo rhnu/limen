@@ -126,3 +126,38 @@ fn source_events_keep_generic_json_bounds() {
         .is_err()
     );
 }
+
+#[test]
+fn outgoing_usage_tail_cannot_gain_content_or_tools_from_hooks() {
+    let finished = json!({"id":"c1","object":"chat.completion.chunk","created":1,
+        "model":"alias","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]});
+    for delta in [
+        json!({"content":"late"}),
+        json!({"tool_calls":[{"index":0,"function":{"arguments":"late"}}]}),
+    ] {
+        let mut tracker = limen_chat::ChunkTracker::new(1);
+        tracker.push(&finished).unwrap();
+        let mut frames = Vec::new();
+        let mut tail = finished.clone();
+        tail["usage"] = json!({"total_tokens":3});
+        EventConsumer::Stream {
+            tracker: &mut tracker,
+            frames: &mut frames,
+            max_event_bytes: 4096,
+        }
+        .consume(&[tail.clone()])
+        .unwrap();
+        assert_eq!(frames.len(), 1);
+        tail["choices"][0]["delta"] = delta;
+        let failure = EventConsumer::Stream {
+            tracker: &mut tracker,
+            frames: &mut frames,
+            max_event_bytes: 4096,
+        }
+        .consume(&[tail])
+        .unwrap_err();
+        assert_eq!(failure.code, ErrorCode::HookFailed);
+        assert_eq!(failure.phase, "onStreamEvent");
+        assert_eq!(frames.len(), 1);
+    }
+}

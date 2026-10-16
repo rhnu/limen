@@ -34,9 +34,13 @@ fn optional_string(object: &Map<String, Value>, key: &str, null: bool) -> Result
 /// Checks understood fields while retaining arbitrary same-shape extension fields.
 ///
 /// # Errors
-/// Returns [`Error::InvalidChunk`] for malformed standard fields or duplicate indices.
+/// Returns [`Error::UpstreamError`] for error envelopes, or [`Error::InvalidChunk`]
+/// for malformed standard fields or duplicate indices.
 pub fn validate_chunk(value: &Value) -> Result<(), Error> {
     let root = object(value)?;
+    if root.get("error").is_some_and(|error| !error.is_null()) {
+        return Err(Error::UpstreamError);
+    }
     if root.get("object").and_then(Value::as_str) != Some("chat.completion.chunk")
         || !root.get("id").is_some_and(Value::is_string)
         || !root.get("model").is_some_and(Value::is_string)
@@ -89,9 +93,33 @@ pub fn validate_chunk(value: &Value) -> Result<(), Error> {
     Ok(())
 }
 
+/// `OpenRouter` repeats the terminal choice on its usage frame. Only an accounting
+/// frame may repeat a finish reason; it must not reopen or add data to the choice.
+pub(crate) fn validate_usage_tail(
+    chunk: &Value,
+    choice: &Value,
+    finish: &str,
+) -> Result<(), Error> {
+    let delta = object(&choice["delta"])?;
+    let content_free = delta.iter().all(|(key, value)| match key.as_str() {
+        "role" => value.as_str() == Some("assistant"),
+        "content" | "refusal" => value.is_null() || value.as_str() == Some(""),
+        "tool_calls" => value.as_array().is_some_and(Vec::is_empty),
+        _ => false,
+    });
+    if !chunk["usage"].is_object()
+        || choice["finish_reason"].as_str() != Some(finish)
+        || !content_free
+        || choice.get("logprobs").is_some_and(|value| !value.is_null())
+    {
+        return Err(Error::ChoiceFinished);
+    }
+    Ok(())
+}
+
 /// Bounded per-choice completion state, independent of transfer and aggregation.
 pub struct ChunkTracker {
-    choices: BTreeMap<u64, bool>,
+    choices: BTreeMap<u64, Option<String>>,
     max_choices: usize,
 }
 
@@ -112,14 +140,15 @@ impl ChunkTracker {
         let choices = chunk["choices"].as_array().ok_or(Error::InvalidChunk)?;
         for choice in choices {
             let index = index(&choice["index"])?;
-            if self.choices.get(&index) == Some(&true) {
-                return Err(Error::ChoiceFinished);
+            if let Some(Some(finish)) = self.choices.get(&index) {
+                validate_usage_tail(chunk, choice, finish)?;
+                continue;
             }
             if !self.choices.contains_key(&index) && self.choices.len() >= self.max_choices {
                 return Err(Error::ChoiceLimit);
             }
             self.choices
-                .insert(index, !choice["finish_reason"].is_null());
+                .insert(index, choice["finish_reason"].as_str().map(str::to_owned));
         }
         Ok(())
     }
@@ -129,7 +158,7 @@ impl ChunkTracker {
     /// # Errors
     /// Returns [`Error::UnfinishedChoices`] for empty streams or unfinished choices.
     pub fn finish(self) -> Result<(), Error> {
-        if self.choices.is_empty() || self.choices.values().any(|finished| !finished) {
+        if self.choices.is_empty() || self.choices.values().any(Option::is_none) {
             Err(Error::UnfinishedChoices)
         } else {
             Ok(())

@@ -31,9 +31,11 @@ JSON → SSE 按角色、内容、工具、完成原因和 usage 生成增量事
 
 ## SSE 完成与失败
 
-数据事件必须是合法 `chat.completion.chunk`。choice index 在同一 chunk 中不能重复，tool index 在同一 choice 中不能重复，两者均为非负整数。`finish_reason` 必须为字符串或 `null`，每个已出现 choice 最终都要以非 `null` 字符串完成，完成后不能继续追加该 choice。所有 choice 完成后允许 `choices: []` 的 usage 尾事件。
+数据事件必须是合法 `chat.completion.chunk`。choice index 在同一 chunk 中不能重复，tool index 在同一 choice 中不能重复，两者均为非负整数。`finish_reason` 必须为字符串或 `null`，每个已出现 choice 最终都要以非 `null` 字符串完成，完成后不能继续追加内容。
 
-上游必须提供由空行结束的 `data: [DONE]`；仅有 finish_reason 或直接 EOF 都算截断。网关在第一个有效 `[DONE]` 立即停止读取，忽略其后字节。注释、多行 data、UTF-8 BOM 和常见换行形式可以解析；非默认命名事件或上游 `event: error` 会失败。
+允许 `choices: []` 的 usage 事件，也兼容 [OpenRouter 的统计尾事件](https://openrouter.ai/docs/api_reference/streaming#the-final-usage-chunk-chat-completions)：usage 必须为对象，已完成 choice 只可重复相同的 `finish_reason`，delta 只允许空对象、`role: "assistant"`、空或 `null` 的 content/refusal、空 tool_calls 数组，logprobs 必须缺失或为 `null`。统计事件不重新打开 choice，也不改变聚合后的 message；新增正文、拒绝内容、工具分片、未知 delta 字段或改变完成原因仍然失败。hook 改写后同样执行这些检查；若删除 usage，须一并移除其重复的已完成 choice。provider、native_finish_reason 等扩展仍遵循上述同形传递与跨形转换边界。
+
+上游必须提供由空行结束的 `data: [DONE]`；仅有 finish_reason 或直接 EOF 都算截断。网关在第一个有效 `[DONE]` 立即停止读取，忽略其后字节。注释、多行 data、UTF-8 BOM 和常见换行形式可以解析；非默认命名事件、上游 `event: error` 或普通 data 事件中非 `null` 的顶层 `error` 都会失败。错误事件即使带完整 chunk 字段与完成原因，也不算成功，其原始错误正文不透传。
 
 下游成功时由 Rust 发送 `[DONE]`。失败发生在流启动前时，返回普通 JSON 错误；启动后 HTTP 状态已确定，尽可能发送 `event: error` 后结束，不发送成功 `[DONE]`。客户端断开时取消请求，错误帧不保证送达。
 

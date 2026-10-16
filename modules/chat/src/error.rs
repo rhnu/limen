@@ -27,6 +27,6 @@ pub enum Error {
     Truncated,
     #[error("Chat Completions stream contains data after DONE")]
     AfterDone,
-    #[error("upstream returned an SSE error event")]
+    #[error("upstream returned a Chat Completions error event")]
     UpstreamError,
 }

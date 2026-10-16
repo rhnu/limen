@@ -12,6 +12,7 @@ use crate::bootstrap::Bootstrap;
 mod observation_output;
 mod policies;
 mod statistics;
+mod transport;
 
 fn fixtures(group: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

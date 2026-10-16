@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     Error,
-    chunk::{index, known_keys, object},
+    chunk::{index, known_keys, object, validate_usage_tail},
     validate_chunk,
 };
 
@@ -90,12 +90,13 @@ impl Aggregator {
         // error even when the same event also contains conflicting metadata.
         for choice in chunk["choices"].as_array().ok_or(Error::InvalidChunk)? {
             let index = index(&choice["index"])?;
-            if self
+            if let Some(finish) = self
                 .choices
                 .get(&index)
-                .is_some_and(|choice| choice.finish.is_some())
+                .and_then(|choice| choice.finish.as_ref())
+                .and_then(Value::as_str)
             {
-                return Err(Error::ChoiceFinished);
+                validate_usage_tail(&chunk, choice, finish)?;
             }
         }
         self.events += 1;
@@ -118,6 +119,11 @@ impl Aggregator {
         known_keys(source, &["index", "delta", "finish_reason", "logprobs"])?;
         let choice_index = index(&source["index"])?;
         let target = self.choices.entry(choice_index).or_default();
+        // A validated usage tail updates root metadata only. Merging its empty
+        // delta could otherwise introduce content into a tool-only message.
+        if target.finish.is_some() {
+            return Ok(());
+        }
         if let Some(value) = source.get("logprobs") {
             if !value.is_null() {
                 return Err(Error::Unsupported);
