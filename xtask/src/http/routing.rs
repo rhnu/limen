@@ -102,5 +102,56 @@ pub async fn auth_routing(laboratory: &mut Laboratory<'_>) -> Result<()> {
             );
             Ok(())
         })
+        .await?;
+    dynamic_origin(laboratory).await
+}
+
+/// URL rewriting exercises the unpooled client with independent request state.
+async fn dynamic_origin(laboratory: &mut Laboratory<'_>) -> Result<()> {
+    laboratory
+        .with_fixture(
+            Options {
+                config: Some(include_str!("../../fixtures/http/dynamic-origin.js")),
+                ..Options::default()
+            },
+            async |item| {
+                for marker in ["first", "second"] {
+                    let reply = item.request(request(&[("marker", json!(marker))])).await?;
+                    ensure!(
+                        reply.status == 200 && reply.body["echo"]["marker"] == marker,
+                        "dynamic target preserves each request body"
+                    );
+                }
+                {
+                    let upstream = item.upstream.controls.lock().await;
+                    ensure!(
+                        upstream.records.len() == 2,
+                        "dynamic target sends each request once"
+                    );
+                    for record in &upstream.records {
+                        ensure!(
+                            record
+                                .path
+                                .ends_with("/custom/completion?key=synthetic-query-secret")
+                                && record.headers.get("authorization").is_some_and(
+                                    |value| value == "Bearer synthetic-upstream-secret"
+                                ),
+                            "dynamic target preserves URL and independent upstream authentication"
+                        );
+                    }
+                }
+                item.upstream.controls.lock().await.status = 307;
+                item.request(request(&[])).await?.error(
+                    502,
+                    "upstream_failed",
+                    "dynamic target redirect is an error",
+                )?;
+                ensure!(
+                    item.upstream.controls.lock().await.records.len() == 3,
+                    "dynamic target never follows a redirect or repeats generation"
+                );
+                Ok(())
+            },
+        )
         .await
 }

@@ -171,8 +171,7 @@ impl Gateway {
             };
             gateway.observe(&mut lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
             lifecycle.record(&terminal, &gateway.server.observability.events);
-            let error = terminal.as_ref().err().map(|failure| serde_json::json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase}));
-            gateway.transport.complete(&lifecycle.state, error, lifecycle.stats(), lifecycle.observations.snapshot(&gateway.server.observability.events)).await;
+            gateway.transport.complete(&lifecycle, terminal.as_ref().err(), &gateway.server.observability.events).await;
         }.instrument(span));
         drop(tasks);
         let response = tokio::select! {

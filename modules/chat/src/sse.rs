@@ -118,9 +118,8 @@ pub fn encode_chunk(value: &Value, max_event_bytes: usize) -> Result<Vec<u8>, Er
     encode(value, b"data: ", max_event_bytes)
 }
 
-/// Checks framing and JSON size without allocating a frame for conversion trials.
+/// Counts framing and JSON size for chunks already established by the converter.
 pub(crate) fn chunk_size(value: &Value, max_event_bytes: usize) -> Result<usize, Error> {
-    validate_chunk(value)?;
     encoded_size(value, b"data: ", max_event_bytes)
 }
 

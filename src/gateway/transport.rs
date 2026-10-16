@@ -3,11 +3,12 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use http::HeaderMap;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::{
     error::{ErrorCode, Failure},
+    lifecycle::Lifecycle,
     logic,
 };
 
@@ -36,7 +37,8 @@ pub(crate) struct Trace {
 
 pub(super) enum Transport {
     Http {
-        client: reqwest::Client,
+        pooled_client: reqwest::Client,
+        unpooled_client: reqwest::Client,
         origins: BTreeSet<String>,
     },
     Fixture {
@@ -48,7 +50,9 @@ pub(super) enum Transport {
 impl Transport {
     pub fn http(origins: BTreeSet<String>) -> Result<Self, reqwest::Error> {
         Ok(Self::Http {
-            client: super::upstream_client(1)?,
+            pooled_client: super::upstream_client(1)?,
+            // Script-selected origins reuse connector state without retaining idle connections.
+            unpooled_client: super::upstream_client(0)?,
             origins,
         })
     }
@@ -71,12 +75,15 @@ impl Transport {
         body: Vec<u8>,
     ) -> Result<Incoming, Failure> {
         match self {
-            Self::Http { client, origins } => {
+            Self::Http {
+                pooled_client,
+                unpooled_client,
+                origins,
+            } => {
                 let client = if origins.contains(&logic::safe_target(&url)) {
-                    client.clone()
+                    pooled_client
                 } else {
-                    super::upstream_client(0)
-                        .map_err(|e| Failure::upstream(e, "upstream_client"))?
+                    unpooled_client
                 };
                 client
                     .post(url)
@@ -107,17 +114,18 @@ impl Transport {
 
     pub async fn complete(
         &self,
-        state: &Value,
-        error: Option<Value>,
-        statistics: Value,
-        observations: Value,
+        lifecycle: &Lifecycle,
+        failure: Option<&Failure>,
+        observation_names: &[String],
     ) {
         if let Self::Fixture { trace, .. } = self {
             let mut trace = trace.lock().await;
-            trace.state = state.clone();
-            trace.error = error;
-            trace.stats = statistics;
-            trace.observations = observations;
+            trace.state = lifecycle.state.clone();
+            trace.error = failure.map(|failure| {
+                json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase})
+            });
+            trace.stats = lifecycle.stats();
+            trace.observations = lifecycle.observations.snapshot(observation_names);
         }
     }
 
