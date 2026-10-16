@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [workspace]
-members = [".", "modules/config", "modules/script", "modules/chat", "xtask"]
+members = [".", "modules/config", "modules/script", "modules/chat", "modules/storage", "xtask"]
 default-members = ["."]
 resolver = "3"
 
@@ -26,6 +26,13 @@ clap = { version = "4.6.7", default-features = false, features = ["std", "derive
 limen-config = { path = "modules/config" }
 limen-script = { path = "modules/script" }
 limen-chat = { path = "modules/chat" }
+limen-storage = { path = "modules/storage" }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks", "limits", "fallible_uint"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "now"] }
+uuid = { version = "1.28.0", default-features = false, features = ["std", "v4"] }
+subtle = { version = "2.6.1", default-features = false }
+tracing-appender = "0.2.5"
+rolling-file = "0.2.0"
 http = "1.5.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["http1", "server"] }
@@ -54,6 +61,13 @@ dbg_macro = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [dependencies]
+base64.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+subtle.workspace = true
+tracing-appender.workspace = true
+rolling-file.workspace = true
+limen-storage.workspace = true
 axum.workspace = true
 clap.workspace = true
 http.workspace = true

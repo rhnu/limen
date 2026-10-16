@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# CI invocation is commented out during the persistence/management refactor.
+# Retained for explicitly requested deployment restoration; do not run during refactoring.
 set -euo pipefail
 
 for variable in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET WEBHOOK_TOKEN WEBHOOK_URL \

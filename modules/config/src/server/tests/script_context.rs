@@ -3,10 +3,14 @@ use super::*;
 fn source(format: ServerFormat, value: &str) -> String {
     match format {
         ServerFormat::Toml => {
-            format!("client_auth = {{ none = true }}\n[script_context]\nclient_headers = {value}\n")
+            format!(
+                "auth = {{ api_key = 'test-api-key-01234567890123456789' }}\n[script_context]\nclient_headers = {value}\n"
+            )
         },
         ServerFormat::Yaml => {
-            format!("client_auth: {{none: true}}\nscript_context:\n  client_headers: {value}\n")
+            format!(
+                "auth: {{api_key: test-api-key-01234567890123456789}}\nscript_context:\n  client_headers: {value}\n"
+            )
         },
     }
 }
@@ -19,15 +23,21 @@ fn parse_headers(format: ServerFormat, names: &[String]) -> Result<ServerConfig,
 #[test]
 fn defaults_and_empty_sections_expose_no_client_headers() {
     for (format, source) in [
-        (ServerFormat::Toml, "client_auth = { none = true }"),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[script_context]",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }",
         ),
-        (ServerFormat::Yaml, "client_auth: {none: true}"),
+        (
+            ServerFormat::Toml,
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[script_context]",
+        ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nscript_context: {}",
+            "auth: {api_key: test-api-key-01234567890123456789}",
+        ),
+        (
+            ServerFormat::Yaml,
+            "auth: {api_key: test-api-key-01234567890123456789}\nscript_context: {}",
         ),
     ] {
         let config = ServerConfig::parse(source, format).unwrap();
@@ -172,31 +182,31 @@ fn context_section_rejects_non_objects_unknown_and_duplicate_fields() {
     for (format, source) in [
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\nscript_context = []",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\nscript_context = []",
         ),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[script_context]\nsecret-key = 'secret-value'",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[script_context]\nsecret-key = 'secret-value'",
         ),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[script_context]\nclient_headers = []\nclient_headers = []",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[script_context]\nclient_headers = []\nclient_headers = []",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nscript_context: []",
+            "auth: {api_key: test-api-key-01234567890123456789}\nscript_context: []",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nscript_context: null",
+            "auth: {api_key: test-api-key-01234567890123456789}\nscript_context: null",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nscript_context: {secret-key: secret-value}",
+            "auth: {api_key: test-api-key-01234567890123456789}\nscript_context: {secret-key: secret-value}",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nscript_context: {client_headers: [], client_headers: []}",
+            "auth: {api_key: test-api-key-01234567890123456789}\nscript_context: {client_headers: [], client_headers: []}",
         ),
     ] {
         let error = ServerConfig::parse(source, format)

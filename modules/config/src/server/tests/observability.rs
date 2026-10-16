@@ -3,10 +3,14 @@ use super::*;
 fn source(format: ServerFormat, section: &str, key: &str, value: &str) -> String {
     match format {
         ServerFormat::Toml => {
-            format!("client_auth = {{ none = true }}\n[{section}]\n{key} = {value}\n")
+            format!(
+                "auth = {{ api_key = 'test-api-key-01234567890123456789' }}\n[{section}]\n{key} = {value}\n"
+            )
         },
         ServerFormat::Yaml => {
-            format!("client_auth: {{none: true}}\n{section}:\n  {key}: {value}\n")
+            format!(
+                "auth: {{api_key: test-api-key-01234567890123456789}}\n{section}:\n  {key}: {value}\n"
+            )
         },
     }
 }
@@ -34,15 +38,21 @@ fn assert_safe(error: &ConfigError) {
 #[test]
 fn omitted_and_empty_observability_sections_disable_events() {
     for (format, source) in [
-        (ServerFormat::Toml, "client_auth = { none = true }"),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[observability]",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }",
         ),
-        (ServerFormat::Yaml, "client_auth: {none: true}"),
+        (
+            ServerFormat::Toml,
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[observability]",
+        ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: {}",
+            "auth: {api_key: test-api-key-01234567890123456789}",
+        ),
+        (
+            ServerFormat::Yaml,
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: {}",
         ),
     ] {
         let config = ServerConfig::parse(source, format).unwrap();
@@ -157,39 +167,39 @@ fn observability_sections_reject_wrong_types_unknown_and_duplicate_fields() {
     for (format, source) in [
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\nobservability = []",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\nobservability = []",
         ),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\nobservability = 'secret-value'",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\nobservability = 'secret-value'",
         ),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[observability]\nsecret-key = 'secret-value'",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[observability]\nsecret-key = 'secret-value'",
         ),
         (
             ServerFormat::Toml,
-            "client_auth = { none = true }\n[observability]\nevents = []\nevents = []",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }\n[observability]\nevents = []\nevents = []",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: null",
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: null",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: []",
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: []",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: secret-value",
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: secret-value",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: {secret-key: secret-value}",
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: {secret-key: secret-value}",
         ),
         (
             ServerFormat::Yaml,
-            "client_auth: {none: true}\nobservability: {events: [], events: []}",
+            "auth: {api_key: test-api-key-01234567890123456789}\nobservability: {events: [], events: []}",
         ),
     ] {
         let error = ServerConfig::parse(source, format).err().unwrap();

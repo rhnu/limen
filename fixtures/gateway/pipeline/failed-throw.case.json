@@ -45,7 +45,7 @@
         "error": {
           "code": "hook_failed",
           "message": "A configured request hook failed",
-          "request_id": "limen-1"
+          "request_id": "limen-r-00000000-0000-0000-0000-000000000000-1"
         }
       }
     },

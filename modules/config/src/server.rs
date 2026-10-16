@@ -10,17 +10,15 @@ use http::HeaderName;
 use serde::Deserialize;
 use serde_saphyr::Location;
 
-use crate::{
-    ConfigError, ConfigErrorKind,
-    error::{present_option, safe_path},
-    json::MAX_JSON_DEPTH,
-};
+use crate::{ConfigError, ConfigErrorKind, error::safe_path, json::MAX_JSON_DEPTH};
 
 const MAX_SERVER_BYTES: usize = 1024 * 1024;
 
 mod input;
+mod runtime;
 
 use input::Input;
+pub use runtime::{AuthConfig, LogConfig, ManagementConfig, StorageConfig};
 
 /// Both formats deserialize the same schema and apply the same validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,13 +41,6 @@ impl ServerFormat {
     }
 }
 
-/// Client authentication is required explicitly, including unauthenticated deployments.
-#[derive(Clone)]
-pub enum ClientAuth {
-    None,
-    Bearer(String),
-}
-
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -67,21 +58,6 @@ pub enum LogFormat {
     #[default]
     Text,
     Json,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum LogOutput {
-    #[default]
-    Stderr,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct LogConfig {
-    pub level: LogLevel,
-    pub format: LogFormat,
-    pub output: LogOutput,
 }
 
 /// Explicitly allowlisted client metadata exposed to request scripts.
@@ -239,7 +215,8 @@ impl<const TOML: bool> RawScriptContext<TOML> {
 // range failure retains the parser's value location without retaining source text.
 macro_rules! resource_limits {
     ($($field:ident: $ty:ty = $default:expr, $min:expr => $max:expr;)*) => {
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
         pub struct ResourceLimits { $(pub $field: $ty,)* }
 
         impl Default for ResourceLimits {
@@ -300,7 +277,9 @@ resource_limits! {
 #[derive(Clone)]
 pub struct ServerConfig {
     pub listen: SocketAddr,
-    pub client_auth: ClientAuth,
+    pub auth: AuthConfig,
+    pub storage: StorageConfig,
+    pub management: ManagementConfig,
     pub log: LogConfig,
     pub limits: ResourceLimits,
     pub script_context: ScriptContextConfig,
@@ -313,7 +292,11 @@ struct RawServer<const TOML: bool> {
     #[serde(default = "default_listen")]
     listen: Input<SocketAddr, TOML>,
     #[serde(deserialize_with = "map_spanned")]
-    client_auth: Input<RawAuth, TOML>,
+    auth: Input<AuthConfig, TOML>,
+    #[serde(default, deserialize_with = "map_only")]
+    storage: StorageConfig,
+    #[serde(default, deserialize_with = "map_only")]
+    management: ManagementConfig,
     #[serde(default, deserialize_with = "map_only")]
     log: LogConfig,
     #[serde(default, deserialize_with = "map_only")]
@@ -322,15 +305,6 @@ struct RawServer<const TOML: bool> {
     script_context: RawScriptContext<TOML>,
     #[serde(default, deserialize_with = "map_only")]
     observability: RawObservability<TOML>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAuth {
-    #[serde(default, deserialize_with = "present_option")]
-    none: Option<bool>,
-    #[serde(default, deserialize_with = "present_option")]
-    bearer: Option<String>,
 }
 
 struct Strict<T>(T);
@@ -471,23 +445,10 @@ fn parse_yaml(source: &str) -> Result<RawServer<false>, ConfigError> {
 
 impl<const TOML: bool> RawServer<TOML> {
     fn validate(self, source: &str) -> Result<ServerConfig, ConfigError> {
-        let auth = match (
-            self.client_auth.value.none,
-            self.client_auth.value.bearer.as_ref(),
-        ) {
-            (Some(true), None) => ClientAuth::None,
-            (None, Some(token)) if valid_bearer(token) => ClientAuth::Bearer(token.clone()),
-            _ => {
-                return Err(self.client_auth.locate(
-                    ConfigError::new(
-                        ConfigErrorKind::Schema,
-                        "client_auth",
-                        "specify exactly one nonempty bearer token or none = true",
-                    ),
-                    source,
-                ));
-            },
-        };
+        self.auth
+            .value
+            .validate()
+            .map_err(|error| self.auth.locate(error, source))?;
         if self.listen.value.port() == 0 {
             return Err(self.listen.locate(
                 ConfigError::new(ConfigErrorKind::Range, "listen", "port must be nonzero"),
@@ -495,11 +456,16 @@ impl<const TOML: bool> RawServer<TOML> {
             ));
         }
         let limits = self.limits.validate(source)?;
+        self.storage.validate(&limits)?;
+        self.log.validate()?;
+        self.management.validate()?;
         let script_context = self.script_context.validate(source)?;
         let observability = self.observability.validate(source)?;
         Ok(ServerConfig {
             listen: self.listen.value,
-            client_auth: auth,
+            auth: self.auth.value,
+            storage: self.storage,
+            management: self.management,
             log: self.log,
             limits,
             script_context,
@@ -518,7 +484,7 @@ pub(crate) fn valid_bearer(token: &str) -> bool {
     }
 }
 
-/// Load an explicit file, or try server.toml then server.yaml only when TOML is absent.
+/// Load an explicit file, or only ./config/server.toml when no path is supplied.
 /// Read at most one MiB plus a sentinel byte; never merge files.
 ///
 /// # Errors
@@ -548,17 +514,9 @@ fn load_server_with<R: Read>(
         )
         .with_source(operation, error)
     };
-    let mut path = explicit.unwrap_or_else(|| Path::new("server.toml"));
-    let mut format = ServerFormat::from_path(path)?;
-    let file = match open(path) {
-        Err(error) if explicit.is_none() && error.kind() == io::ErrorKind::NotFound => {
-            path = Path::new("server.yaml");
-            format = ServerFormat::Yaml;
-            open(path)
-        },
-        result => result,
-    }
-    .map_err(|error| io_error("open configuration file", error))?;
+    let path = explicit.unwrap_or_else(|| Path::new("./config/server.toml"));
+    let format = ServerFormat::from_path(path)?;
+    let file = open(path).map_err(|error| io_error("open configuration file", error))?;
     let mut bytes = Vec::new();
     file.take((MAX_SERVER_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
@@ -578,7 +536,9 @@ fn load_server_with<R: Read>(
         )
         .with_source("decode configuration as UTF-8", error)
     })?;
-    ServerConfig::parse(source, format).map(|config| (path.to_path_buf(), config))
+    let mut config = ServerConfig::parse(source, format)?;
+    config.resolve_paths(path)?;
+    Ok((path.to_path_buf(), config))
 }
 
 #[cfg(test)]

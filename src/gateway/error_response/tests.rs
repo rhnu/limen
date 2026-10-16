@@ -38,7 +38,7 @@ async fn run(policy: &str, incoming: FixtureResponse, stream: bool, limit: usize
     let server = directory.path().join("server.toml");
     fs::write(
         &server,
-        "[client_auth]\nbearer = 'synthetic'\n[observability]\nevents = ['adapted']\n",
+        "[auth]\napi_key = 'synthetic-client-secret-0123456789'\n[observability]\nevents = ['adapted']\n",
     )
     .unwrap();
     fs::write(
@@ -61,7 +61,7 @@ async fn run(policy: &str, incoming: FixtureResponse, stream: bool, limit: usize
     let request = Request::builder()
         .method("POST")
         .uri("/v1/chat/completions")
-        .header("authorization", "Bearer synthetic")
+        .header("authorization", "Bearer synthetic-client-secret-0123456789")
         .header("content-type", "application/json")
         .body(Body::from(
             json!({"model":"chat","messages":[{}],"stream":stream}).to_string(),

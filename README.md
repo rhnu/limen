@@ -9,14 +9,16 @@ Limen is a Rust Chat Completions gateway for personal and private-network use. L
 Get a checkout of this repository and install Docker Compose, then run the following from the repository root in a POSIX shell. The supplied image targets Linux amd64.
 
 ```sh
-mkdir -p data
-cp examples/docker/server.toml examples/docker/config.js data/
+mkdir -p config data logs
+cp examples/docker/server.toml examples/docker/config.js config/
 ```
+
+On Linux, grant UID/GID 10001 read access to `config/` and write access to `data/` and `logs/` before starting; the container runs without root or permission repair.
 
 Edit the copied configuration:
 
-- In `data/server.toml`, replace `client_auth.bearer` with your client token.
-- In `data/config.js`, set the complete upstream Chat Completions URL, separate upstream credentials, and the upstream model name.
+- In `config/server.toml`, replace `auth.api_key` with your client token.
+- In `config/config.js`, set the complete upstream Chat Completions URL, separate upstream credentials, and the upstream model name.
 
 Validate and start the gateway:
 

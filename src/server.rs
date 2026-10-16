@@ -26,6 +26,8 @@ pub enum Error {
     Retired(#[source] ScriptError),
     #[error("JavaScript runtime stopped unexpectedly")]
     RuntimeStopped,
+    #[error("persistent service resources are missing")]
+    Resources,
     #[error("HTTP connection task failed")]
     Task(#[source] tokio::task::JoinError),
     #[error("HTTP shutdown budget exceeded")]
@@ -46,7 +48,7 @@ impl Error {
 
     pub fn phase(&self) -> &'static str {
         match self {
-            Self::Bind(_) | Self::Client(_) => "http_startup",
+            Self::Bind(_) | Self::Client(_) | Self::Resources => "http_startup",
             Self::Accept(_) | Self::Task(_) => "http_transport",
             Self::Signal(_) | Self::ShutdownTimeout(_) => "http_shutdown",
             Self::Retired(_) | Self::RuntimeStopped => "script_runtime",
@@ -84,9 +86,10 @@ impl fmt::Display for Diagnostic<'_> {
                 primary.diagnostic(),
                 cleanup.diagnostic()
             ),
-            Error::Client(_) | Error::RuntimeStopped | Error::ShutdownTimeout(_) => {
-                fmt::Display::fmt(self.0, formatter)
-            },
+            Error::Client(_)
+            | Error::RuntimeStopped
+            | Error::ShutdownTimeout(_)
+            | Error::Resources => fmt::Display::fmt(self.0, formatter),
         }
     }
 }
@@ -94,7 +97,10 @@ impl fmt::Display for Diagnostic<'_> {
 /// Bound transport tasks separately from request admission inside the gateway.
 pub async fn serve(loaded: &Bootstrap) -> Result<(), Error> {
     let shutdown = Cancellation::new();
-    let gateway = Gateway::new(loaded, shutdown.clone()).map_err(Error::Client)?;
+    let storage = loaded.storage.as_ref().ok_or(Error::Resources)?.clone();
+    let logging = loaded.logging.as_ref().ok_or(Error::Resources)?;
+    let gateway =
+        Gateway::new(loaded, shutdown.clone(), storage, logging).map_err(Error::Client)?;
     let mut status = loaded.runtime.status_changes();
     runtime_ready(&status.borrow())?;
     let listener = TcpListener::bind(loaded.server.listen)

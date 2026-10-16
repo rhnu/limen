@@ -5,7 +5,7 @@ use std::{fs, path::Path, process::ExitCode, time::Duration};
 use anyhow::{Context, Result};
 use clap::error::ErrorKind;
 
-use crate::{cargo, cli, http, process, runtime};
+use crate::{cargo, cli, http, process, runtime, storage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Case {
@@ -38,10 +38,14 @@ impl Case {
 }
 
 fn cases() -> Vec<Case> {
-    [("runtime", runtime::CASES), ("http", http::CASES)]
-        .into_iter()
-        .flat_map(|(family, names)| names.iter().map(move |name| Case { family, name }))
-        .collect()
+    [
+        ("runtime", runtime::CASES),
+        ("http", http::CASES),
+        ("storage", storage::CASES),
+    ]
+    .into_iter()
+    .flat_map(|(family, names)| names.iter().map(move |name| Case { family, name }))
+    .collect()
 }
 
 /// Validate the complete selection and all budgets before building or starting a worker.

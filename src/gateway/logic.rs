@@ -1,13 +1,11 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
-use limen_config::{BusinessConfig, ClientAuth, Model, Provider, ResourceLimits};
+use limen_config::{BusinessConfig, Model, Provider, ResourceLimits};
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 
 use super::error::{ErrorCode, Failure};
 
-pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> {
-    let ClientAuth::Bearer(expected) = auth else {
-        return Ok(());
-    };
+pub fn authorize(expected: &str, headers: &HeaderMap) -> Result<(), Failure> {
     let invalid = || Failure::new(ErrorCode::Unauthorized, "authentication");
     let mut values = headers.get_all(header::AUTHORIZATION).iter();
     let value = values.next().ok_or_else(invalid)?;
@@ -20,7 +18,7 @@ pub fn authorize(auth: &ClientAuth, headers: &HeaderMap) -> Result<(), Failure> 
     let (scheme, token) = value.split_once(' ').ok_or_else(invalid)?;
     let token = token.trim_start_matches(' ');
     if !scheme.eq_ignore_ascii_case("bearer")
-        || !secret_equal(token.as_bytes(), expected.as_bytes())
+        || !bool::from(token.as_bytes().ct_eq(expected.as_bytes()))
     {
         return Err(invalid());
     }
@@ -59,16 +57,6 @@ pub fn client_context(headers: &HeaderMap, allowed: &[String]) -> Result<Value, 
         }
     }
     Ok(json!({"headers":fields}))
-}
-
-// Compare every byte once lengths match; authentication never exits at the first difference.
-fn secret_equal(actual: &[u8], expected: &[u8]) -> bool {
-    actual.len() == expected.len()
-        && actual
-            .iter()
-            .zip(expected)
-            .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
-            == 0
 }
 
 pub fn parse_request(bytes: &[u8], limits: &ResourceLimits) -> Result<(Value, bool), Failure> {

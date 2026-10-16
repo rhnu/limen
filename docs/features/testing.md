@@ -51,6 +51,8 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 
 `request` 是客户端正文，`clientHeaders` 可添加业务头，值为字符串数组。runner 自动提供服务配置的客户端凭据和 JSON Content-Type，fixture 不能覆盖这两个头。客户端上下文仍按服务白名单暴露。
 
+离线 runner 为每个用例显式使用内存记录端，并固定合成运行命名空间；首个请求 ID 为 `limen-r-00000000-0000-0000-0000-000000000000-1`，便于完整正文和响应头断言。真实服务每次启动使用随机 UUID，不能依赖该固定值。
+
 `upstream` 定义 status、headers 与 body；使用 SSE 原始字节时改用 `bodyFile`，路径相对用例文件。body 与 bodyFile 不能同时出现；均省略表示空正文。请求被策略拒绝时仍需提供 upstream 定义，但它不会被使用。
 
 ## 断言结果

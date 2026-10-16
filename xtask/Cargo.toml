@@ -17,6 +17,7 @@ http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 limen-script.workspace = true
+limen-storage.workspace = true
 process-wrap.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true

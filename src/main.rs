@@ -1,3 +1,4 @@
+mod admin;
 mod bootstrap;
 mod cli;
 mod gateway;
@@ -33,7 +34,11 @@ fn main() -> ExitCode {
     if let Command::Test(args) = &cli.command {
         return executor.block_on(offline::run(path.as_deref(), &args.cases));
     }
-    executor.block_on(run(path.as_deref(), serve))
+    let result = executor.block_on(run(path.as_deref(), serve));
+    // All component shutdowns have their own budgets. A stuck filesystem syscall
+    // must not turn dropping the executor into an unbounded process shutdown.
+    executor.shutdown_timeout(std::time::Duration::ZERO);
+    result
 }
 
 async fn run(path: Option<&std::path::Path>, serve: bool) -> ExitCode {
@@ -59,6 +64,9 @@ async fn run(path: Option<&std::path::Path>, serve: bool) -> ExitCode {
     };
     if let Err(error) = result {
         telemetry::report_failure(&error, command, error.phase());
+        if let Some(logging) = &loaded.logging {
+            logging.shutdown();
+        }
         return ExitCode::FAILURE;
     }
     if !serve {
@@ -67,6 +75,14 @@ async fn run(path: Option<&std::path::Path>, serve: bool) -> ExitCode {
             loaded.business.providers.len(),
             loaded.business.models.len()
         );
+    }
+    if loaded
+        .logging
+        .as_ref()
+        .is_some_and(|logging| !logging.shutdown())
+    {
+        telemetry::report_failure(&bootstrap::Error::LogShutdown, command, "shutdown");
+        return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }

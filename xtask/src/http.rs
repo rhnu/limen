@@ -2,6 +2,8 @@
 
 mod fixture;
 mod lifecycle;
+mod logging;
+mod management;
 mod routing;
 mod statistics;
 mod transport;
@@ -21,6 +23,9 @@ pub const CASES: &[&str] = &[
     "resources",
     "stream-boundary",
     "statistics",
+    "management",
+    "persistence",
+    "logging",
 ];
 
 /// Run one externally supervised experiment, checking every fixture's logs on return.
@@ -35,6 +40,9 @@ pub async fn run(case: &str, executable: &Path, directory: &Path) -> Result<()> 
         "resources" => lifecycle::resources(&mut laboratory).await,
         "stream-boundary" => transport::run(&mut laboratory).await,
         "statistics" => statistics::run(&mut laboratory).await,
+        "management" => management::run(&mut laboratory).await,
+        "persistence" => management::persistence(&mut laboratory).await,
+        "logging" => logging::run(&mut laboratory).await,
         _ => bail!("unknown HTTP experiment: {case}"),
     };
     let safety = laboratory.check_logs();

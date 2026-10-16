@@ -66,7 +66,7 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
   "error": {
     "code": "unknown_model",
     "message": "The requested model is not configured",
-    "request_id": "limen-1"
+    "request_id": "limen-r-5d72071c-3ebc-44a2-b751-ec0d8ff8ee1a-1"
   }
 }
 ```
@@ -77,8 +77,9 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
 | ---------------- | ---------------------------------------------------------------- | --------------------- |
 | 输入、路由、认证 | `invalid_request` / `unknown_model` / `unauthorized`             | 400 / 400 / 401       |
 | 脚本策略拒绝     | `request_rejected`                                               | 400，可指定 403/422   |
-| 容量与期限       | `payload_too_large` / `busy` / `deadline_exceeded` / `cancelled` | 413 / 429 / 504 / 499 |
+| 容量与期限       | `payload_too_large` / `busy` / `deadline_exceeded` / `cancelled` | 413 / 503 / 504 / 499 |
 | 脚本或内部故障   | `hook_failed` / `internal_error` / `unavailable`                 | 500 / 500 / 503       |
+| 持久化不可用     | `storage_unavailable`                                            | 503                   |
 | 上游 HTTP 失败   | 内部归类为 `upstream_failed`，正文保留上游格式                   | 上游原状态            |
 | 网络与协议       | `upstream_failed` / `upstream_protocol`                          | 502，超时为 504       |
 

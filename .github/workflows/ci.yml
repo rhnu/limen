@@ -168,38 +168,40 @@ jobs:
               });
               core.info(`Deleted old container version ${version.id}`);
             }
-      - name: Check deployment configuration
-        id: deployment
-        if: env.PUBLISH_IMAGE == 'true'
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: |
-          configured=0
-          for variable in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET WEBHOOK_TOKEN WEBHOOK_URL; do
-            if [[ -n "${!variable}" ]]; then
-              configured=$((configured + 1))
-            fi
-          done
-          if (( configured == 0 )); then
-            echo 'configured=false' >> "$GITHUB_OUTPUT"
-            echo '::notice::Deployment webhook is disabled; configure all four deployment secrets to enable it'
-          elif (( configured == 4 )); then
-            echo 'configured=true' >> "$GITHUB_OUTPUT"
-          else
-            echo '::error::Deployment webhook is partially configured; all four deployment secrets are required'
-            exit 1
-          fi
-      - name: Trigger deployment webhook
-        if: env.PUBLISH_IMAGE == 'true' && steps.deployment.outputs.configured == 'true'
-        timeout-minutes: 4
-        shell: bash
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          DEPLOY_IMAGE: ${{ steps.image-name.outputs.name }}:latest
-        run: bash .github/scripts/trigger-deployment.sh
+      # Deployment is paused during the persistence/management refactor.
+      # Restore only on explicit request; image publication remains enabled.
+      # - name: Check deployment configuration
+      #   id: deployment
+      #   if: env.PUBLISH_IMAGE == 'true'
+      #   env:
+      #     CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      #     CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      #     WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
+      #     WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      #   run: |
+      #     configured=0
+      #     for variable in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET WEBHOOK_TOKEN WEBHOOK_URL; do
+      #       if [[ -n "${!variable}" ]]; then
+      #         configured=$((configured + 1))
+      #       fi
+      #     done
+      #     if (( configured == 0 )); then
+      #       echo 'configured=false' >> "$GITHUB_OUTPUT"
+      #       echo '::notice::Deployment webhook is disabled; configure all four deployment secrets to enable it'
+      #     elif (( configured == 4 )); then
+      #       echo 'configured=true' >> "$GITHUB_OUTPUT"
+      #     else
+      #       echo '::error::Deployment webhook is partially configured; all four deployment secrets are required'
+      #       exit 1
+      #     fi
+      # - name: Trigger deployment webhook
+      #   if: env.PUBLISH_IMAGE == 'true' && steps.deployment.outputs.configured == 'true'
+      #   timeout-minutes: 4
+      #   shell: bash
+      #   env:
+      #     CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      #     CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      #     WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
+      #     WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      #     DEPLOY_IMAGE: ${{ steps.image-name.outputs.name }}:latest
+      #   run: bash .github/scripts/trigger-deployment.sh

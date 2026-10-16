@@ -1,2 +1,2 @@
-[client_auth]
-bearer = "synthetic-client-secret"
+[auth]
+api_key = "synthetic-client-secret-0123456789"

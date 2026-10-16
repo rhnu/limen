@@ -181,7 +181,7 @@ const observeLimit = {
 
 同一调用中已接受的事件名去重。`max_observations_per_hook` 默认 8，范围 1–64；`max_observations_per_request` 默认 64，范围 1–4096，覆盖主流程与终结观察。请求配额按每次 hook 提交的唯一事件次数计算，同组聚合仍消耗配额。超额项丢弃并累计 `dropped`，不改变业务结果；观测私有 envelope 同时受整个 hook 的 JSON 与 VM 预算约束。
 
-终结后按事件名、phase、step 聚合次数，使用现有 `tracing` 输出有界的 `script observation` 元数据及必要的溢出计数，关联信息由 Rust 添加。接口不接受自由文本、任意标签、数值或 payload；注册名只应表达批准的非敏感事件。它不是审计持久化或外部通知保证，日志过滤与现有 stderr 输出行为仍然适用。离线测试可以[断言完整观测结果](testing.md#断言结果)。
+终结后按事件名、phase、step 聚合次数，通过 `tracing` 输出有界的 `script observation` 元数据及必要的溢出计数，关联信息由 Rust 添加。接口不接受自由文本、任意标签、数值或 payload；注册名只应表达批准的非敏感事件。诊断进入滚动文件与 stderr，受日志过滤、队列容量和输出健康影响；usage 事实独立存入数据库。事件不是审计持久化或外部通知保证。离线测试可以[断言完整观测结果](testing.md#断言结果)。
 
 ## 流事件替换
 

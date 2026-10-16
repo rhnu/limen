@@ -1,11 +1,15 @@
 listen = "0.0.0.0:8080"
 
-[client_auth]
-bearer = "example-limen-client-token"
+[auth]
+api_key = "example-limen-api-key-change-this-32-bytes"
 
 [limits]
 shutdown_ms = 5000
 
+[storage]
+dir = "/data"
+
 [log]
+dir = "/logs"
 level = "info"
 format = "json"

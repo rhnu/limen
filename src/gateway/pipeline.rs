@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use axum::{
     body::to_bytes,
-    http::{Method, Request, header},
+    http::{Request, header},
     response::Response,
 };
 use limen_config::{Model, Provider};
@@ -12,7 +12,6 @@ use serde_json::{Value, json};
 use super::{
     Gateway,
     error::{ErrorCode, Failure},
-    json, json_response,
     lifecycle::Lifecycle,
     logic, protocol,
     response::Delivery,
@@ -21,29 +20,19 @@ use super::{
 };
 
 impl Gateway {
-    pub(super) async fn process(
+    pub(super) async fn prepare_request(
         &self,
         request: Request<axum::body::Body>,
         lifecycle: &mut Lifecycle,
-        delivery: &mut Delivery,
-    ) -> Result<Option<Response>, Failure> {
+    ) -> Result<Value, Failure> {
         if !self.ready() {
             return Err(Failure::new(ErrorCode::Unavailable, "admission"));
         }
-        lifecycle.phase = "authentication";
-        logic::authorize(&self.server.client_auth, request.headers())?;
-        let models = request.method() == Method::GET && request.uri().path() == "/v1/models";
-        let completion =
-            request.method() == Method::POST && request.uri().path() == "/v1/chat/completions";
-        if !models && !completion {
-            return Err(Failure::new(ErrorCode::InvalidRequest, "endpoint"));
-        }
-        if completion
-            && !request
-                .headers()
-                .get(header::CONTENT_TYPE)
-                .and_then(|h| h.to_str().ok())
-                .is_some_and(is_json_media)
+        if !request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            .is_some_and(is_json_media)
         {
             return Err(Failure::new(ErrorCode::InvalidRequest, "request_body"));
         }
@@ -57,30 +46,13 @@ impl Gateway {
             .await
             .map_err(Failure::body)?;
         lifecycle.input_bytes = bytes.len();
-        if models {
-            drop(decode);
-            let body = logic::models_json(&self.business);
-            let bytes = json::encode(
-                &body,
-                self.server.limits.max_output_bytes,
-                ErrorCode::PayloadTooLarge,
-                "models_response",
-            )?;
-            lifecycle.output_bytes = bytes.len();
-            return Ok(Some(json_response(
-                200,
-                http::HeaderMap::new(),
-                bytes,
-                &lifecycle.request_id,
-            )));
-        }
         let (body, stream) = logic::parse_request(&bytes, &self.server.limits)?;
         drop(decode);
         lifecycle.client_stream = Some(stream);
-        self.complete(body, lifecycle, delivery).await
+        Ok(body)
     }
 
-    async fn complete(
+    pub(super) async fn complete(
         &self,
         mut body: Value,
         lifecycle: &mut Lifecycle,
@@ -152,6 +124,13 @@ impl Gateway {
                     .await?;
                 logic::validate_body_shape(require_body(&output.context)?)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
+                if require_body(&output.context)?
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_none_or(|model| model.len() > 1024)
+                {
+                    return Err(hook_invalid("beforeSend", &step.name));
+                }
                 let next_url = output
                     .context
                     .get("url")

@@ -18,7 +18,9 @@ pub struct Cli {
 #[derive(Debug, PartialEq, Eq, Subcommand)]
 pub enum Command {
     /// Validate configuration, executing local top-level JavaScript.
-    #[command(after_help = "Does not invoke request hooks, listen on a port, or call a provider.")]
+    #[command(
+        after_help = "Does not create runtime data/logs, invoke request hooks, listen, or call a provider."
+    )]
     Check(ConfigArgs),
     /// Validate configuration and start the HTTP gateway.
     Serve(ConfigArgs),
@@ -38,7 +40,7 @@ pub struct TestArgs {
 /// Shared configuration options, with native filesystem path parsing.
 #[derive(Debug, PartialEq, Eq, Args)]
 pub struct ConfigArgs {
-    /// Server TOML/YAML path; defaults to server.toml, then server.yaml if absent.
+    /// Server TOML/YAML path; defaults only to ./config/server.toml.
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 }

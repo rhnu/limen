@@ -5,21 +5,21 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data
+      - ./config:/config:ro
+      - ./data:/data:rw
+      - ./logs:/logs:rw
     read_only: true
     cap_drop:
       - ALL
-    # The entrypoint repairs permissions, then drops to UID/GID 10001.
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETUID
-      - SETGID
     security_opt:
       - no-new-privileges
     pids_limit: 128
     mem_limit: 512m
-    # HTTP draining and VM shutdown each have a 5s application budget.
-    stop_grace_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # HTTP, storage and VM each have a 5s budget; logs share another 3s.
+    stop_grace_period: 25s
     restart: unless-stopped

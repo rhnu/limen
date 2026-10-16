@@ -55,7 +55,8 @@ fn exported_statistics_and_observations_do_not_include_arbitrary_upstream_fields
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap()["fields"].clone())
         .collect();
-    assert_eq!(events[0]["input_tokens"], 2);
+    assert!(events[0].get("input_tokens").is_none());
+    assert_eq!(events[0]["message"], "request timing");
     assert_eq!(events[1]["event"], "policy_applied");
     assert_eq!(events[1]["phase"], "beforeSend");
     assert_eq!(events[1]["count"], 1);

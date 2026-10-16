@@ -123,7 +123,7 @@ fn public_error_categories_map_to_failure_statuses() {
     assert_eq!(ErrorCode::RequestRejected.status(), 400);
     assert_eq!(ErrorCode::RequestRejected.as_str(), "request_rejected");
     assert_eq!(ErrorCode::Unauthorized.status(), 401);
-    assert_eq!(ErrorCode::Busy.status(), 429);
+    assert_eq!(ErrorCode::Busy.status(), 503);
     assert_eq!(ErrorCode::DeadlineExceeded.status(), 504);
     assert_eq!(ErrorCode::Cancelled.status(), 499);
     assert_eq!(ErrorCode::UpstreamProtocol.status(), 502);

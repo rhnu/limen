@@ -1,6 +1,7 @@
 use super::*;
 
 mod observability;
+mod runtime;
 mod script_context;
 
 fn parse_yaml_config(source: &str) -> Result<ServerConfig, ConfigError> {
@@ -8,26 +9,30 @@ fn parse_yaml_config(source: &str) -> Result<ServerConfig, ConfigError> {
 }
 
 #[test]
-fn explicit_none_and_bearer_are_distinct() {
-    let config = parse_yaml_config("client_auth: {none: true}").unwrap();
+fn api_key_is_required_and_manager_key_is_independent() {
+    let config = parse_yaml_config("auth: {api_key: test-api-key-01234567890123456789}").unwrap();
     assert!(config.listen.ip().is_loopback());
-    assert!(matches!(config.client_auth, ClientAuth::None));
-    let config = parse_yaml_config("client_auth: {bearer: abc.def-123==}").unwrap();
-    assert!(matches!(config.client_auth, ClientAuth::Bearer(token) if token == "abc.def-123=="));
+    assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
+    assert!(config.auth.manager_key.is_none());
+    let config = parse_yaml_config("auth: {api_key: test-api-key-01234567890123456789, manager_key: test-manager-key-0123456789012345}").unwrap();
+    assert_eq!(
+        config.auth.manager_key.as_deref(),
+        Some("test-manager-key-0123456789012345")
+    );
 }
 
 #[test]
 fn authentication_must_be_explicit_and_unambiguous() {
     for source in [
         "{}",
-        "client_auth: {}",
-        "client_auth: {none: false}",
-        "client_auth: {none: true, bearer: token}",
-        "client_auth: {bearer: ''}",
-        "client_auth: {bearer: 'contains space'}",
-        "client_auth: null",
-        "client_auth: {none: true, bearer: null}",
-        "client_auth: {none: null, bearer: token}",
+        "auth: {}",
+        "auth: {manager_key: test-manager-key-0123456789012345}",
+        "auth: {api_key: test-api-key-01234567890123456789, manager_key: test-api-key-01234567890123456789}",
+        "auth: {api_key: ''}",
+        "auth: {api_key: 'contains space'}",
+        "auth: null",
+        "auth: {api_key: test-api-key-01234567890123456789, manager_key: null}",
+        "auth: {api_key: null}",
     ] {
         assert!(
             parse_yaml_config(source).is_err(),
@@ -37,17 +42,52 @@ fn authentication_must_be_explicit_and_unambiguous() {
 }
 
 #[test]
+fn removed_client_auth_is_not_accepted_as_an_alias() {
+    for (source, format) in [
+        ("client_auth = { none = true }", ServerFormat::Toml),
+        ("client_auth: {bearer: obsolete-token}", ServerFormat::Yaml),
+    ] {
+        assert_eq!(
+            ServerConfig::parse(source, format).err().unwrap().kind,
+            ConfigErrorKind::Schema
+        );
+    }
+}
+
+#[test]
+fn key_type_errors_identify_the_new_schema_fields() {
+    for (source, format, field) in [
+        ("[auth]\napi_key = 123", ServerFormat::Toml, "auth.api_key"),
+        ("auth: {api_key: false}", ServerFormat::Yaml, "auth.api_key"),
+        (
+            "[auth]\napi_key = 'test-api-key-01234567890123456789'\nmanager_key = []",
+            ServerFormat::Toml,
+            "auth.manager_key",
+        ),
+        (
+            "auth: {api_key: test-api-key-01234567890123456789, manager_key: []}",
+            ServerFormat::Yaml,
+            "auth.manager_key",
+        ),
+    ] {
+        let error = ServerConfig::parse(source, format).err().unwrap();
+        assert_eq!(error.field, field);
+        assert_eq!(error.kind, ConfigErrorKind::Schema);
+    }
+}
+
+#[test]
 fn rejects_unknown_duplicate_and_wrong_type_without_secrets() {
     for source in [
-        "client_auth: {none: true}\nsecret-value: token-value",
-        "client_auth: {bearer: token-value, bearer: secret-value}",
-        "client_auth: {bearer: [token-value]}",
-        "client_auth: {bearer: 123}",
-        "client_auth: {none: 1}",
-        "client_auth: {none: 'true'}",
-        "client_auth: {none: true}\nlimits: {hook_ms: '1'}",
-        "client_auth: {none: true}\nlimits: {startup_ms: token-value}",
-        "client_auth: {none: true}\nlog: {level: token-value}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nsecret-value: token-value",
+        "auth: {api_key: token-value, api_key: secret-value}",
+        "auth: {api_key: [token-value]}",
+        "auth: {api_key: 123}",
+        "auth: {api_key: true}",
+        "auth: {api_key: test-api-key-01234567890123456789, manager_key: 1}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {hook_ms: '1'}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {startup_ms: token-value}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlog: {level: token-value}",
     ] {
         let error = parse_yaml_config(source).err().unwrap();
         assert!(error.line.is_some());
@@ -60,9 +100,11 @@ fn rejects_unknown_duplicate_and_wrong_type_without_secrets() {
 
 #[test]
 fn ranges_retain_exact_field_and_value_location() {
-    let error = parse_yaml_config("client_auth: {none: true}\nlimits:\n  startup_ms: 0\n")
-        .err()
-        .unwrap();
+    let error = parse_yaml_config(
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits:\n  startup_ms: 0\n",
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.kind, ConfigErrorKind::Range);
     assert_eq!(error.field, "limits.startup_ms");
     assert_eq!(error.line, Some(3));
@@ -71,9 +113,10 @@ fn ranges_retain_exact_field_and_value_location() {
 
 #[test]
 fn resource_override_keeps_other_limits_bounded() {
-    let config =
-        parse_yaml_config("client_auth: {none: true}\nlimits: {concurrency: 2, hook_ms: 1}")
-            .unwrap();
+    let config = parse_yaml_config(
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {concurrency: 2, hook_ms: 1}",
+    )
+    .unwrap();
     assert_eq!(config.limits.concurrency, 2);
     assert_eq!(config.limits.hook_ms, 1);
     assert!(config.limits.queue_capacity > 0);
@@ -84,10 +127,10 @@ fn resource_override_keeps_other_limits_bounded() {
 #[test]
 fn rejects_yaml_expansion_multiple_documents_and_ephemeral_ports() {
     for source in [
-        "client_auth: &auth {none: true}",
-        "client_auth: {none: true}\n---\nclient_auth: {none: true}",
-        "client_auth: {none: true}\nlisten: 127.0.0.1:0",
-        "client_auth: {none: true}\nlimits: {<<: {hook_ms: 1}}",
+        "auth: &settings {api_key: test-api-key-01234567890123456789}",
+        "auth: {api_key: test-api-key-01234567890123456789}\n---\nauth: {api_key: test-api-key-01234567890123456789}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlisten: 127.0.0.1:0",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {<<: {hook_ms: 1}}",
     ] {
         assert!(parse_yaml_config(source).is_err());
     }
@@ -97,22 +140,27 @@ fn rejects_yaml_expansion_multiple_documents_and_ephemeral_ports() {
 #[test]
 fn log_schema_is_explicit() {
     let config = parse_yaml_config(
-        "client_auth: {none: true}\nlog: {level: warn, format: json, output: stderr}",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlog: {level: warn, format: json}",
     )
     .unwrap();
     assert_eq!(config.log.level, LogLevel::Warn);
     assert_eq!(config.log.format, LogFormat::Json);
-    assert_eq!(config.log.output, LogOutput::Stderr);
-    assert!(parse_yaml_config("client_auth: {none: true}\nlog: {output: stdout}").is_err());
+    assert_eq!(config.log.max_files, 8);
+    assert!(
+        parse_yaml_config(
+            "auth: {api_key: test-api-key-01234567890123456789}\nlog: {output: stdout}"
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn records_cannot_use_positional_sequence_shapes() {
     for source in [
-        "[127.0.0.1:8080, {none: true}]",
-        "client_auth: [true]",
-        "client_auth: {none: true}\nlog: [info, text, stderr]",
-        "client_auth: {none: true}\nlimits: [1, 2, 3]",
+        "[127.0.0.1:8080, {api_key: test-api-key-01234567890123456789}]",
+        "auth: [true]",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlog: [info, text, stderr]",
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: [1, 2, 3]",
     ] {
         assert!(parse_yaml_config(source).is_err());
     }
@@ -120,9 +168,11 @@ fn records_cannot_use_positional_sequence_shapes() {
 
 #[test]
 fn type_errors_identify_known_schema_fields() {
-    let error = parse_yaml_config("client_auth: {none: true}\nlimits: {hook_ms: '1'}")
-        .err()
-        .unwrap();
+    let error = parse_yaml_config(
+        "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {hook_ms: '1'}",
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.field, "limits.hook_ms");
 }
 
@@ -130,9 +180,11 @@ fn type_errors_identify_known_schema_fields() {
 fn yaml_error_preserves_original_unknown_field_and_coordinates() {
     use std::error::Error;
 
-    let error = parse_yaml_config("client_auth: {none: true}\nsecret-key: secret-value")
-        .err()
-        .unwrap();
+    let error = parse_yaml_config(
+        "auth: {api_key: test-api-key-01234567890123456789}\nsecret-key: secret-value",
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.kind, ConfigErrorKind::Schema);
     let source = error
         .source()
@@ -160,11 +212,11 @@ fn yaml_error_preserves_original_unknown_field_and_coordinates() {
 fn yaml_generic_type_failure_keeps_concrete_safe_source() {
     use std::error::Error;
 
-    let error = parse_yaml_config("client_auth: {bearer: [secret-token]}")
+    let error = parse_yaml_config("auth: {api_key: [secret-token]}")
         .err()
         .unwrap();
     assert!(error.source().unwrap().is::<serde_saphyr::Error>());
-    assert_eq!(error.field, "client_auth.bearer");
+    assert_eq!(error.field, "auth.api_key");
     assert!(error.line.is_some());
     assert!(!error.diagnostic().to_string().contains("secret-token"));
 }
@@ -173,28 +225,30 @@ fn yaml_generic_type_failure_keeps_concrete_safe_source() {
 fn toml_and_yaml_share_schema_defaults_and_overrides() {
     for (source, format) in [
         (
-            "client_auth: {bearer: abc.def-123==}\nlimits: {concurrency: 2, hook_ms: 1}\nlog: {level: warn, format: json}",
+            "auth: {api_key: test-api-key-01234567890123456789}\nlimits: {concurrency: 2, hook_ms: 1}\nlog: {level: warn, format: json}",
             ServerFormat::Yaml,
         ),
         (
-            "[client_auth]\nbearer = 'abc.def-123=='\n[limits]\nconcurrency = 2\nhook_ms = 1\n[log]\nlevel = 'warn'\nformat = 'json'",
+            "[auth]\napi_key = 'test-api-key-01234567890123456789'\n[limits]\nconcurrency = 2\nhook_ms = 1\n[log]\nlevel = 'warn'\nformat = 'json'",
             ServerFormat::Toml,
         ),
     ] {
         let config = ServerConfig::parse(source, format).unwrap();
         assert_eq!(config.listen, "127.0.0.1:8080".parse().unwrap());
-        assert!(
-            matches!(config.client_auth, ClientAuth::Bearer(token) if token == "abc.def-123==")
-        );
+        assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
         assert_eq!(config.limits.concurrency, 2);
         assert_eq!(config.limits.hook_ms, 1);
         assert_eq!(config.limits.request_ms, 120_000);
         assert_eq!(config.log.level, LogLevel::Warn);
         assert_eq!(config.log.format, LogFormat::Json);
-        assert_eq!(config.log.output, LogOutput::Stderr);
+        assert_eq!(config.log.max_files, 8);
     }
-    let config = ServerConfig::parse("client_auth = { none = true }", ServerFormat::Toml).unwrap();
-    assert!(matches!(config.client_auth, ClientAuth::None));
+    let config = ServerConfig::parse(
+        "auth = { api_key = 'test-api-key-01234567890123456789' }",
+        ServerFormat::Toml,
+    )
+    .unwrap();
+    assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
 }
 
 #[test]
@@ -203,27 +257,27 @@ fn toml_rejects_invalid_schema_and_redacts_parser_causes() {
 
     for source in [
         "secret-key = 'secret-value'",
-        "client_auth = { none = true }\nsecret-key = 'secret-value'",
-        "client_auth = { bearer = 'secret-value', none = true }",
-        "client_auth = { bearer = 'secret-value', bearer = 'secret-value' }",
-        "client_auth = { bearer = ['secret-value'] }",
-        "client_auth = { bearer = 123 }",
-        "client_auth = { bearer = '' }",
-        "client_auth = { bearer = 'secret-value with spaces' }",
-        "client_auth = { none = false }",
-        "client_auth = { none = 'true' }",
-        "client_auth = {}",
-        "client_auth = []",
-        "client_auth = { none = true }\nlog = ['info']",
-        "client_auth = { none = true }\nlog = { output = 'stdout' }",
-        "client_auth = { none = true }\nlog = { level = 'secret-value' }",
-        "client_auth = { none = true }\nlimits = { hook_ms = 'secret-value' }",
-        "client_auth = { none = true }\nlimits = { hook_ms = -1 }",
-        "client_auth = { none = true }\nlimits = { hook_ms = 1.0 }",
-        "client_auth = { none = true }\nlimits = { hook_ms = true }",
-        "client_auth = { none = true }\nlimits = { hook_ms = 0 }",
-        "client_auth = { none = true }\nlisten = '127.0.0.1:0'",
-        "client_auth = { bearer = 'secret-value'",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nsecret-key = 'secret-value'",
+        "auth = { api_key = 'test-api-key-01234567890123456789', manager_key = 'secret-value' }",
+        "auth = { api_key = 'secret-value', api_key = 'secret-value' }",
+        "auth = { api_key = ['secret-value'] }",
+        "auth = { api_key = 123 }",
+        "auth = { api_key = '' }",
+        "auth = { api_key = 'secret-value with spaces' }",
+        "auth = { api_key = true }",
+        "auth = { api_key = 'test-api-key-01234567890123456789', manager_key = 1 }",
+        "auth = {}",
+        "auth = []",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlog = ['info']",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlog = { output = 'stdout' }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlog = { level = 'secret-value' }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = 'secret-value' }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = -1 }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = 1.0 }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = true }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = 0 }",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\nlisten = '127.0.0.1:0'",
+        "auth = { api_key = 'secret-value'",
     ] {
         let error = ServerConfig::parse(source, ServerFormat::Toml)
             .err()
@@ -238,14 +292,14 @@ fn toml_rejects_invalid_schema_and_redacts_parser_causes() {
         }
     }
     assert!(ServerConfig::parse(&" ".repeat(MAX_SERVER_BYTES + 1), ServerFormat::Toml).is_err());
-    let nested = format!("client_auth = {}true{}", "[".repeat(150), "]".repeat(150));
+    let nested = format!("auth = {}true{}", "[".repeat(150), "]".repeat(150));
     assert!(ServerConfig::parse(&nested, ServerFormat::Toml).is_err());
 }
 
 #[test]
 fn toml_retains_known_fields_and_exact_range_locations() {
     let error = ServerConfig::parse(
-        "client_auth = { none = true }\n[limits]\nstartup_ms = 0\n",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\n[limits]\nstartup_ms = 0\n",
         ServerFormat::Toml,
     )
     .err()
@@ -255,7 +309,7 @@ fn toml_retains_known_fields_and_exact_range_locations() {
     assert_eq!(error.line, Some(3));
     assert_eq!(error.column, Some(14));
     let error = ServerConfig::parse(
-        "client_auth = { none = true }\n[limits]\nhook_ms = '1'",
+        "auth = { api_key = 'test-api-key-01234567890123456789' }\n[limits]\nhook_ms = '1'",
         ServerFormat::Toml,
     )
     .err()
@@ -269,32 +323,26 @@ fn default_toml_success_does_not_open_or_merge_yaml() {
     let mut opened = Vec::new();
     let (path, config) = load_server_with(None, |path| {
         opened.push(path.to_path_buf());
-        Ok(io::Cursor::new(b"client_auth = { none = true }"))
+        Ok(io::Cursor::new(
+            b"auth = { api_key = 'test-api-key-01234567890123456789' }",
+        ))
     })
     .unwrap();
-    assert_eq!(path, Path::new("server.toml"));
-    assert_eq!(opened, [Path::new("server.toml")]);
-    assert!(matches!(config.client_auth, ClientAuth::None));
+    assert_eq!(path, Path::new("./config/server.toml"));
+    assert_eq!(opened, [Path::new("./config/server.toml")]);
+    assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
     assert_eq!(config.log.format, LogFormat::Text);
 }
 
 #[test]
-fn missing_default_toml_loads_yaml() {
+fn missing_default_toml_does_not_fall_back() {
     let mut opened = Vec::new();
-    let (path, config) = load_server_with(None, |path| {
+    let result = load_server_with::<io::Empty>(None, |path| {
         opened.push(path.to_path_buf());
-        if path == Path::new("server.toml") {
-            Err(io::Error::from(io::ErrorKind::NotFound))
-        } else {
-            Ok(io::Cursor::new(
-                b"client_auth: {none: true}\nlog: {format: json}",
-            ))
-        }
-    })
-    .unwrap();
-    assert_eq!(path, Path::new("server.yaml"));
-    assert_eq!(opened, [Path::new("server.toml"), Path::new("server.yaml")]);
-    assert_eq!(config.log.format, LogFormat::Json);
+        Err(io::Error::from(io::ErrorKind::NotFound))
+    });
+    assert!(result.is_err());
+    assert_eq!(opened, [Path::new("./config/server.toml")]);
 }
 
 #[test]
@@ -333,9 +381,10 @@ fn default_content_errors_stop_without_yaml_fallback() {
     }
 
     for bytes in [
-        b"client_auth = { none = true".to_vec(),
-        b"client_auth = { none = false }".to_vec(),
-        b"client_auth = { none = true }\nlimits = { hook_ms = 0 }".to_vec(),
+        b"auth = { api_key = 'synthetic-key'".to_vec(),
+        b"auth = { api_key = true }".to_vec(),
+        b"auth = { api_key = 'test-api-key-01234567890123456789' }\nlimits = { hook_ms = 0 }"
+            .to_vec(),
         vec![0xFF],
         vec![b' '; MAX_SERVER_BYTES + 1],
     ] {
@@ -363,9 +412,18 @@ fn default_content_errors_stop_without_yaml_fallback() {
 #[test]
 fn explicit_paths_use_only_the_selected_format_and_directory() {
     for (path, source) in [
-        ("another/server.toml", "client_auth = { none = true }"),
-        ("another/server.yaml", "client_auth: {none: true}"),
-        ("another/server.yml", "client_auth: {none: true}"),
+        (
+            "another/server.toml",
+            "auth = { api_key = 'test-api-key-01234567890123456789' }",
+        ),
+        (
+            "another/server.yaml",
+            "auth: {api_key: test-api-key-01234567890123456789}",
+        ),
+        (
+            "another/server.yml",
+            "auth: {api_key: test-api-key-01234567890123456789}",
+        ),
     ] {
         let (selected, config) = load_server_with(Some(Path::new(path)), |requested| {
             assert_eq!(requested, Path::new(path));
@@ -373,9 +431,9 @@ fn explicit_paths_use_only_the_selected_format_and_directory() {
         })
         .unwrap();
         assert_eq!(selected, Path::new(path));
-        assert!(matches!(config.client_auth, ClientAuth::None));
+        assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
     }
-    for explicit in [None, Some(Path::new("server.toml"))] {
+    for explicit in [None, Some(Path::new("./config/server.toml"))] {
         let mut opens = 0;
         let error = load_server_with::<io::Empty>(explicit, |_| {
             opens += 1;
@@ -383,7 +441,7 @@ fn explicit_paths_use_only_the_selected_format_and_directory() {
         })
         .err()
         .unwrap();
-        assert_eq!(opens, if explicit.is_none() { 2 } else { 1 });
+        assert_eq!(opens, 1);
         assert_eq!(error.kind, ConfigErrorKind::Io);
     }
     assert!(

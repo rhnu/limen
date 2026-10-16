@@ -38,17 +38,18 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 }
                 let log = item.statistics(reply.request_id()?, &[]).await?;
                 log.outcome("success", None)?;
-                let statistics = log.event("request statistics")?;
-                ensure!(statistics["upstream_completed"] == true && statistics["usage_source"] == "sse", "completed SSE lost its source facts");
-                for field in ["upstream_headers_wait_ms", "upstream_first_byte_ms", "upstream_first_chunk_ms", "upstream_read_wait_ms"] {
+                let statistics = log.event("requestTiming")?;
+                let record = item.record(reply.request_id()?).await?;
+                ensure!(record["upstreamCompleted"] == true && record["usageSource"] == "sse", "completed SSE lost its source facts");
+                for field in ["upstreamHeadersWaitMs", "upstreamFirstByteMs", "upstreamFirstChunkMs", "upstreamReadWaitMs"] {
                     super::statistics::duration(statistics, field)?;
                 }
                 if stream {
-                    for field in ["downstream_first_event_ms", "downstream_queue_wait_ms", "downstream_drain_ms"] {
+                    for field in ["downstreamFirstEventMs", "downstreamQueueWaitMs", "downstreamDrainMs"] {
                         super::statistics::duration(statistics, field)?;
                     }
                 } else {
-                    ensure!(statistics["downstream_first_event_ms"].is_null(), "JSON aggregation fabricated a downstream SSE sample");
+                    ensure!(statistics["downstreamFirstEventMs"].is_null(), "JSON aggregation fabricated a downstream SSE sample");
                 }
             }
         }
@@ -106,7 +107,7 @@ async fn protocol_frames(laboratory: &mut Laboratory<'_>) -> Result<()> {
             ensure!(reply.status == 200 && !reply.text()?.contains("[DONE]") && reply.text()?.contains("event: error"), "partial or failed stream was reported successful");
             let log = item.statistics(reply.request_id()?, &[]).await?;
             log.outcome("failed", Some("upstream_protocol"))?;
-            ensure!(log.event("request statistics")?["upstream_completed"] == false, "partial stream fabricated native completion");
+            ensure!(item.record(reply.request_id()?).await?["upstreamCompleted"] == false, "partial stream fabricated native completion");
         }
         Ok(())
     }).await

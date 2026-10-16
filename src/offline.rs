@@ -15,7 +15,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, HeaderName, HeaderValue, Request},
 };
-use limen_config::{ClientAuth, ResourceLimits};
+use limen_config::ResourceLimits;
 use limen_script::Cancellation;
 use schema::{Case, Headers};
 use serde_json::{Value, json};
@@ -224,7 +224,7 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
         headers,
         body,
     };
-    let request = client_request(&case, &loaded.server.client_auth)?;
+    let request = client_request(&case, &loaded.server.auth.api_key)?;
     let (gateway, trace) = Gateway::offline(loaded, upstream);
     let budget = Duration::from_millis(limits.request_ms + limits.cleanup_ms + limits.shutdown_ms);
     let cancellation = Cancellation::new();
@@ -266,7 +266,7 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
 }
 
 /// Build the same client input shape without allowing fixtures to replace runner credentials.
-fn client_request(case: &Case, auth: &ClientAuth) -> Result<Request<Body>, Error> {
+fn client_request(case: &Case, token: &str) -> Result<Request<Body>, Error> {
     let client_headers = header_map(&case.client_headers)?;
     if client_headers.contains_key("authorization") || client_headers.contains_key("content-type") {
         return Err(Error::Invalid(
@@ -277,9 +277,7 @@ fn client_request(case: &Case, auth: &ClientAuth) -> Result<Request<Body>, Error
         .method("POST")
         .uri("/v1/chat/completions")
         .header("content-type", "application/json");
-    if let ClientAuth::Bearer(token) = auth {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
+    request = request.header("authorization", format!("Bearer {token}"));
     for (name, value) in &client_headers {
         request = request.header(name, value);
     }

@@ -22,7 +22,7 @@ async fn run(
     let server = directory.path().join("server.toml");
     fs::write(
         &server,
-        "[client_auth]\nbearer = \"synthetic-client-secret\"\n",
+        "[auth]\napi_key = \"synthetic-client-secret-0123456789\"\n",
     )
     .unwrap();
     fs::write(directory.path().join("config.js"), format!(

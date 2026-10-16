@@ -70,7 +70,7 @@
         "error": {
           "code": "request_rejected",
           "message": "The request was rejected by script policy",
-          "request_id": "limen-1"
+          "request_id": "limen-r-00000000-0000-0000-0000-000000000000-1"
         }
       }
     },

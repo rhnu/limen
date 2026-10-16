@@ -6,6 +6,7 @@ mod http;
 mod process;
 mod runner;
 mod runtime;
+mod storage;
 
 use std::process::ExitCode;
 
@@ -45,6 +46,7 @@ async fn run(args: cli::Cli) -> Result<ExitCode> {
                     let executable = executable.context("HTTP worker requires a gateway")?;
                     http::run(&case, &executable, &directory).await?;
                 },
+                "storage" => storage::run(&case, &directory).await?,
                 _ => bail!("unknown experiment family: {family}"),
             }
             Ok(ExitCode::SUCCESS)

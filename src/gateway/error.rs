@@ -19,6 +19,9 @@ pub enum ErrorCode {
     UpstreamProtocol,
     Internal,
     Unavailable,
+    StorageUnavailable,
+    NotFound,
+    MethodNotAllowed,
 }
 
 impl ErrorCode {
@@ -38,6 +41,9 @@ impl ErrorCode {
             Self::UpstreamProtocol => "upstream_protocol",
             Self::Internal => "internal_error",
             Self::Unavailable => "unavailable",
+            Self::StorageUnavailable => "storage_unavailable",
+            Self::NotFound => "not_found",
+            Self::MethodNotAllowed => "method_not_allowed",
         }
     }
 
@@ -47,12 +53,13 @@ impl ErrorCode {
             Self::InvalidRequest | Self::UnknownModel | Self::RequestRejected => 400,
             Self::Unauthorized => 401,
             Self::PayloadTooLarge => 413,
-            Self::Busy => 429,
+            Self::Busy | Self::StorageUnavailable | Self::Unavailable => 503,
+            Self::NotFound => 404,
+            Self::MethodNotAllowed => 405,
             Self::DeadlineExceeded => 504,
             Self::Cancelled => 499,
             Self::HookFailed | Self::Internal => 500,
             Self::UpstreamFailed | Self::UpstreamProtocol => 502,
-            Self::Unavailable => 503,
         }
     }
 }
@@ -187,6 +194,9 @@ impl Failure {
             ErrorCode::UpstreamProtocol => "The upstream response is not supported",
             ErrorCode::Internal => "The gateway could not complete the request",
             ErrorCode::Unavailable => "The gateway is unavailable",
+            ErrorCode::StorageUnavailable => "Request storage is unavailable",
+            ErrorCode::NotFound => "The endpoint or record was not found",
+            ErrorCode::MethodNotAllowed => "The request method is not allowed",
         }
     }
 }

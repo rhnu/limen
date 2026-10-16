@@ -27,6 +27,8 @@ pub struct Options<'a> {
     pub config: Option<&'a str>,
     pub limits: &'a str,
     pub observation_names: &'a [&'a str],
+    pub log_max_file_bytes: Option<u64>,
+    pub log_max_files: Option<usize>,
 }
 
 pub struct Laboratory<'a> {
@@ -72,7 +74,7 @@ impl<'a> Laboratory<'a> {
             let text = fs::read_to_string(path)
                 .with_context(|| format!("read HTTP fixture log {}", path.display()))?;
             for secret in [
-                "synthetic-client-secret",
+                "synthetic-client-secret-0123456789",
                 "synthetic-upstream-secret",
                 "synthetic-query-secret",
                 "synthetic-body-secret",
@@ -93,6 +95,8 @@ pub struct Fixture {
     pub process: Gateway,
     port: u16,
     log_path: PathBuf,
+    executable: PathBuf,
+    config_path: PathBuf,
     client: reqwest::Client,
 }
 
@@ -145,6 +149,8 @@ impl Fixture {
             "http://127.0.0.1:{}/custom/completion?key=synthetic-query-secret",
             upstream.port
         );
+        let directory = directory.join("config");
+        fs::create_dir(&directory).context("create fixture config directory")?;
         let data = format!(
             "export const endpoint = {};\n",
             serde_json::to_string(&endpoint).context("encode synthetic endpoint")?
@@ -158,11 +164,13 @@ impl Fixture {
             options.config.unwrap_or(DEFAULT_CONFIG),
         )
         .context("write synthetic HTTP script")?;
-        let auth = "bearer: synthetic-client-secret";
+        let auth = "api_key: synthetic-client-secret-0123456789, manager_key: synthetic-manager-secret-0123456789";
         let observation_names = serde_json::to_string(options.observation_names)
             .context("encode HTTP fixture observation registry")?;
+        let max_file_bytes = options.log_max_file_bytes.unwrap_or(16 * 1024 * 1024);
+        let max_files = options.log_max_files.unwrap_or(8);
         let yaml = format!(
-            "listen: 127.0.0.1:{port}\nclient_auth: {{{auth}}}\nlog: {{level: debug, format: json}}\nobservability: {{events: {observation_names}}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
+            "listen: 127.0.0.1:{port}\nauth: {{{auth}}}\nlog: {{level: debug, format: json, max_file_bytes: {max_file_bytes}, max_files: {max_files}}}\nobservability: {{events: {observation_names}}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
             options.limits
         );
         let config_path = directory.join("server.yaml");
@@ -180,13 +188,19 @@ impl Fixture {
             process,
             port,
             log_path: log_path.to_owned(),
+            executable: executable.to_owned(),
+            config_path,
             client,
         };
+        fixture.wait_listener().await?;
+        Ok(fixture)
+    }
+
+    async fn wait_listener(&mut self) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {
             ensure!(
-                fixture
-                    .process
+                self.process
                     .try_wait()
                     .context("poll gateway startup")?
                     .is_none(),
@@ -194,22 +208,98 @@ impl Fixture {
             );
             if let Ok(Ok(stream)) = timeout(
                 Duration::from_millis(100),
-                TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)),
+                TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, self.port)),
             )
             .await
             {
                 drop(stream);
-                return Ok(fixture);
+                return Ok(());
             }
             ensure!(Instant::now() < deadline, "gateway did not listen");
             sleep(Duration::from_millis(20)).await;
         }
     }
 
+    /// Verify the on-disk instance lock rejects another process before it can serve.
+    pub async fn check_instance_lock(&self) -> Result<()> {
+        let path = self.log_path.with_file_name("second-process.log");
+        let log = File::create(&path).context("create second-instance diagnostic log")?;
+        let mut second = Gateway::spawn(&self.executable, &self.config_path, &log)?;
+        ensure!(
+            !second.wait_timeout(Duration::from_secs(4)).await?.success(),
+            "second instance acquired the same data directory"
+        );
+        ensure!(
+            fs::read_to_string(path)?.contains("request storage failed"),
+            "second instance failed outside storage initialization"
+        );
+        Ok(())
+    }
+
+    /// Reopen the exact same database and logs after an externally forced interruption.
+    pub async fn restart(&mut self) -> Result<()> {
+        self.process.terminate()?;
+        let log = fs::OpenOptions::new()
+            .append(true)
+            .open(&self.log_path)
+            .context("reopen captured process diagnostics")?;
+        self.process = Gateway::spawn(&self.executable, &self.config_path, &log)?;
+        self.wait_listener().await
+    }
+
+    pub async fn manager(&self, path: &str) -> Result<Reply> {
+        self.send(
+            Value::Null,
+            Method::GET,
+            path,
+            &[(
+                "Authorization",
+                Some("Bearer synthetic-manager-secret-0123456789"),
+            )],
+        )
+        .await
+    }
+
+    pub fn application_log_dir(&self) -> PathBuf {
+        self.config_path
+            .parent()
+            .expect("fixture config directory")
+            .parent()
+            .expect("fixture root")
+            .join("logs")
+    }
+
     /// Send an ordinary authenticated JSON generation request.
     pub async fn request(&self, body: Value) -> Result<Reply> {
         self.send(body, Method::POST, "/v1/chat/completions", &[])
             .await
+    }
+
+    /// Read committed usage through the authenticated management boundary.
+    pub async fn record(&self, request_id: &str) -> Result<Value> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let reply = self
+                .send(
+                    Value::Null,
+                    Method::GET,
+                    &format!("/admin/v1/requests/{request_id}"),
+                    &[(
+                        "Authorization",
+                        Some("Bearer synthetic-manager-secret-0123456789"),
+                    )],
+                )
+                .await?;
+            ensure!(reply.status == 200, "persisted request lookup failed");
+            if reply.body["data"]["state"] == "finalized" {
+                return Ok(reply.body["data"].clone());
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "request did not reach a persisted terminal state"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Override or remove fixture headers without enabling redirects or environment proxies.
@@ -223,7 +313,7 @@ impl Fixture {
         let mut fields = HeaderMap::new();
         fields.insert(
             "authorization",
-            http::HeaderValue::from_static("Bearer synthetic-client-secret"),
+            http::HeaderValue::from_static("Bearer synthetic-client-secret-0123456789"),
         );
         fields.insert(
             "content-type",
@@ -298,7 +388,7 @@ impl Fixture {
         .context("held request connection deadline")?
         .context("connect held experiment request")?;
         let header = format!(
-            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-client-secret\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-client-secret-0123456789\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
             raw.len()
         );
         timeout(Duration::from_secs(2), async {
@@ -344,17 +434,7 @@ impl Fixture {
             .split_inclusive('\n')
             .filter(|line| line.ends_with('\n'))
             .map(|line| {
-                serde_json::from_str::<Value>(line)
-                    .map(|event| {
-                        let mut fields = event["fields"].clone();
-                        if fields["request_id"].is_null()
-                            && let Some(request_id) = event["span"]["request_id"].as_str()
-                        {
-                            fields["request_id"] = Value::String(request_id.to_owned());
-                        }
-                        fields
-                    })
-                    .context("decode gateway JSON log event")
+                serde_json::from_str::<Value>(line).context("decode gateway JSON log event")
             })
             .collect()
     }
@@ -370,7 +450,7 @@ impl Fixture {
             if let Some(event) = self
                 .events()?
                 .into_iter()
-                .find(|event| event["message"] == message && accepts(event))
+                .find(|event| event["event"] == message && accepts(event))
             {
                 return Ok(event);
             }
@@ -404,9 +484,30 @@ impl Fixture {
         loop {
             let response = self.request(request(&[])).await?;
             if response.status == 200 && response.body["waiting"] == count {
+                self.record(response.request_id()?).await?;
                 return Ok(());
             }
             ensure!(Instant::now() < deadline, "pending hook did not start");
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// A 100 Continue precedes durable admission; wait for database facts before cancellation.
+    pub async fn wait_pending_records(&self, count: usize) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(800);
+        loop {
+            let response = self.manager("/admin/v1/requests?state=pending").await?;
+            ensure!(response.status == 200, "pending admission query failed");
+            if response.body["data"]
+                .as_array()
+                .is_some_and(|rows| rows.len() == count)
+            {
+                return Ok(());
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "generation did not reach durable admission"
+            );
             sleep(Duration::from_millis(10)).await;
         }
     }

@@ -17,7 +17,7 @@ impl RequestLog {
         let rows: Vec<_> = self
             .events
             .iter()
-            .filter(|event| event["message"] == message)
+            .filter(|event| event["event"] == message)
             .collect();
         ensure!(rows.len() == 1, "request must have one {message} event");
         Ok(rows[0])
@@ -28,7 +28,7 @@ impl RequestLog {
             .events
             .iter()
             .filter(|event| {
-                event["message"] == "hook statistics"
+                event["event"] == "hookStatistics"
                     && event["phase"] == phase
                     && event["cleanup"] == cleanup
             })
@@ -41,59 +41,51 @@ impl RequestLog {
     }
 
     pub fn outcome(&self, outcome: &str, code: Option<&str>) -> Result<()> {
-        let finished = self.event("request finished")?;
+        let finished = self.event("requestFinished")?;
         ensure!(
             finished["outcome"] == outcome && finished["code"].as_str() == code,
             "terminal outcome changed: expected {outcome}/{code:?}, got {}/{}",
             finished["outcome"],
             finished["code"]
         );
-        duration(self.event("request statistics")?, "request_ms")
+        duration(self.event("requestTiming")?, "requestMs")
     }
 
     pub fn no_upstream_samples(&self) -> Result<()> {
-        let stats = self.event("request statistics")?;
+        let stats = self.event("requestTiming")?;
         for field in [
-            "upstream_headers_wait_ms",
-            "upstream_first_byte_ms",
-            "upstream_first_chunk_ms",
-            "upstream_read_wait_ms",
-            "downstream_first_event_ms",
+            "upstreamHeadersWaitMs",
+            "upstreamFirstByteMs",
+            "upstreamFirstChunkMs",
+            "upstreamReadWaitMs",
+            "downstreamFirstEventMs",
         ] {
             ensure!(
                 stats[field].is_null(),
                 "unreached upstream phase was sampled: {field}"
             );
         }
-        ensure!(
-            stats["upstream_completed"] == false
-                && stats["usage_quality"] == "missing"
-                && stats["usage_source"].is_null()
-                && stats["input_tokens"].is_null()
-                && stats["output_tokens"].is_null(),
-            "incomplete upstream was reported complete or given usage"
-        );
         Ok(())
     }
 
     pub fn interrupted_hook(&self, phase: &str, cleanup: bool, dropped_future: bool) -> Result<()> {
         let hook = self.hook(phase, cleanup)?;
         ensure!(
-            hook["calls"] == 1 && hook["interrupted_calls"] == 1,
+            hook["calls"] == 1 && hook["interruptedCalls"] == 1,
             "interrupted hook was lost from statistics"
         );
-        duration(hook, "wall_ms")?;
+        duration(hook, "wallMs")?;
         if dropped_future {
             ensure!(
-                hook["reported_calls"] == 0,
+                hook["reportedCalls"] == 0,
                 "dropped hook future fabricated a runtime report"
             );
             for field in [
-                "queue_samples",
-                "initial_call_samples",
-                "pending_samples",
-                "input_bridge_samples",
-                "output_bridge_samples",
+                "queueSamples",
+                "initialCallSamples",
+                "pendingSamples",
+                "inputBridgeSamples",
+                "outputBridgeSamples",
             ] {
                 ensure!(
                     hook[field] == 0,
@@ -102,10 +94,10 @@ impl RequestLog {
             }
         } else {
             ensure!(
-                hook["queue_samples"]
+                hook["queueSamples"]
                     .as_u64()
                     .context("queue sample count missing")?
-                    <= hook["reported_calls"]
+                    <= hook["reportedCalls"]
                         .as_u64()
                         .context("reported hook count missing")?,
                 "queue samples exceeded actual reports"
@@ -119,8 +111,8 @@ impl RequestLog {
             .events
             .iter()
             .filter(|event| {
-                event["message"] == "script observation"
-                    && event["event"] == event_name
+                event["event"] == "scriptObservation"
+                    && event["observationEvent"] == event_name
                     && event["phase"] == phase
             })
             .collect();
@@ -136,8 +128,8 @@ impl RequestLog {
             !self
                 .events
                 .iter()
-                .any(|event| event["message"] == "script observation"
-                    && event["event"] == event_name),
+                .any(|event| event["event"] == "scriptObservation"
+                    && event["observationEvent"] == event_name),
             "uncommitted observation escaped: {event_name}"
         );
         Ok(())
@@ -162,19 +154,20 @@ impl Fixture {
             let events: Vec<_> = self
                 .events()?
                 .into_iter()
-                .filter(|event| event["request_id"] == request_id)
+                .filter(|event| event["requestId"] == request_id)
                 .collect();
-            let has = |message: &str| events.iter().any(|event| event["message"] == message);
-            let record_complete = events.iter().any(|event| {
-                event["message"] == "request finished" && event["outcome"] == "success"
-            }) || has("request failed")
-                || has("request rejected or cancelled");
-            if has("request finished")
-                && has("request statistics")
+            let has = |message: &str| events.iter().any(|event| event["event"] == message);
+            let record_complete = events
+                .iter()
+                .any(|event| event["event"] == "requestFinished" && event["outcome"] == "success")
+                || has("requestFailed")
+                || has("requestRejected");
+            if has("requestFinished")
+                && has("requestTiming")
                 && record_complete
                 && hooks.iter().all(|(phase, cleanup)| {
                     events.iter().any(|event| {
-                        event["message"] == "hook statistics"
+                        event["event"] == "hookStatistics"
                             && event["phase"] == *phase
                             && event["cleanup"] == *cleanup
                     })
@@ -225,8 +218,8 @@ async fn successful_observations(item: &Fixture) -> Result<()> {
         "observations changed successful HTTP behavior"
     );
     let id = reply.request_id()?;
-    item.wait_event("script observation", |event| {
-        event["request_id"] == id && event["event"] == "finished"
+    item.wait_event("scriptObservation", |event| {
+        event["requestId"] == id && event["observationEvent"] == "finished"
     })
     .await?;
     let log = item
@@ -243,14 +236,14 @@ async fn successful_observations(item: &Fixture) -> Result<()> {
     log.observation("accepted", "onRequest")?;
     log.observation("finished", "onFinish")?;
 
-    let stats = log.event("request statistics")?;
+    let stats = item.record(id).await?;
     ensure!(
-        stats["usage_quality"] == "reported"
-            && stats["usage_source"] == "json"
-            && stats["upstream_completed"] == true
-            && stats["input_tokens"] == 7
-            && stats["output_tokens"] == 3
-            && stats["total_tokens"] == 10,
+        stats["usageQuality"] == "reported"
+            && stats["usageSource"] == "json"
+            && stats["upstreamCompleted"] == true
+            && stats["inputTokens"] == "7"
+            && stats["outputTokens"] == "3"
+            && stats["totalTokens"] == "10",
         "HTTP statistics lost explicit upstream usage counts"
     );
     item.upstream.controls.lock().await.raw = None;
@@ -263,13 +256,13 @@ async fn cancelled_observations(item: &Fixture) -> Result<()> {
     drop(held);
     item.wait_cancelled(1).await?;
     let finished = item
-        .wait_event("request finished", |event| event["outcome"] == "cancelled")
+        .wait_event("requestFinished", |event| event["outcome"] == "cancelled")
         .await?;
-    let id = finished["request_id"]
+    let id = finished["requestId"]
         .as_str()
         .context("cancelled observation request ID missing")?;
-    item.wait_event("script observation", |event| {
-        event["request_id"] == id && event["event"] == "finished"
+    item.wait_event("scriptObservation", |event| {
+        event["requestId"] == id && event["observationEvent"] == "finished"
     })
     .await?;
     let log = item
@@ -306,8 +299,8 @@ async fn cleanup_budget_observations(item: &Fixture) -> Result<()> {
     log.observation("accepted", "onRequest")?;
     log.no_observation("cleanup_private")?;
     log.no_observation("finished")?;
-    item.wait_event("observation not executed", |event| {
-        event["request_id"] == id
+    item.wait_event("observationSkipped", |event| {
+        event["requestId"] == id
             && event["phase"] == "onFinish"
             && event["reason"] == "cleanup_budget"
     })
@@ -338,16 +331,17 @@ async fn slow_downstream(laboratory: &mut Laboratory<'_>) -> Result<()> {
         let held = item.open_request(request(&[("stream", json!(true))])).await?;
         item.upstream.wait(Duration::from_secs(1), false).await?;
         // Await the gateway's own terminal event without draining the client socket.
-        let finished = item.wait_event("request finished", |event| event["code"] == "deadline_exceeded").await?;
-        let id = finished["request_id"].as_str().context("slow downstream request ID missing")?;
+        let finished = item.wait_event("requestFinished", |event| event["code"] == "deadline_exceeded").await?;
+        let id = finished["requestId"].as_str().context("slow downstream request ID missing")?;
         let log = item.statistics(id, &[]).await?;
         log.outcome("failed", Some("deadline_exceeded"))?;
         ensure!(finished["phase"] == "response", "slow downstream did not stop while delivering a response");
-        let stats = log.event("request statistics")?;
-        for field in ["upstream_headers_wait_ms", "upstream_first_byte_ms", "upstream_first_chunk_ms", "upstream_read_wait_ms", "downstream_first_event_ms", "downstream_queue_wait_ms"] {
+        let stats = log.event("requestTiming")?;
+        for field in ["upstreamHeadersWaitMs", "upstreamFirstByteMs", "upstreamFirstChunkMs", "upstreamReadWaitMs", "downstreamFirstEventMs", "downstreamQueueWaitMs"] {
             duration(stats, field)?;
         }
-        ensure!(stats["upstream_completed"] == false && stats["usage_quality"] == "missing", "backpressured partial stream was reported complete");
+        let record = item.record(id).await?;
+        ensure!(record["upstreamCompleted"] == false && record["usageQuality"] == "missing", "backpressured partial stream was reported complete");
         drop(held);
         {
             let mut upstream = item.upstream.controls.lock().await;
@@ -358,7 +352,7 @@ async fn slow_downstream(laboratory: &mut Laboratory<'_>) -> Result<()> {
         }
         // Two 100 Continue responses prove both admission permits were reclaimed.
         let held = [item.open_request(request(&[])).await?, item.open_request(request(&[])).await?];
-        item.request(request(&[])).await?.error(429, "busy", "reclaimed capacity remains bounded")?;
+        item.request(request(&[])).await?.error(503, "busy", "reclaimed capacity remains bounded")?;
         drop(held);
         Ok(())
     }).await

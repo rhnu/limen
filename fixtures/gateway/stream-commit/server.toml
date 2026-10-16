@@ -1,5 +1,5 @@
-[client_auth]
-none = true
+[auth]
+api_key = "synthetic-client-secret-0123456789"
 
 [observability]
 events = ["provider", "model", "private", "finish"]

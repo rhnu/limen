@@ -271,18 +271,9 @@ impl Drop for HookGuard {
 fn ms(value: Duration) -> f64 { value.as_secs_f64() * 1000.0 }
 
 pub(super) fn record(request_id: &str, stats: &Value) {
-    let usage = &stats["usage"];
     let timings = &stats["timings"];
     tracing::info!(
         request_id,
-        usage_quality = usage["quality"].as_str(),
-        usage_source = usage["source"].as_str(),
-        upstream_completed = usage["upstreamCompleted"].as_bool(),
-        input_tokens = usage["inputTokens"].as_u64(),
-        output_tokens = usage["outputTokens"].as_u64(),
-        total_tokens = usage["totalTokens"].as_u64(),
-        cached_input_tokens = usage["cachedInputTokens"].as_u64(),
-        reasoning_output_tokens = usage["reasoningOutputTokens"].as_u64(),
         request_ms = timings["requestMs"].as_f64(),
         request_decode_ms = timings["requestDecodeMs"].as_f64(),
         upstream_headers_wait_ms = timings["upstreamHeadersWaitMs"].as_f64(),
@@ -292,7 +283,7 @@ pub(super) fn record(request_id: &str, stats: &Value) {
         upstream_read_wait_ms = timings["upstreamReadWaitMs"].as_f64(),
         downstream_queue_wait_ms = timings["downstreamQueueWaitMs"].as_f64(),
         downstream_drain_ms = timings["downstreamDrainMs"].as_f64(),
-        "request statistics"
+        "request timing"
     );
     record_hooks(request_id, timings, false);
 }

@@ -140,13 +140,36 @@ impl Gateway {
         })
     }
 
-    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> { self.child.try_wait() }
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        // Poll only the process below our Windows JobObject wrapper. Its own
+        // try_wait consumes completion messages that the final tree wait needs.
+        #[cfg(windows)]
+        {
+            self.child.inner_mut().try_wait()
+        }
+        #[cfg(not(windows))]
+        {
+            self.child.try_wait()
+        }
+    }
+
+    /// Kill the owned process tree for crash-recovery experiments, then reap it.
+    pub fn terminate(&mut self) -> Result<()> {
+        self.child
+            .start_kill()
+            .context("force gateway interruption")?;
+        // Windows try_wait can consume the job's final completion message before
+        // wait caches its status. Reap once after termination; the external
+        // isolated supervisor bounds this synchronous process-boundary wait.
+        self.child.wait().context("reap interrupted gateway")?;
+        Ok(())
+    }
 
     /// Poll without blocking the worker's current-thread HTTP executor.
     pub async fn wait_timeout(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            if let Some(status) = self.child.try_wait().context("poll gateway exit")? {
+            if let Some(status) = self.try_wait().context("poll gateway exit")? {
                 return Ok(status);
             }
             if tokio::time::Instant::now() >= deadline {
@@ -171,7 +194,7 @@ impl Gateway {
 
 impl Drop for Gateway {
     fn drop(&mut self) {
-        match self.child.try_wait() {
+        match self.try_wait() {
             #[cfg(unix)]
             Ok(Some(_)) => return,
             #[cfg(windows)]

@@ -72,11 +72,11 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 drop(stream);
                 item.wait_cancelled(1).await?;
                 let finished = item
-                    .wait_event("request finished", |event| event["outcome"] == "cancelled")
+                    .wait_event("requestFinished", |event| event["outcome"] == "cancelled")
                     .await?;
                 let log = item
                     .statistics(
-                        finished["request_id"]
+                        finished["requestId"]
                             .as_str()
                             .context("cancelled request ID missing")?,
                         &[("onRequest", false), ("onFinish", true)],
@@ -96,11 +96,11 @@ pub async fn disconnect(laboratory: &mut Laboratory<'_>) -> Result<()> {
             drop(stream);
             item.upstream.wait(Duration::from_millis(800), true).await?;
             let finished = item
-                .wait_event("request finished", |event| event["outcome"] == "cancelled")
+                .wait_event("requestFinished", |event| event["outcome"] == "cancelled")
                 .await?;
             let log = item
                 .statistics(
-                    finished["request_id"]
+                    finished["requestId"]
                         .as_str()
                         .context("cancelled request ID missing")?,
                     &[],
@@ -134,14 +134,14 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 );
                 drop(stream);
                 ensure!(
-                    item.logs()?.contains("HTTP listener stopped"),
+                    item.logs()?.contains("listenerStopping"),
                     "listener shutdown observed"
                 );
                 let events = item.events()?;
                 ensure!(
                     events
                         .iter()
-                        .filter(|event| event["message"] == "request finished"
+                        .filter(|event| event["event"] == "requestFinished"
                             && event["outcome"] == "cancelled")
                         .count()
                         == 1,
@@ -150,8 +150,7 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 ensure!(
                     events
                         .iter()
-                        .filter(|event| event["message"]
-                            == "observation failed; terminal outcome retained"
+                        .filter(|event| event["event"] == "observationFailed"
                             && event["phase"] == "onFinish")
                         .count()
                         == 1,
@@ -160,12 +159,12 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 let finished = events
                     .iter()
                     .find(|event| {
-                        event["message"] == "request finished" && event["outcome"] == "cancelled"
+                        event["event"] == "requestFinished" && event["outcome"] == "cancelled"
                     })
                     .context("shutdown terminal event missing")?;
                 let log = item
                     .statistics(
-                        finished["request_id"]
+                        finished["requestId"]
                             .as_str()
                             .context("shutdown request ID missing")?,
                         &[("onRequest", false), ("onFinish", true)],
@@ -175,7 +174,7 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 log.interrupted_hook("onRequest", false, true)?;
                 log.no_upstream_samples()?;
                 ensure!(
-                    log.hook("onFinish", true)?["failed_calls"] == 1,
+                    log.hook("onFinish", true)?["failedCalls"] == 1,
                     "failed shutdown observer lost its own cleanup summary"
                 );
                 Ok(())
@@ -217,24 +216,24 @@ pub async fn retirement(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     "retirement never sends generation"
                 );
                 ensure!(
-                    item.logs()?.contains("HTTP listener stopped"),
+                    item.logs()?.contains("listenerStopping"),
                     "retirement stops listener"
                 );
-                let finished = item.wait_event("request finished", |_| true).await?;
+                let finished = item.wait_event("requestFinished", |_| true).await?;
                 ensure!(
                     finished["outcome"] != "success",
                     "retirement recorded a successful request"
                 );
                 let log = item
                     .statistics(
-                        finished["request_id"]
+                        finished["requestId"]
                             .as_str()
                             .context("retirement request ID missing")?,
                         &[("onRequest", false)],
                     )
                     .await?;
                 log.no_upstream_samples()?;
-                super::statistics::duration(log.hook("onRequest", false)?, "wall_ms")?;
+                super::statistics::duration(log.hook("onRequest", false)?, "wallMs")?;
                 Ok(())
             },
         )
@@ -278,7 +277,7 @@ pub async fn resources(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     item.open_request(request(&[("wait", json!(true))])).await?,
                 ];
                 item.request(request(&[])).await?.error(
-                    429,
+                    503,
                     "busy",
                     "bounded request admission",
                 )?;
@@ -286,6 +285,7 @@ pub async fn resources(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     item.upstream.controls.lock().await.records.is_empty(),
                     "busy request never sent"
                 );
+                item.wait_pending_records(2).await?;
                 drop(held);
                 item.wait_cancelled(2).await
             },

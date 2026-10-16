@@ -6,24 +6,52 @@ Limen 从服务配置所在目录加载 `config.js`。服务配置负责监听�
 
 ```text
 local/
-  server.toml       # 也可使用 server.yaml 或 server.yml
-  config.js
+  config/
+    server.toml     # YAML/YML 需要显式 --config
+    config.js
+  data/
+  logs/
 ```
 
 也可将整个 `examples/` 与 `policies/` 一起复制到 `local/` 下，从 `local/examples/basic/` 开始修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/examples/basic/server.toml`。basic 示例导入 `../../policies/index.js`，需保留这层相对关系；不能只复制 `config.js`。
 
-未指定 `--config` 时，先读当前目录的 `server.toml`，仅在它不存在时尝试 `server.yaml`。文件存在但无效不会回退；不同文件不会合并。配置按扩展名解析，必须是 UTF-8。
+未指定 `--config` 时，只读 `./config/server.toml`，不存在直接报错。YAML/YML 必须通过 `--config` 显式选择，不探测旧目录或其他扩展名。配置按扩展名解析，必须是 UTF-8。
 
 最小 `server.toml`：
 
 ```toml
 listen = "127.0.0.1:8080"
 
-[client_auth]
-bearer = "replace-with-your-client-token"
+[auth]
+api_key = "replace-with-a-random-api-key-at-least-32-bytes"
+# manager_key = "replace-with-a-different-random-manager-key"
 ```
 
-`client_auth` 必须显式配置。无需客户端认证时用 `[client_auth]` 下的 `none = true`；不要同时填写 `bearer`。TOML 与 YAML 使用同一字段结构，见随附的 [TOML 示例](../../examples/basic/server.toml)和[YAML 示例](../../examples/basic/server.yaml)。未知字段、重复键、无效类型会被拒绝；YAML 不接受多文档、锚点、别名、合并键或自定义标签。
+`auth.api_key` 必填，`auth.manager_key` 缺省表示管理 API 关闭。每个 key 必须为 32–256 字节、无空白的可打印 ASCII，且二者不同；空字符串无效。旧 `client_auth`、匿名模式与 `log.output` 已移除，不提供兼容字段。TOML 与 YAML 使用同一字段结构，见 [TOML 示例](../../examples/basic/server.toml)和[YAML 示例](../../examples/basic/server.yaml)。未知字段、重复键、无效类型直接拒绝；YAML 不接受多文档、锚点、别名、合并键或自定义标签。
+
+运行参数的默认值：
+
+```toml
+[storage]
+dir = "../data"
+retention_days = 90
+max_records = 100000
+max_db_bytes = 1073741824
+operation_ms = 1000
+
+[log]
+level = "info"
+format = "text" # stderr；文件始终为 JSONL
+dir = "../logs"
+max_file_bytes = 16777216
+max_files = 8 # 备份数量，另有活动文件
+
+[management]
+concurrency = 4
+timeout_ms = 2000
+```
+
+相对目录以服务文件父目录为基准。配置、数据、日志目录不能相同或互相包含；已有路径的符号链接会解析后检查。`serve` 创建缺失的 data/logs，但不创建配置或修改权限。`check` 不打开数据库、不创建日志或运行目录，通过也不代表目录可写。存储操作预算必须小于 `limits.shutdown_ms`，记录上限必须大于生成并发；完整范围见[设计契约](../design.md#服务配置与命令)。
 
 `config.js` 示例：
 
@@ -54,8 +82,8 @@ export default {
 启动前先验证，再运行服务：
 
 ```sh
-cargo run --locked -- check --config local/server.toml
-cargo run --locked -- serve --config local/server.toml
+cargo run --locked -- check --config local/config/server.toml
+cargo run --locked -- serve --config local/config/server.toml
 ```
 
 `check` 会执行顶层 JS、导入模块并验证配置，不调用请求 hook、不监听端口、不请求上游。服务只在启动时加载配置；修改后需重启。
@@ -85,10 +113,10 @@ cargo run --locked -- serve --config local/server.toml
 客户端使用服务配置中的 token：
 
 ```http
-Authorization: Bearer replace-with-your-client-token
+Authorization: Bearer replace-with-a-random-api-key-at-least-32-bytes
 ```
 
-这与 `provider.auth.bearer` 是两份独立凭据。客户端认证头不会自动转发，脚本也不能通过客户端白名单读取 `Authorization`、Cookie 等敏感头。
+apiKey、managerKey 与 `provider.auth.bearer` 分别管理。客户端认证头不会自动转发，脚本也不能通过客户端白名单读取 `Authorization`、Cookie 等敏感头。
 
 上游请求头由 `provider.headers`、`provider.auth` 和 `beforeSend` 构造。`auth` 与静态 `Authorization` 不能同时配置，静态头名不区分大小写且不得重复。未提供 `Accept` 时默认 `application/json`；出站正文始终为 JSON，`Content-Type` 由 Rust 设置。传输头由 Rust 管理，脚本不可改写，详见[头部与上下文](scripting.md#头部与客户端上下文)。
 
@@ -96,7 +124,7 @@ Authorization: Bearer replace-with-your-client-token
 
 ## API
 
-所有路由都先进行客户端认证：
+`/v1/*` 使用 apiKey，`/admin/v1/*` 使用 managerKey，二者不可互换；管理请求不经过 JS。已知命名空间先认证再分派方法和路径，未知顶层路径直接 404，管理未启用时管理路径为 404。只接受单个 Bearer Authorization，不接受 query 或 Cookie 凭据。
 
 | 方法与路径                  | 用途                               |
 | --------------------------- | ---------------------------------- |
@@ -111,7 +139,7 @@ Chat 请求需使用 `Content-Type: application/json`，可附带媒体类型参
 
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer replace-with-your-client-token' \
+  -H 'Authorization: Bearer replace-with-a-random-api-key-at-least-32-bytes' \
   -H 'Content-Type: application/json' \
   -d '{"model":"chat","messages":[{"role":"user","content":"Hello"}]}'
 ```

@@ -5,7 +5,9 @@
 
 # Local runtime configuration and secrets. Commit sanitized *.example.* files instead.
 /local/
+/config/
 /data/
+/logs/
 /server.yaml
 /config.js
 /config.mjs

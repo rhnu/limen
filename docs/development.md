@@ -11,7 +11,9 @@ cargo build --locked --bin limen
 cargo run --locked -- --help
 ```
 
-本机真实配置放 `local/`，容器部署配置放 `data/`；可运行的公共素材放 `examples/`，回归素材放 `fixtures/`。不要把本机凭据复制到示例或测试中。
+本机真实配置放 `local/config/`，运行数据与日志放 `local/data/`、`local/logs/`；容器挂载分别使用根目录 `config/`、`data/`、`logs/`；可运行的公共素材放 `examples/`，回归素材放 `fixtures/`。不要把本机凭据复制到示例或测试中。
+
+当前处于[持久化与管理能力重构](design.md#持久化与管理能力重构)阶段，WebUI 之前的配置、持久化、滚动日志与只读管理 API 已实现，环境验收按路线图收尾。期间不部署且无需保持阶段间兼容，不为旧配置、目录或实验 schema 添加过渡层。遇到 schema 不匹配应显式重建开发数据，不在启动失败路径自动删库。
 
 ## Rust 检查
 
@@ -43,7 +45,7 @@ cargo xtask test --isolated
 
 可在命令末尾传入 `--list` 返回的限定用例名；其他选项用 `cargo xtask test --help` 查询。监督进程负责外部超时、进程树终止和临时目录清理。不要将可能失控的 VM 用例直接放入常规测试进程。
 
-隔离 HTTP 测试使用本地合成上游。真实 provider 和 Docker 运行验收分别执行，不能用常规测试或离线用例替代。
+隔离 HTTP 测试使用本地合成上游，并覆盖管理认证、持久化重启恢复和日志文件检视；`storage/*` 用例覆盖真实 SQLite 文件锁、恢复、保留容量、读写故障与取消。真实 provider 和 Docker 运行验收分别执行，不能用常规测试或离线用例替代。
 
 ## JavaScript 静态检查
 
@@ -70,6 +72,8 @@ rumdl check --deny-config-warnings
 
 文件参数应替换为实际改动文件。内容变动时同时修复相对链接和锚点；架构结论更新到 `design.md`，工具入口维护在本文，剩余任务只留在 `roadmap.md`。
 
-提交前检查暂存区，确认没有混入 `local/`、`data/`、打包产物或任意位置的秘密。报告验证时区分编译与静态检查、常规测试、离线用例、隔离测试和部署验收；只报告实际执行的层次。
+提交前检查暂存区，确认没有混入 `local/`、`config/`、`data/`、`logs/`、打包产物或任意位置的秘密。报告验证时区分编译与静态检查、常规测试、离线用例、隔离测试和部署验收；只报告实际执行的层次。
 
-main 推送成功发布镜像并清理旧版本后，CI 可通过 OliveTin webhook 触发部署。仓库 Secrets 需同时配置 `CF_ACCESS_CLIENT_ID`、`CF_ACCESS_CLIENT_SECRET`、`WEBHOOK_TOKEN` 和 `WEBHOOK_URL`；全部缺省时跳过，部分配置时报错。`WEBHOOK_URL` 使用 HTTPS 并指向 OliveTin `/webhooks` 端点。请求使用 `limen` 标识与已发布镜像的 `latest` 标签；webhook 返回确认只表示收到请求，实际动作执行结果需在 OliveTin 查看。
+CI 保留 Rust 构建与测试、JavaScript 类型检查、Markdown 检查和容器构建；main 推送仍发布 GHCR 镜像并清理旧版本。重构期间，[工作流](../.github/workflows/ci.yml)中的部署 Secrets 检查与 OliveTin webhook 调用已一起注释，即使 Secrets 配置齐全也不会触发部署。[触发脚本](../.github/scripts/trigger-deployment.sh)随注释入口保留，目前不在 CI 中执行；只有用户明确要求恢复部署时才重新启用。
+
+此修改只停用仓库内 webhook。实施提交推送前还须停用仓库外跟踪 `latest` 的自动更新或固定 digest；不能把镜像发布成功当作部署被禁止的证据，也不自动恢复部署。外部环境操作的待办见[路线图](roadmap.md)。

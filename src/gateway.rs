@@ -1,3 +1,4 @@
+mod dispatch;
 mod error;
 mod error_response;
 mod events;
@@ -6,6 +7,7 @@ mod lifecycle;
 mod logic;
 mod observations;
 mod observe;
+mod persistence;
 mod pipeline;
 mod protocol;
 mod response;
@@ -52,10 +54,19 @@ pub struct Gateway {
     tasks: Mutex<JoinSet<()>>,
     requests: AtomicU64,
     calls: AtomicU64,
+    run_id: String,
+    managers: AtomicU64,
+    records: persistence::RecordSink,
+    admin: Option<crate::admin::Admin>,
 }
 
 impl Gateway {
-    pub fn new(loaded: &Bootstrap, shutdown: Cancellation) -> Result<Arc<Self>, reqwest::Error> {
+    pub fn new(
+        loaded: &Bootstrap,
+        shutdown: Cancellation,
+        storage: limen_storage::Storage,
+        logging: &crate::telemetry::Logging,
+    ) -> Result<Arc<Self>, reqwest::Error> {
         // Generation is sent once. Disable even protocol-level retries and redirects.
         let pooled_origins = loaded
             .business
@@ -64,7 +75,19 @@ impl Gateway {
             .map(|provider| logic::safe_target(&provider.endpoint))
             .collect();
         let transport = transport::Transport::http(pooled_origins)?;
-        Ok(Self::with_transport(loaded, shutdown, transport))
+        let admin = loaded
+            .server
+            .auth
+            .manager_key
+            .as_ref()
+            .map(|_| crate::admin::Admin::new(loaded, storage.clone(), logging));
+        Ok(Self::with_transport(
+            loaded,
+            shutdown,
+            transport,
+            persistence::RecordSink::Persistent(storage),
+            admin,
+        ))
     }
 
     pub(crate) fn offline(
@@ -73,7 +96,13 @@ impl Gateway {
     ) -> (Arc<Self>, Arc<Mutex<Trace>>) {
         let (transport, trace) = transport::Transport::fixture(response);
         (
-            Self::with_transport(loaded, Cancellation::new(), transport),
+            Self::with_transport(
+                loaded,
+                Cancellation::new(),
+                transport,
+                persistence::RecordSink::memory(),
+                None,
+            ),
             trace,
         )
     }
@@ -82,6 +111,8 @@ impl Gateway {
         loaded: &Bootstrap,
         shutdown: Cancellation,
         transport: transport::Transport,
+        records: persistence::RecordSink,
+        admin: Option<crate::admin::Admin>,
     ) -> Arc<Self> {
         Arc::new(Self {
             server: loaded.server.clone(),
@@ -93,6 +124,15 @@ impl Gateway {
             tasks: Mutex::new(JoinSet::new()),
             requests: AtomicU64::new(1),
             calls: AtomicU64::new(1),
+            // Synthetic transport has a deterministic namespace for exact fixture assertions.
+            run_id: if matches!(&records, persistence::RecordSink::Memory(_)) {
+                uuid::Uuid::nil().to_string()
+            } else {
+                loaded.run_id.clone()
+            },
+            managers: AtomicU64::new(1),
+            records,
+            admin,
         })
     }
 
@@ -103,28 +143,32 @@ impl Gateway {
         request: Request<Body>,
         connection_cancel: Cancellation,
     ) -> Response {
-        let request_id = format!("limen-{}", self.requests.fetch_add(1, Ordering::Relaxed));
+        let manager =
+            request.uri().path() == "/admin/v1" || request.uri().path().starts_with("/admin/v1/");
+        let counter = if manager {
+            &self.managers
+        } else {
+            &self.requests
+        };
+        let namespace = if manager { "m" } else { "r" };
+        let request_id = format!(
+            "limen-{namespace}-{}-{}",
+            self.run_id,
+            counter.fetch_add(1, Ordering::Relaxed)
+        );
+        let request = match self.dispatch(request, &request_id).await {
+            dispatch::Dispatch::Generation(request) => request,
+            dispatch::Dispatch::Response(mut response) => {
+                if manager {
+                    response
+                        .headers_mut()
+                        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+                }
+                return response;
+            },
+        };
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
-            let mut failure = Failure::new(ErrorCode::Busy, "admission");
-            let mut lifecycle = self.lifecycle(request_id.clone(), Cancellation::new());
-            let cleanup_deadline =
-                Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms);
-            lifecycle
-                .statistics
-                .freeze(lifecycle.started, Instant::now());
-            self.prepare_error(&mut failure, &mut lifecycle, cleanup_deadline)
-                .await;
-            // HTTP/1 drivers bound these rejected lifetimes too. Their observations
-            // await inline and cannot create an unbounded second task queue.
-            self.observe(&mut lifecycle, Some(&failure), cleanup_deadline)
-                .await;
-            let response = error_response_with_headers(
-                &failure,
-                &request_id,
-                lifecycle.response_headers.clone(),
-            );
-            lifecycle.record(&Err(failure), &self.server.observability.events);
-            return response;
+            return error_response(&Failure::new(ErrorCode::Busy, "admission"), &request_id);
         };
         let cancellation = Cancellation::new();
         let mut cancel_on_drop = CancelOnDrop(Some(cancellation.clone()));
@@ -137,51 +181,26 @@ impl Gateway {
             report_task(result);
         }
         let worker_connection_cancel = connection_cancel.clone();
-        tasks.spawn(async move {
-            let _permit = permit;
-            let mut lifecycle = gateway.lifecycle(id, cancellation);
-            let cancellation = lifecycle.cancellation.clone();
-            let deadline = lifecycle.deadline;
-            let mut delivery = Delivery::new(reply, cancellation.clone(), lifecycle.request_id.clone());
-            delivery.timings = lifecycle.statistics.timings.clone();
-            let result = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
-                () = gateway.shutdown.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
-                () = worker_connection_cancel.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
-                () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase)),
-                result = gateway.process(request, &mut lifecycle, &mut delivery) => result,
-            };
-            let result = if lifecycle.cancellation.is_cancelled() || gateway.shutdown.is_cancelled() {
-                Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase))
-            } else if Instant::now() >= lifecycle.deadline {
-                Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase))
-            } else { result };
-            let cleanup_deadline = Instant::now() + Duration::from_millis(gateway.server.limits.cleanup_ms);
-            lifecycle.statistics.freeze(lifecycle.started, Instant::now());
-            let terminal = match result {
-                Ok(response) => {
-                    if let Some(response) = response { delivery.send_json(response); }
-                    Ok(())
-                },
-                Err(mut failure) => {
-                    if delivery.pending() {
-                        gateway.prepare_error(&mut failure, &mut lifecycle, cleanup_deadline).await;
-                    }
-                    // Terminal writes have a finite budget even after the request
-                    // deadline; a slow or disconnected consumer cannot retain a permit.
-                    let _finished = tokio::time::timeout_at(
-                        tokio::time::Instant::from_std(cleanup_deadline),
-                        delivery.fail(&failure, &lifecycle),
-                    ).await;
-                    delivery.close();
-                    Err(failure)
-                },
-            };
-            gateway.observe(&mut lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
-            lifecycle.record(&terminal, &gateway.server.observability.events);
-            gateway.transport.complete(&lifecycle, terminal.as_ref().err(), &gateway.server.observability.events).await;
-        }.instrument(span));
+        tasks.spawn(
+            async move {
+                let _permit = permit;
+                let mut lifecycle = gateway.lifecycle(id, cancellation);
+                let mut delivery = Delivery::new(
+                    reply,
+                    lifecycle.cancellation.clone(),
+                    lifecycle.request_id.clone(),
+                );
+                gateway
+                    .run_request(
+                        request,
+                        &mut lifecycle,
+                        &mut delivery,
+                        worker_connection_cancel,
+                    )
+                    .await;
+            }
+            .instrument(span),
+        );
         drop(tasks);
         let response = tokio::select! {
             biased;
@@ -196,12 +215,137 @@ impl Gateway {
         response
     }
 
+    async fn run_request(
+        &self,
+        request: Request<Body>,
+        lifecycle: &mut Lifecycle,
+        delivery: &mut Delivery,
+        worker_connection_cancel: Cancellation,
+    ) {
+        delivery.timings = lifecycle.statistics.timings.clone();
+        let result = self
+            .execute_request(request, lifecycle, delivery, &worker_connection_cancel)
+            .await;
+        let result = self
+            .request_active(lifecycle, &worker_connection_cancel)
+            .and(result);
+        let cleanup_deadline =
+            Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms);
+        lifecycle
+            .statistics
+            .freeze(lifecycle.started, Instant::now());
+        let record = persistence::terminal(lifecycle, result.as_ref().err());
+        let persist = async {
+            if let Some(record) = record {
+                let deadline =
+                    Instant::now() + Duration::from_millis(self.server.storage.operation_ms);
+                if let Err(error) = self.records.finish(record, deadline).await {
+                    tracing::error!(
+                        phase = "storage_finish",
+                        code = error.code(),
+                        "request persistence failed"
+                    );
+                }
+            }
+        };
+        let cleanup = async {
+            let terminal = match result {
+                Ok(response) => {
+                    if let Some(response) = response {
+                        delivery.send_json(response);
+                    }
+                    Ok(())
+                },
+                Err(mut failure) => {
+                    if delivery.pending() && lifecycle.recorded {
+                        self.prepare_error(&mut failure, lifecycle, cleanup_deadline)
+                            .await;
+                    }
+                    // Terminal writes have a finite budget even after the request
+                    // deadline; a slow or disconnected consumer cannot retain a permit.
+                    let _finished = tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(cleanup_deadline),
+                        delivery.fail(&failure, lifecycle),
+                    )
+                    .await;
+                    delivery.close();
+                    Err(failure)
+                },
+            };
+            if lifecycle.recorded {
+                self.observe(lifecycle, terminal.as_ref().err(), cleanup_deadline)
+                    .await;
+            }
+            lifecycle.record(&terminal, &self.server.observability.events);
+            self.transport
+                .complete(
+                    lifecycle,
+                    terminal.as_ref().err(),
+                    &self.server.observability.events,
+                )
+                .await;
+        };
+        tokio::join!(persist, cleanup);
+    }
+
+    async fn execute_request(
+        &self,
+        request: Request<Body>,
+        lifecycle: &mut Lifecycle,
+        delivery: &mut Delivery,
+        connection_cancel: &Cancellation,
+    ) -> Result<Option<Response>, Failure> {
+        let cancellation = lifecycle.cancellation.clone();
+        let deadline = tokio::time::Instant::from_std(lifecycle.deadline);
+        let body = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = self.shutdown.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = connection_cancel.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = tokio::time::sleep_until(deadline) => Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase)),
+            result = self.prepare_request(request, lifecycle) => result,
+        }?;
+        self.request_active(lifecycle, connection_cancel)?;
+        // Once submitted, retain the bounded write confirmation even when the client
+        // disconnects. Cancellation is a request result, not a storage failure.
+        self.record_begin(lifecycle).await?;
+        self.request_active(lifecycle, connection_cancel)?;
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = self.shutdown.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = connection_cancel.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
+            () = tokio::time::sleep_until(deadline) => Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase)),
+            result = self.complete(body, lifecycle, delivery) => result,
+        }
+    }
+
+    fn request_active(
+        &self,
+        lifecycle: &Lifecycle,
+        connection_cancel: &Cancellation,
+    ) -> Result<(), Failure> {
+        if lifecycle.cancellation.is_cancelled()
+            || self.shutdown.is_cancelled()
+            || connection_cancel.is_cancelled()
+        {
+            Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase))
+        } else if Instant::now() >= lifecycle.deadline {
+            Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Shutdown stops admission before draining all tracked requests and observations.
     pub async fn drain(&self) {
         self.permits.close();
         let mut tasks = self.tasks.lock().await;
         while let Some(result) = tasks.join_next().await {
             report_task(result);
+        }
+        if let Some(admin) = &self.admin {
+            admin.drain().await;
         }
     }
 

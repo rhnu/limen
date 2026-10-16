@@ -1,5 +1,5 @@
-client_auth:
-  bearer: example-limen-client-token
+auth:
+  api_key: example-limen-api-key-change-this-32-bytes
 script_context:
   client_headers:
     - x-example-policy

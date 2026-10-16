@@ -107,14 +107,14 @@ fn request_tree_limits_keep_last_wins_duplicate_key_semantics() {
 
 #[test]
 fn client_auth_handles_case_and_multiple_values_without_forwarding_credentials() {
-    let auth = ClientAuth::Bearer("client-token".to_owned());
+    let auth = "client-token";
     let mut headers = HeaderMap::new();
     headers.insert(
         header::AUTHORIZATION,
         HeaderValue::from_static("bEaReR  client-token"),
     );
     headers.insert(header::COOKIE, HeaderValue::from_static("secret-cookie"));
-    assert!(authorize(&auth, &headers).is_ok());
+    assert!(authorize(auth, &headers).is_ok());
     let outgoing = outbound_headers(&config().providers["primary"]).unwrap();
     assert_eq!(outgoing[header::AUTHORIZATION], "Bearer upstream-token");
     assert!(!outgoing.contains_key(header::ACCEPT));
@@ -124,16 +124,16 @@ fn client_auth_handles_case_and_multiple_values_without_forwarding_credentials()
         HeaderValue::from_static("Bearer client-token"),
     );
     assert_eq!(
-        authorize(&auth, &headers).unwrap_err().code,
+        authorize(auth, &headers).unwrap_err().code,
         ErrorCode::Unauthorized
     );
 }
 
 #[test]
 fn rejects_missing_malformed_and_wrong_authentication() {
-    let auth = ClientAuth::Bearer("client-token".to_owned());
+    let auth = "client-token";
     assert_eq!(
-        authorize(&auth, &HeaderMap::new())
+        authorize(auth, &HeaderMap::new())
             .unwrap_err()
             .http_status(),
         401
@@ -150,11 +150,10 @@ fn rejects_missing_malformed_and_wrong_authentication() {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, HeaderValue::from_str(value).unwrap());
         assert_eq!(
-            authorize(&auth, &headers).unwrap_err().code,
+            authorize(auth, &headers).unwrap_err().code,
             ErrorCode::Unauthorized
         );
     }
-    assert!(authorize(&ClientAuth::None, &HeaderMap::new()).is_ok());
 }
 
 #[test]
