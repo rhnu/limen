@@ -12,7 +12,7 @@ use super::{
     json,
     lifecycle::Lifecycle,
     logic,
-    pipeline::{commit_state, elapsed_ms, hook_invalid},
+    pipeline::{commit_effects, elapsed_ms, hook_invalid},
     response::{Delivery, apply_alias},
     stats::WaitKind,
 };
@@ -312,6 +312,7 @@ impl Gateway {
                     .hook(hook, "afterReceive", Some(&step.name), context, lifecycle)
                     .await?;
                 let next_status = output
+                    .context
                     .get("status")
                     .and_then(Value::as_u64)
                     .and_then(|value| u16::try_from(value).ok())
@@ -320,10 +321,10 @@ impl Gateway {
                     hook_invalid("afterReceive", &step.name).with_source(StatusMapping(source))
                 })?;
                 let next_headers =
-                    logic::headers_from_json(&output["headers"]).map_err(|source| {
+                    logic::headers_from_json(&output.context["headers"]).map_err(|source| {
                         hook_invalid("afterReceive", &step.name).with_source(source)
                     })?;
-                commit_state(lifecycle, &mut output)?;
+                commit_effects(lifecycle, &mut output)?;
                 status = next_status;
                 headers = next_headers;
             }

@@ -1,0 +1,77 @@
+{
+  "name": "failed-error-keeps-finish",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "mode": "observer_error",
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "observation",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 500
+    },
+    "state": {
+      "mode": "observer_error",
+      "committed": "provider"
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "request",
+          "phase": "onRequest",
+          "step": null,
+          "count": 1
+        },
+        {
+          "event": "provider",
+          "phase": "beforeSend",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "finish",
+          "phase": "onFinish",
+          "step": null,
+          "count": 1
+        }
+      ],
+      "dropped": 0
+    },
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    },
+    "observationFailed": true
+  }
+}

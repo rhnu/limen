@@ -81,6 +81,7 @@ export const config = {
     void [outcome, code, model, ctx.error.status, ctx.error.request_id, ctx.error.phase, ctx.error.step];
   },
   async onFinish(ctx) {
+    ctx.observe.record("request_finished");
     await Promise.resolve();
     if (ctx.outcome !== "success") {
       /** @type {string} */

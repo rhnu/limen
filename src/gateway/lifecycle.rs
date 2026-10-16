@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::{
     error::{ErrorCode, Failure},
+    observations::Observations,
     stats::Statistics,
 };
 
@@ -33,6 +34,7 @@ pub(super) struct Lifecycle {
     pub output_bytes: usize,
     pub response_headers: http::HeaderMap,
     pub statistics: Statistics,
+    pub observations: Observations,
 }
 
 impl Lifecycle {
@@ -62,6 +64,7 @@ impl Lifecycle {
             output_bytes: 0,
             response_headers: http::HeaderMap::new(),
             statistics: Statistics::default(),
+            observations: Observations::default(),
         }
     }
 
@@ -86,7 +89,7 @@ impl Lifecycle {
         stats
     }
 
-    pub fn record(&self, result: &Result<(), Failure>) {
+    pub fn record(&self, result: &Result<(), Failure>, observation_names: &[String]) {
         let outcome = match result {
             Ok(()) => "success",
             Err(e) if e.code == ErrorCode::Cancelled => "cancelled",
@@ -126,6 +129,8 @@ impl Lifecycle {
             "request finished"
         );
         super::stats::record(&self.request_id, &self.statistics.snapshot());
+        self.observations
+            .record(&self.request_id, observation_names);
         if let Err(failure) = result {
             if matches!(
                 failure.code,

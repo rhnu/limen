@@ -89,6 +89,72 @@ pub struct ScriptContextConfig {
     pub client_headers: Vec<String>,
 }
 
+/// Explicit event names accepted by request scripts' observation API.
+#[derive(Clone, Debug, Default)]
+pub struct ObservabilityConfig {
+    pub events: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default = "RawObservability::default")]
+struct RawObservability<const TOML: bool> {
+    #[serde(deserialize_with = "strict_spanned")]
+    events: Input<Vec<String>, TOML>,
+}
+
+impl<const TOML: bool> Default for RawObservability<TOML> {
+    fn default() -> Self {
+        Self {
+            events: Input::unlocated(Vec::new()),
+        }
+    }
+}
+
+impl<const TOML: bool> RawObservability<TOML> {
+    fn validate(self, source: &str) -> Result<ObservabilityConfig, ConfigError> {
+        let invalid = |kind, message| {
+            self.events.locate(
+                ConfigError::new(kind, "observability.events", message),
+                source,
+            )
+        };
+        if self.events.value.len() > 64 {
+            return Err(invalid(
+                ConfigErrorKind::Range,
+                "observation allowlist exceeds 64 names",
+            ));
+        }
+        let mut names = BTreeSet::new();
+        for name in &self.events.value {
+            if !(1..=64).contains(&name.len()) {
+                return Err(invalid(
+                    ConfigErrorKind::Range,
+                    "observation name must contain 1 to 64 bytes",
+                ));
+            }
+            if !name.as_bytes()[0].is_ascii_lowercase()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(invalid(
+                    ConfigErrorKind::Schema,
+                    "observation name must match [a-z][a-z0-9_]*",
+                ));
+            }
+            if !names.insert(name.as_str()) {
+                return Err(invalid(
+                    ConfigErrorKind::Schema,
+                    "duplicate observation name",
+                ));
+            }
+        }
+        Ok(ObservabilityConfig {
+            events: self.events.value,
+        })
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, default = "RawScriptContext::default")]
 struct RawScriptContext<const TOML: bool> {
@@ -219,6 +285,8 @@ resource_limits! {
     max_body_bytes: usize = 4 * 1024 * 1024, 1 => 256 * 1024 * 1024;
     max_event_bytes: usize = 1024 * 1024, 1 => 64 * 1024 * 1024;
     max_output_events: usize = 64, 1 => 4096;
+    max_observations_per_hook: usize = 8, 1 => 64;
+    max_observations_per_request: usize = 64, 1 => 4096;
     max_output_bytes: usize = 4 * 1024 * 1024, 1 => 256 * 1024 * 1024;
     max_aggregate_bytes: usize = 16 * 1024 * 1024, 1 => 1024 * 1024 * 1024;
     max_aggregate_events: usize = 100_000, 1 => 1_000_000;
@@ -235,6 +303,7 @@ pub struct ServerConfig {
     pub log: LogConfig,
     pub limits: ResourceLimits,
     pub script_context: ScriptContextConfig,
+    pub observability: ObservabilityConfig,
 }
 
 #[derive(Deserialize)]
@@ -250,6 +319,8 @@ struct RawServer<const TOML: bool> {
     limits: RawLimits<TOML>,
     #[serde(default, deserialize_with = "map_only")]
     script_context: RawScriptContext<TOML>,
+    #[serde(default, deserialize_with = "map_only")]
+    observability: RawObservability<TOML>,
 }
 
 #[derive(Deserialize)]
@@ -424,12 +495,14 @@ impl<const TOML: bool> RawServer<TOML> {
         }
         let limits = self.limits.validate(source)?;
         let script_context = self.script_context.validate(source)?;
+        let observability = self.observability.validate(source)?;
         Ok(ServerConfig {
             listen: self.listen.value,
             client_auth: auth,
             log: self.log,
             limits,
             script_context,
+            observability,
         })
     }
 }

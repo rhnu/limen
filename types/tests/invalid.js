@@ -34,6 +34,14 @@ export const config = {
   providers: { primary: { endpoint: "https://fictional.invalid/v1/chat/completions" } },
   models: { chat: { provider: "primary", upstream: "fictional-chat-model" } },
   onRequest(ctx) {
+    // @ts-expect-error Observation codes must be strings.
+    ctx.observe.record(1);
+    // @ts-expect-error Observation records have no arbitrary payload.
+    ctx.observe.record("policy_applied", { body: ctx.body });
+    // @ts-expect-error The observation method is frozen.
+    ctx.observe.record = () => {};
+    // @ts-expect-error The observation API reference is fixed.
+    ctx.observe = ctx.observe;
     // @ts-expect-error Only supported business rejection statuses are accepted.
     ctx.reject(500);
     // @ts-expect-error Rejection does not accept arbitrary response bodies or messages.

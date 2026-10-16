@@ -1,0 +1,112 @@
+{
+  "name": "sse-hooks-aggregate-observations",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "mode": "normal",
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "complete.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "observation",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": "hello"
+              },
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "observation",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": []
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "mode": "normal",
+      "committed": "model"
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "request",
+          "phase": "onRequest",
+          "step": null,
+          "count": 1
+        },
+        {
+          "event": "provider",
+          "phase": "beforeSend",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "model",
+          "phase": "beforeSend",
+          "step": "model",
+          "count": 1
+        },
+        {
+          "event": "response",
+          "phase": "afterReceive",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "upstream",
+          "phase": "onUpstreamEvent",
+          "step": "provider",
+          "count": 2
+        },
+        {
+          "event": "model",
+          "phase": "onUpstreamEvent",
+          "step": "model",
+          "count": 2
+        },
+        {
+          "event": "stream",
+          "phase": "onStreamEvent",
+          "step": "provider",
+          "count": 2
+        },
+        {
+          "event": "finish",
+          "phase": "onFinish",
+          "step": null,
+          "count": 1
+        }
+      ],
+      "dropped": 0
+    }
+  }
+}

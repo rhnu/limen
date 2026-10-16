@@ -1,4 +1,4 @@
-use limen_script::Cancellation;
+use limen_script::{Cancellation, ObservationBatch};
 use serde_json::json;
 
 use super::{super::upstream::media_kind, *};
@@ -56,7 +56,7 @@ fn business_rejection_commits_valid_state_and_preserves_phase_and_step() {
         let mut lifecycle = Lifecycle::new("request-1".into(), Cancellation::new(), 1000);
         lifecycle.phase = "beforeSend";
         lifecycle.step = Some("policy".into());
-        let mut output = json!({"state":{"checked":true},"rejection":{"status":status}});
+        let mut output = draft(json!({"state":{"checked":true},"rejection":{"status":status}}));
         let failure = commit_request(&mut lifecycle, &mut output).unwrap_err();
         assert_eq!(failure.code, ErrorCode::RequestRejected);
         assert_eq!(failure.http_status(), status);
@@ -78,7 +78,7 @@ fn malformed_rejection_or_state_cannot_commit() {
     ] {
         let failure = commit_request(
             &mut lifecycle,
-            &mut json!({"state":{"changed":true},"rejection":rejection}),
+            &mut draft(json!({"state":{"changed":true},"rejection":rejection})),
         )
         .unwrap_err();
         assert_eq!(failure.code, ErrorCode::HookFailed);
@@ -86,9 +86,53 @@ fn malformed_rejection_or_state_cannot_commit() {
     }
     let failure = commit_request(
         &mut lifecycle,
-        &mut json!({"state":[],"rejection":{"status":400}}),
+        &mut draft(json!({"state":[],"rejection":{"status":400}})),
     )
     .unwrap_err();
     assert_eq!(failure.code, ErrorCode::HookFailed);
     assert_eq!(lifecycle.state, json!({"previous":true}));
+}
+
+fn draft(context: Value) -> HookOutput {
+    HookOutput {
+        context,
+        observations: ObservationBatch::default(),
+    }
+}
+
+#[test]
+fn observation_effects_commit_with_state_including_valid_business_rejection() {
+    use super::super::observations::Observations;
+
+    let mut lifecycle = Lifecycle::new("request-1".into(), Cancellation::new(), 1000);
+    lifecycle.phase = "beforeSend";
+    lifecycle.observations = Observations::new(4);
+    let names = vec!["policy_applied".into()];
+    let mut invalid = HookOutput {
+        context: json!({"state":[]}),
+        observations: ObservationBatch {
+            events: vec![0],
+            dropped: 0,
+        },
+    };
+    assert!(commit_effects(&mut lifecycle, &mut invalid).is_err());
+    assert_eq!(
+        lifecycle.observations.snapshot(&names),
+        json!({"events":[],"dropped":0})
+    );
+    let mut rejected = HookOutput {
+        context: json!({"state":{"ok":true},"rejection":{"status":422}}),
+        observations: invalid.observations,
+    };
+    assert_eq!(
+        commit_request(&mut lifecycle, &mut rejected)
+            .unwrap_err()
+            .code,
+        ErrorCode::RequestRejected
+    );
+    assert_eq!(
+        lifecycle.observations.snapshot(&names)["events"][0]["count"],
+        1
+    );
+    assert_eq!(rejected.observations.events, Vec::<u8>::new());
 }

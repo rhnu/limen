@@ -1,0 +1,8 @@
+data: {"id":"observation","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{"role":"assistant","content":"he"},"finish_reason":null}]}
+
+data: {"id":"observation","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":null}]}
+
+data: {"id":"observation","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

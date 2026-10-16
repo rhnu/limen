@@ -1,4 +1,4 @@
-use limen_script::{HookOutput, ScriptError};
+use limen_script::{HookOutput, ObservationBatch, ScriptError};
 
 use super::*;
 
@@ -48,7 +48,10 @@ fn dropped_hook_is_accounted_without_fabricating_runtime_samples() {
 fn returned_reports_include_errors_and_only_available_measurements() {
     let timings = Timings::default();
     for outcome in [
-        Ok(HookOutput { context: json!({}) }),
+        Ok(HookOutput {
+            context: json!({}),
+            observations: ObservationBatch::default(),
+        }),
         Err(ScriptError::new(ScriptErrorKind::Deadline)),
     ] {
         let guard = timings.hook("onRequest");

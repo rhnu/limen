@@ -1,0 +1,82 @@
+{
+  "name": "throw-discards-current-hook",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "mode": "throw",
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "observation",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": false,
+    "response": {
+      "status": 500
+    },
+    "state": {
+      "mode": "throw",
+      "committed": "provider"
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "request",
+          "phase": "onRequest",
+          "step": null,
+          "count": 1
+        },
+        {
+          "event": "provider",
+          "phase": "beforeSend",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "error",
+          "phase": "onError",
+          "step": null,
+          "count": 1
+        },
+        {
+          "event": "finish",
+          "phase": "onFinish",
+          "step": null,
+          "count": 1
+        }
+      ],
+      "dropped": 0
+    },
+    "error": {
+      "code": "hook_failed",
+      "status": 500,
+      "phase": "beforeSend"
+    }
+  }
+}

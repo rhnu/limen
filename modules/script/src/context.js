@@ -1,4 +1,4 @@
-(function (validateHeader, maxNodes, maxBytes, maxEvents) {
+(function (validateHeader, maxNodes, maxBytes, maxEvents, observationNames, maxObservations) {
   "use strict";
   // Capture intrinsics before trusted configuration can replace global methods.
   const ownKeys = Reflect.ownKeys;
@@ -14,6 +14,9 @@
   const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
   const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
   const prepared = new WeakMapType();
+  const observationIds = create(null);
+  for (let i = 0; i < observationNames.length; i++) observationIds[observationNames[i]] = i;
+  freeze(observationIds);
   function fail() { throw new ErrorType("invalid hook context or header operation"); }
   function read(object, key) {
     const d = descriptor(object, key);
@@ -91,7 +94,8 @@
     } };
   }
   function prepare(root) {
-    if (descriptor(root, "reject") || descriptor(root, "rejection")) fail();
+    if (descriptor(root, "reject") || descriptor(root, "rejection")
+        || descriptor(root, "observe") || descriptor(root, "observations")) fail();
     // Older standalone scheduler experiments use plain JSON drafts.
     if (!descriptor(root, "meta")) return root;
     const meta = read(root, "meta");
@@ -106,6 +110,22 @@
     if (state === null || typeof state !== "object" || isArray(state)) fail();
     const keys = ownKeys(root);
     let headers, client, events, rejection, replaced = false;
+    const observationEvents = setProto([], null);
+    let observationsDropped = 0;
+    const observe = freeze({ record: freeze(function (name) {
+      if (arguments.length !== 1 || typeof name !== "string") fail();
+      const registration = descriptor(observationIds, name);
+      if (!registration) fail();
+      const id = registration.value;
+      for (let i = 0; i < observationEvents.length; i++) {
+        if (observationEvents[i] === id) return;
+      }
+      if (observationEvents.length >= maxObservations) {
+        if (observationsDropped < 9007199254740991) observationsDropped++;
+        return;
+      }
+      observationEvents[observationEvents.length] = id;
+    }) });
     if (stream && (!descriptor(root, "event") || descriptor(root, "events") || descriptor(root, "replaceEvents"))) fail();
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
@@ -137,6 +157,7 @@
         enumerable: false, writable: false, configurable: false,
       });
     }
+    define(root, "observe", { value: observe, enumerable: false, writable: false, configurable: false });
     if (stream) {
       define(root, "replaceEvents", {
         value: freeze(function (replacement) {
@@ -148,14 +169,23 @@
       });
     }
     seal(root);
-    weakSet(prepared, root, { keys, headers, client, stream, rejection() { return rejection; }, events() {
+    weakSet(prepared, root, { keys, headers, client, stream, observations() {
+      const events = [];
+      for (let i = 0; i < observationEvents.length; i++) {
+        define(events, i, { value: observationEvents[i], enumerable: true, writable: true, configurable: true });
+      }
+      return { events, dropped: observationsDropped };
+    }, rejection() { return rejection; }, events() {
       return replaced ? events : [read(root, "event")];
     } });
     return root;
   }
   function project(root) {
     const info = weakGet(prepared, root);
-    if (!info) return root;
+    if (!info) {
+      if (descriptor(root, "observe") || descriptor(root, "observations")) fail();
+      return { context: root, observations: { events: [], dropped: 0 } };
+    }
     const output = create(null);
     for (let i = 0; i < info.keys.length; i++) {
       const key = info.keys[i];
@@ -174,7 +204,7 @@
       }
       output.events = events;
     }
-    return output;
+    return { context: output, observations: info.observations() };
   }
   return { prepare, project };
 })

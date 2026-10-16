@@ -1,0 +1,10 @@
+[client_auth]
+bearer = "synthetic-client-secret"
+
+[observability]
+events = ["request", "provider", "model", "response", "upstream", "stream", "error", "finish", "extra", "overflow"]
+
+[limits]
+max_observations_per_hook = 2
+max_observations_per_request = 12
+cleanup_ms = 100

@@ -112,7 +112,7 @@ pub(crate) async fn run(
         .with(|ctx| {
             host::install(&ctx, options.json_limits.max_bytes)
                 .map_err(|error| json::failure(&ctx, error))?;
-            json::bridge(&ctx, options.json_limits, options.max_output_events)
+            json::bridge(&ctx, &options)
         })
         .await
     {

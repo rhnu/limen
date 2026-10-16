@@ -19,7 +19,7 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    pipeline::{commit_state, require_body},
+    pipeline::{commit_effects, require_body},
     stats::{Timings, WaitKind},
 };
 
@@ -216,9 +216,9 @@ impl Gateway {
                 let mut output = self
                     .hook(hook, "onResponse", Some(&step.name), context, lifecycle)
                     .await?;
-                require_body(&output)?;
-                commit_state(lifecycle, &mut output)?;
-                body = output["body"].take();
+                require_body(&output.context)?;
+                commit_effects(lifecycle, &mut output)?;
+                body = output.context["body"].take();
             }
         }
         Ok(body)

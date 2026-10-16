@@ -67,7 +67,7 @@ docker build --platform linux/amd64 --target runtime -t limen:local .
 
 ## 日志与关闭
 
-`[log]` 使用 `level` 和 `format` 配置，支持 text/JSON，输出到 stderr。日志只记录请求 ID、选中模型、provider、阶段、step、状态、字节数、耗时和清理后的错误信息；目标只保留 scheme、host 和可选端口。不记录正文、认证、Cookie、上游路径/query 或任意 JS 异常消息。
+`[log]` 使用 `level` 和 `format` 配置，支持 text/JSON，输出到 stderr。日志只记录请求 ID、选中模型、provider、阶段、step、状态、字节数、耗时、原生用量、批准的观测事件和清理后的错误信息；目标只保留 scheme、host 和可选端口。不记录正文、认证、Cookie、上游路径/query 或任意 JS 异常消息。用量与分段耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，脚本事件需先按[受控观测](scripting.md#受控观测)注册。
 
 排错先用 `X-Limen-Request-Id` 关联请求，必要时提高日志级别；提高级别也不会输出被省略的敏感内容。脚本故意抛出的说明文字不会出现在日志，应依靠命名清晰的 step、错误分类和安全位置定位。
 

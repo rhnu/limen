@@ -56,6 +56,8 @@ pub(super) struct Expected {
     pub observation_failed: Option<bool>,
     #[serde(default, deserialize_with = "present")]
     pub stats: Option<ExpectedStats>,
+    #[serde(default, deserialize_with = "present")]
+    pub observations: Option<Value>,
 }
 
 impl Expected {
@@ -64,6 +66,7 @@ impl Expected {
             || self.state.is_some()
             || self.error.is_some()
             || self.observation_failed.is_some()
+            || self.observations.is_some()
             || self
                 .stats
                 .as_ref()

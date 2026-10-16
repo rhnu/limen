@@ -121,6 +121,40 @@ const forwardTenant = {
 
 每个 hook 汇总还有 `queue`、`initialCall`、`pending`、`inputBridge`、`outputBridge`，均为 `{ totalMs, samples }`。它们分别表示命令排队、初次函数调用、Promise 返回到终结观察、输入桥接、输出投影转换。`samples: 0` 表示没有采样，区别于实测零耗时。外层取消仍记录已经等待的 wall 时间和中断次数，无法取得的运行时细分不补零样本。Promise 等待包含共享调度时间，不是该 hook 的 CPU 时间；里程碑与持续时间不能简单相加。终结观察自身的计时单独进入清理诊断，不放入其尚未结束时读取的请求快照。
 
+## 受控观测
+
+所有 hook 都有冻结的 `ctx.observe.record(name)`，只接受一个已注册事件名并返回 `undefined`。先在服务配置中显式批准这些非敏感元数据：
+
+```toml
+[observability]
+events = ["output_tokens_capped", "request_finished"]
+
+[limits]
+max_observations_per_hook = 8
+max_observations_per_request = 64
+```
+
+注册表默认空，最多 64 项；名称长 1–64 字节，匹配 `[a-z][a-z0-9_]*`，不得重复。未知名称、错参或修改冻结 API 会使本次 hook 失败，错误诊断不回显参数。`check` 验证注册表，但不执行 hook，因此不会提前发现动态调用中的未知名称。
+
+```js
+const observeLimit = {
+  name: "observe-output-limit",
+  beforeSend(ctx) {
+    if (typeof ctx.body.max_completion_tokens === "number"
+        && ctx.body.max_completion_tokens > 4096) {
+      ctx.body.max_completion_tokens = 4096;
+      ctx.observe.record("output_tokens_capped");
+    }
+  },
+};
+```
+
+事件先进入当前调用的私有缓冲，只有 hook 成功、草稿满足网关阶段校验并提交时才生效。有效的 `reject()` 也会提交事件；throw、Promise 拒绝、非法草稿、取消和超时丢弃当前批次，包括其溢出计数。后续 hook 或请求失败不撤销前序已提交事件。`onError`、`onFinish` 可以记录事件，其余观察数据仍然只读；观察失败不覆盖主终态，也不保证后续观察能执行。停止等待 Promise 不会停止其 JS 工作，但晚到批次没有提交资格。
+
+同一调用中已接受的事件名去重。`max_observations_per_hook` 默认 8，范围 1–64；`max_observations_per_request` 默认 64，范围 1–4096，覆盖主流程与终结观察。请求配额按每次 hook 提交的唯一事件次数计算，同组聚合仍消耗配额。超额项丢弃并累计 `dropped`，不改变业务结果；观测私有 envelope 同时受整个 hook 的 JSON 与 VM 预算约束。
+
+终结后按事件名、phase、step 聚合次数，使用现有 `tracing` 输出有界的 `script observation` 元数据及必要的溢出计数，关联信息由 Rust 添加。接口不接受自由文本、任意标签、数值或 payload；注册名只应表达批准的非敏感事件。它不是审计持久化或外部通知保证，日志过滤与现有 stderr 输出行为仍然适用。离线测试可以[断言完整观测结果](testing.md#断言结果)。
+
 ## 流事件替换
 
 事件 hook 默认继续发送修改后的 `ctx.event`；调用 `ctx.replaceEvents(events)` 可丢弃、替换或按顺序拆分事件，每次调用最多一次：

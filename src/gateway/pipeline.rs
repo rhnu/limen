@@ -6,7 +6,7 @@ use axum::{
     response::Response,
 };
 use limen_config::{Model, Provider};
-use limen_script::{HookCall, HookId};
+use limen_script::{HookCall, HookId, HookOutput};
 use serde_json::{Value, json};
 
 use super::{
@@ -92,11 +92,11 @@ impl Gateway {
             let mut output = self
                 .hook(hook, "onRequest", None, context, lifecycle)
                 .await?;
-            logic::validate_body_shape(require_body(&output)?).map_err(|source| {
+            logic::validate_body_shape(require_body(&output.context)?).map_err(|source| {
                 Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source)
             })?;
             commit_request(lifecycle, &mut output)?;
-            body = output["body"].take();
+            body = output.context["body"].take();
         }
         lifecycle.phase = "routing";
         let alias = body
@@ -160,19 +160,20 @@ impl Gateway {
                 let mut output = self
                     .hook(hook, "beforeSend", Some(&step.name), context, lifecycle)
                     .await?;
-                logic::validate_body_shape(require_body(&output)?)
+                logic::validate_body_shape(require_body(&output.context)?)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_url = output
+                    .context
                     .get("url")
                     .and_then(Value::as_str)
                     .ok_or_else(|| hook_invalid("beforeSend", &step.name))?;
                 logic::validate_url(next_url)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                let next_headers = logic::headers_from_json(&output["headers"])
+                let next_headers = logic::headers_from_json(&output.context["headers"])
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 commit_request(lifecycle, &mut output)?;
-                body = output["body"].take();
-                let Value::String(next_url) = output["url"].take() else {
+                body = output.context["body"].take();
+                let Value::String(next_url) = output.context["url"].take() else {
                     return Err(hook_invalid("beforeSend", &step.name));
                 };
                 url = next_url;
@@ -189,7 +190,7 @@ impl Gateway {
         step: Option<&str>,
         context: Value,
         lifecycle: &mut Lifecycle,
-    ) -> Result<Value, Failure> {
+    ) -> Result<HookOutput, Failure> {
         lifecycle.phase = phase;
         lifecycle.step = step.map(str::to_owned);
         let measurement = lifecycle.statistics.timings.hook(phase);
@@ -206,14 +207,14 @@ impl Gateway {
         measurement.finish(&report);
         report
             .outcome
-            .map(|output| output.context)
             .map_err(|source| Failure::script(source, phase, step))
     }
 }
 
 /// Reject only after the ordinary draft checks and successful state commit.
-fn commit_request(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), Failure> {
+fn commit_request(lifecycle: &mut Lifecycle, output: &mut HookOutput) -> Result<(), Failure> {
     let rejection = output
+        .context
         .get("rejection")
         .map(|value| {
             value
@@ -224,13 +225,26 @@ fn commit_request(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), F
                 .ok_or_else(|| Failure::new(ErrorCode::HookFailed, lifecycle.phase))
         })
         .transpose()?;
-    commit_state(lifecycle, output)?;
+    commit_effects(lifecycle, output)?;
     if let Some(status) = rejection {
         let mut failure = Failure::new(ErrorCode::RequestRejected, lifecycle.phase);
         failure.status = Some(status);
         failure.step.clone_from(&lifecycle.step);
         return Err(failure);
     }
+    Ok(())
+}
+
+pub(super) fn commit_effects(
+    lifecycle: &mut Lifecycle,
+    output: &mut HookOutput,
+) -> Result<(), Failure> {
+    commit_state(lifecycle, &mut output.context)?;
+    lifecycle.observations.commit(
+        std::mem::take(&mut output.observations),
+        lifecycle.phase,
+        lifecycle.step.as_deref(),
+    );
     Ok(())
 }
 

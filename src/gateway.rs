@@ -3,6 +3,7 @@ mod events;
 mod json;
 mod lifecycle;
 mod logic;
+mod observations;
 mod observe;
 mod pipeline;
 mod response;
@@ -103,23 +104,19 @@ impl Gateway {
         let request_id = format!("limen-{}", self.requests.fetch_add(1, Ordering::Relaxed));
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             let failure = Failure::new(ErrorCode::Busy, "admission");
-            let mut lifecycle = Lifecycle::new(
-                request_id.clone(),
-                Cancellation::new(),
-                self.server.limits.request_ms,
-            );
+            let mut lifecycle = self.lifecycle(request_id.clone(), Cancellation::new());
             lifecycle
                 .statistics
                 .freeze(lifecycle.started, Instant::now());
             // HTTP/1 drivers bound these rejected lifetimes too. Their observations
             // await inline and cannot create an unbounded second task queue.
             self.observe(
-                &lifecycle,
+                &mut lifecycle,
                 Some(&failure),
                 Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms),
             )
             .await;
-            lifecycle.record(&Err(failure));
+            lifecycle.record(&Err(failure), &self.server.observability.events);
             let failure = Failure::new(ErrorCode::Busy, "admission");
             return error_response(&failure, &request_id);
         };
@@ -136,7 +133,7 @@ impl Gateway {
         let worker_connection_cancel = connection_cancel.clone();
         tasks.spawn(async move {
             let _permit = permit;
-            let mut lifecycle = Lifecycle::new(id, cancellation, gateway.server.limits.request_ms);
+            let mut lifecycle = gateway.lifecycle(id, cancellation);
             let cancellation = lifecycle.cancellation.clone();
             let deadline = lifecycle.deadline;
             let mut delivery = Delivery::new(reply, cancellation.clone(), lifecycle.request_id.clone());
@@ -172,10 +169,10 @@ impl Gateway {
                     Err(failure)
                 },
             };
-            gateway.observe(&lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
-            lifecycle.record(&terminal);
+            gateway.observe(&mut lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
+            lifecycle.record(&terminal, &gateway.server.observability.events);
             let error = terminal.as_ref().err().map(|failure| serde_json::json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase}));
-            gateway.transport.complete(&lifecycle.state, error, lifecycle.stats()).await;
+            gateway.transport.complete(&lifecycle.state, error, lifecycle.stats(), lifecycle.observations.snapshot(&gateway.server.observability.events)).await;
         }.instrument(span));
         drop(tasks);
         let response = tokio::select! {
@@ -201,6 +198,13 @@ impl Gateway {
     }
 
     fn next_call(&self) -> u64 { self.calls.fetch_add(1, Ordering::Relaxed) }
+
+    fn lifecycle(&self, id: String, cancellation: Cancellation) -> Lifecycle {
+        let mut lifecycle = Lifecycle::new(id, cancellation, self.server.limits.request_ms);
+        lifecycle.observations =
+            observations::Observations::new(self.server.limits.max_observations_per_request);
+        lifecycle
+    }
 
     fn ready(&self) -> bool {
         !self.shutdown.is_cancelled() && matches!(self.runtime.status(), RuntimeStatus::Ready)

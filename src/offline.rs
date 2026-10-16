@@ -410,7 +410,25 @@ fn compare(
     if let Some(stats) = expected.stats {
         compare_statistics(stats, &trace.stats, &mut check);
     }
-    if let Some(error) = expected.error {
+    if let Some(observations) = expected.observations {
+        check("observations", trace.observations == observations);
+    }
+    compare_terminal(
+        expected.error,
+        expected.observation_failed,
+        trace,
+        &mut check,
+    );
+    Ok(report)
+}
+
+fn compare_terminal(
+    error: Option<schema::Error>,
+    observation_failed: Option<bool>,
+    trace: &Trace,
+    check: &mut impl FnMut(&'static str, bool),
+) {
+    if let Some(error) = error {
         check(
             "error",
             trace.error
@@ -419,12 +437,10 @@ fn compare(
     } else {
         check("error", trace.error.is_none());
     }
-    if let Some(expected) = expected.observation_failed {
-        check("observationFailed", trace.observation_failed == expected);
-    } else {
-        check("observationFailed", !trace.observation_failed);
-    }
-    Ok(report)
+    check(
+        "observationFailed",
+        trace.observation_failed == observation_failed.unwrap_or(false),
+    );
 }
 
 fn compare_statistics(

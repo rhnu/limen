@@ -1,7 +1,7 @@
 use rquickjs::{Ctx, Error, Function, Object, Persistent, Value};
 
 use crate::{
-    JsonLimits, ScriptError, ScriptErrorKind,
+    JsonLimits, RuntimeOptions, ScriptError, ScriptErrorKind,
     error::exception::{ExceptionDiagnostic, ExceptionKind},
     loader::ModuleDiagnostics,
 };
@@ -79,11 +79,8 @@ pub(crate) struct Bridge {
     pub modules: ModuleDiagnostics,
 }
 
-pub(crate) fn bridge(
-    ctx: &Ctx<'_>,
-    limits: JsonLimits,
-    max_output_events: usize,
-) -> Result<Bridge, ScriptError> {
+pub(crate) fn bridge(ctx: &Ctx<'_>, options: &RuntimeOptions) -> Result<Bridge, ScriptError> {
+    let limits = options.json_limits;
     let factory: Function = ctx
         .eval(include_str!("json/bridge.js"))
         .map_err(|e| failure(ctx, e))?;
@@ -107,7 +104,9 @@ pub(crate) fn bridge(
             validate_header,
             limits.max_nodes,
             limits.max_bytes,
-            max_output_events,
+            options.max_output_events,
+            options.observation_names.clone(),
+            options.max_observations_per_hook,
         ))
         .map_err(|e| failure(ctx, e))?;
     Ok(Bridge {

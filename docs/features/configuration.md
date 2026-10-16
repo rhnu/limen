@@ -2,7 +2,7 @@
 
 ## 配置文件
 
-Limen 从服务配置所在目录加载 `config.js`。服务配置负责监听、客户端认证、日志和资源限制；JavaScript 默认导出的对象负责 provider、模型别名与 hook。
+Limen 从服务配置所在目录加载 `config.js`。服务配置负责监听、客户端认证、日志、观测事件注册和资源限制；JavaScript 默认导出的对象负责 provider、模型别名与 hook。
 
 ```text
 local/
@@ -91,6 +91,8 @@ Authorization: Bearer replace-with-your-client-token
 这与 `provider.auth.bearer` 是两份独立凭据。客户端认证头不会自动转发，脚本也不能通过客户端白名单读取 `Authorization`、Cookie 等敏感头。
 
 上游请求头由 `provider.headers`、`provider.auth` 和 `beforeSend` 构造。`auth` 与静态 `Authorization` 不能同时配置，静态头名不区分大小写且不得重复。未提供 `Accept` 时默认 `application/json`；出站正文始终为 JSON，`Content-Type` 由 Rust 设置。传输头由 Rust 管理，脚本不可改写，详见[头部与上下文](scripting.md#头部与客户端上下文)。
+
+脚本要输出批准的观测事件时，先在服务配置的 `[observability].events` 注册名称，再调用请求级 API；默认注册表为空，详见[受控观测](scripting.md#受控观测)。
 
 ## API
 

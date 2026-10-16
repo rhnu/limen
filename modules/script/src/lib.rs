@@ -36,6 +36,8 @@ pub struct RuntimeOptions {
     pub max_modules: usize,
     pub max_source_bytes: usize,
     pub max_output_events: usize,
+    pub observation_names: Vec<String>,
+    pub max_observations_per_hook: usize,
     pub json_limits: JsonLimits,
 }
 
@@ -53,6 +55,8 @@ impl Default for RuntimeOptions {
             max_modules: 64,
             max_source_bytes: 1024 * 1024,
             max_output_events: 64,
+            observation_names: Vec::new(),
+            max_observations_per_hook: 8,
             json_limits: JsonLimits::default(),
         }
     }
@@ -133,6 +137,14 @@ pub struct HookCall {
 #[derive(Debug)]
 pub struct HookOutput {
     pub context: Value,
+    pub observations: ObservationBatch,
+}
+
+/// Registered event IDs collected privately by one successful hook.
+#[derive(Debug, Default, Clone)]
+pub struct ObservationBatch {
+    pub events: Vec<u8>,
+    pub dropped: u64,
 }
 
 /// Elapsed durations, rather than CPU attribution. Missing phases were not sampled.
@@ -160,11 +172,8 @@ pub struct HookReport {
 }
 
 impl HookReport {
-    fn new(outcome: Result<Value, ScriptError>, timings: HookTimings) -> Self {
-        Self {
-            outcome: outcome.map(|context| HookOutput { context }),
-            timings,
-        }
+    fn new(outcome: Result<HookOutput, ScriptError>, timings: HookTimings) -> Self {
+        Self { outcome, timings }
     }
 
     fn failed(error: ScriptError) -> Self { Self::new(Err(error), HookTimings::default()) }
@@ -413,10 +422,24 @@ fn valid_options(o: &RuntimeOptions) -> bool {
         && o.max_modules > 0
         && o.max_source_bytes > 0
         && o.max_output_events > 0
+        && (1..=64).contains(&o.max_observations_per_hook)
+        && valid_observation_names(&o.observation_names)
         && o.json_limits.max_depth > 0
         && o.json_limits.max_depth <= 128
         && o.json_limits.max_nodes > 0
         && o.json_limits.max_bytes > 0
+}
+
+fn valid_observation_names(names: &[String]) -> bool {
+    names.len() <= 64
+        && names.iter().enumerate().all(|(index, name)| {
+            (1..=64).contains(&name.len())
+                && name.as_bytes()[0].is_ascii_lowercase()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                && !names[..index].contains(name)
+        })
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use crate::{Cancellation, HookCall, RuntimeOptions, RuntimeStatus, ScriptRuntime
 
 mod context;
 mod diagnostics;
+mod observations;
 mod runtime;
 mod timings;
 

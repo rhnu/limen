@@ -66,6 +66,7 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 | `state`                                | 最后一次成功提交的请求状态                       |
 | `error`                                | 终态 code、status、phase                         |
 | `observationFailed`                    | 观察 hook 是否失败或无法执行                     |
+| `observations`                         | `{ events, dropped }` 完整受控观测结果           |
 | `stats.usage`                          | 完整的原生用量快照，包含来源、质量与上游完成事实 |
 | `stats.hookCalls`                      | 声明的业务 hook 阶段调用次数；未调用阶段为零     |
 | `stats.timingPresence`                 | 声明的耗时字段是否已采样，不比较实际毫秒值       |
@@ -90,6 +91,8 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 `stats` 的三个分组可单独声明。`usage` 完整相等比较；`hookCalls` 和 `timingPresence` 仅比较声明的阶段或字段，未知名称会拒绝用例。空的 `stats` 不构成有效断言。用量字段与耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，回归素材见 [`fixtures/gateway/statistics/`](../../fixtures/gateway/statistics/)。确定性时间算术由 Rust 单元测试检查，离线用例不对真实运行耗时设置脆弱的精确值或阈值。
 
 失败分类可直接定位检查边界：`outbound.body` 指向请求策略，`response.events` 指向事件变换，`state` 指向提交，`error` 指向终态。fixture 使用合成数据；即使比较器隐藏值，也不要把真实 token、正文或 Cookie 保存进仓库。
+
+`observations` 完整比较 `{ events, dropped }`。events 按首次提交顺序，包含注册的 `event`、`phase`、`step`（全局 hook 为 `null`）和 `count`；相同事件、阶段及 step 聚合次数。失败批次及其溢出不提交。可运行素材见 [`fixtures/gateway/observation-output/`](../../fixtures/gateway/observation-output/)。
 
 ## 验证边界
 

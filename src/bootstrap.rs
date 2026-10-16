@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use limen_config::{BusinessConfig, ConfigError, ResourceLimits, ServerConfig, load_server};
+use limen_config::{BusinessConfig, ConfigError, ServerConfig, load_server};
 use limen_script::{JsonLimits, RuntimeOptions, RuntimeStatus, ScriptError, ScriptRuntime};
 use tracing::Instrument;
 use tracing_subscriber::util::TryInitError;
@@ -137,7 +137,7 @@ impl Bootstrap {
         let started = Instant::now();
         let (runtime, exported) = tokio::time::timeout(
             budget,
-            ScriptRuntime::start(script, runtime_options(&server.limits)),
+            ScriptRuntime::start(script, runtime_options(&server)),
         )
         .await
         .map_err(Error::StartupTimeout)??;
@@ -213,8 +213,11 @@ fn with_cleanup(primary: Error, cleanup: Result<(), Error>) -> Error {
     }
 }
 
-fn runtime_options(limits: &ResourceLimits) -> RuntimeOptions {
+fn runtime_options(server: &ServerConfig) -> RuntimeOptions {
+    let limits = &server.limits;
     RuntimeOptions {
+        observation_names: server.observability.events.clone(),
+        max_observations_per_hook: limits.max_observations_per_hook,
         startup_timeout: Duration::from_millis(limits.startup_ms),
         execution_timeout: Duration::from_millis(limits.execution_ms),
         continuous_work_timeout: Duration::from_millis(limits.vm_work_ms),

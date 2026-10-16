@@ -1,0 +1,127 @@
+{
+  "name": "request-cap-and-hook-overflow",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "mode": "overflow",
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "overflow.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "observation",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": "he"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "observation",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "llo"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "observation",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "mode": "overflow",
+      "committed": "model"
+    },
+    "observations": {
+      "events": [
+        {
+          "event": "request",
+          "phase": "onRequest",
+          "step": null,
+          "count": 1
+        },
+        {
+          "event": "provider",
+          "phase": "beforeSend",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "model",
+          "phase": "beforeSend",
+          "step": "model",
+          "count": 1
+        },
+        {
+          "event": "response",
+          "phase": "afterReceive",
+          "step": "provider",
+          "count": 1
+        },
+        {
+          "event": "upstream",
+          "phase": "onUpstreamEvent",
+          "step": "provider",
+          "count": 3
+        },
+        {
+          "event": "extra",
+          "phase": "onUpstreamEvent",
+          "step": "provider",
+          "count": 3
+        },
+        {
+          "event": "stream",
+          "phase": "onStreamEvent",
+          "step": "provider",
+          "count": 2
+        }
+      ],
+      "dropped": 5
+    }
+  }
+}

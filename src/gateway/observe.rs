@@ -13,7 +13,7 @@ use super::{
 impl Gateway {
     pub(super) async fn observe(
         &self,
-        lifecycle: &Lifecycle,
+        lifecycle: &mut Lifecycle,
         failure: Option<&Failure>,
         deadline: Instant,
     ) {
@@ -74,12 +74,17 @@ impl Gateway {
             measurement.finish(&report);
             super::stats::record_cleanup(&lifecycle.request_id, &timings.snapshot());
             match report.outcome {
-                Ok(_) => tracing::debug!(
-                    request_id = lifecycle.request_id,
-                    phase,
-                    observation = "completed",
-                    "observation completed"
-                ),
+                Ok(output) => {
+                    lifecycle
+                        .observations
+                        .commit(output.observations, phase, None);
+                    tracing::debug!(
+                        request_id = lifecycle.request_id,
+                        phase,
+                        observation = "completed",
+                        "observation completed"
+                    );
+                },
                 Err(source) => {
                     self.transport.observation_failed().await;
                     tracing::warn!(request_id = lifecycle.request_id, phase, error_kind = ?source.kind(), error = %source.diagnostic(), "observation failed; terminal outcome retained");

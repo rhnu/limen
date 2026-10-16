@@ -6,7 +6,7 @@ use super::{
     error::{ErrorCode, Failure},
     json,
     lifecycle::Lifecycle,
-    pipeline::{commit_state, hook_invalid},
+    pipeline::{commit_effects, hook_invalid},
 };
 
 /// One source event shares this work allowance through both streaming phases.
@@ -75,6 +75,7 @@ impl Gateway {
                     .hook(hook, phase, Some(&step.name), context, lifecycle)
                     .await?;
                 let produced = output
+                    .context
                     .get("events")
                     .and_then(Value::as_array)
                     .ok_or_else(|| hook_invalid(phase, &step.name))?;
@@ -91,8 +92,8 @@ impl Gateway {
                         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
                 })?;
                 budget.charge(produced.len(), bytes, &self.server.limits, phase)?;
-                commit_state(lifecycle, &mut output)?;
-                let Value::Array(produced) = output["events"].take() else {
+                commit_effects(lifecycle, &mut output)?;
+                let Value::Array(produced) = output.context["events"].take() else {
                     return Err(hook_invalid(phase, &step.name));
                 };
                 next.extend(produced);

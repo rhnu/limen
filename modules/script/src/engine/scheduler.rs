@@ -12,8 +12,8 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
 use crate::{
-    Cancellation, Command, HookId, HookReport, HookTimings, RuntimeOptions, ScriptError,
-    ScriptErrorKind, json::Bridge,
+    Cancellation, Command, HookId, HookOutput, HookReport, HookTimings, ObservationBatch,
+    RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
 };
 
 /// Only settlement authority survives after the input becomes a private VM draft.
@@ -36,7 +36,7 @@ impl Completion {
         }
     }
 
-    fn send(self, result: Result<Json, ScriptError>) {
+    fn send(self, result: Result<HookOutput, ScriptError>) {
         let result = self.invalid().map_or(result, Err);
         self.finish(result);
     }
@@ -47,7 +47,7 @@ impl Completion {
         }
     }
 
-    fn finish(mut self, result: Result<Json, ScriptError>) {
+    fn finish(mut self, result: Result<HookOutput, ScriptError>) {
         self.observe_pending();
         let _sent = self.response.send(HookReport::new(result, self.timings));
     }
@@ -316,7 +316,7 @@ fn timed_output<'js>(
     draft: Value<'js>,
     options: &RuntimeOptions,
     timings: &mut HookTimings,
-) -> Result<Json, ScriptError> {
+) -> Result<HookOutput, ScriptError> {
     let started = Instant::now();
     let result = output(ctx, bridge, draft, options);
     timings.output_bridge = Some(started.elapsed());
@@ -328,7 +328,7 @@ fn output<'js>(
     bridge: &Bridge,
     draft: Value<'js>,
     options: &RuntimeOptions,
-) -> Result<Json, ScriptError> {
+) -> Result<HookOutput, ScriptError> {
     let project = bridge
         .project
         .clone()
@@ -347,8 +347,55 @@ fn output<'js>(
     if text.len() > options.json_limits.max_bytes {
         return Err(ScriptError::new(ScriptErrorKind::Json));
     }
-    serde_json::from_str(&text)
-        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))
+    let envelope = serde_json::from_str(&text)
+        .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
+    decode_output(envelope, options)
+}
+
+/// The private envelope shares the draft's JSON budget and is checked before release.
+fn decode_output(envelope: Json, options: &RuntimeOptions) -> Result<HookOutput, ScriptError> {
+    let invalid = || ScriptError::new(ScriptErrorKind::Contract);
+    let Json::Object(mut envelope) = envelope else {
+        return Err(invalid());
+    };
+    if envelope.len() != 2 {
+        return Err(invalid());
+    }
+    let context = envelope.remove("context").ok_or_else(invalid)?;
+    let observations = envelope.remove("observations").ok_or_else(invalid)?;
+    let observations = observations.as_object().ok_or_else(invalid)?;
+    if observations.len() != 2 {
+        return Err(invalid());
+    }
+    let events = observations
+        .get("events")
+        .and_then(Json::as_array)
+        .ok_or_else(invalid)?;
+    let dropped = observations
+        .get("dropped")
+        .and_then(Json::as_u64)
+        .ok_or_else(invalid)?;
+    if events.len() > options.max_observations_per_hook || dropped > 9_007_199_254_740_991 {
+        return Err(invalid());
+    }
+    let mut accepted = Vec::with_capacity(events.len());
+    for event in events {
+        let id = event
+            .as_u64()
+            .and_then(|id| u8::try_from(id).ok())
+            .ok_or_else(invalid)?;
+        if usize::from(id) >= options.observation_names.len() || accepted.contains(&id) {
+            return Err(invalid());
+        }
+        accepted.push(id);
+    }
+    Ok(HookOutput {
+        context,
+        observations: ObservationBatch {
+            events: accepted,
+            dropped,
+        },
+    })
 }
 
 async fn poll_pending(

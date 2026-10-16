@@ -4,6 +4,13 @@ use serde_json::json;
 
 use super::*;
 
+fn committed(context: Json) -> HookOutput {
+    HookOutput {
+        context,
+        observations: ObservationBatch::default(),
+    }
+}
+
 #[test]
 fn hook_lookup_rejects_zero_and_unregistered_ids() {
     let hooks = ["first", "second"];
@@ -44,7 +51,7 @@ fn completion_rechecks_cancellation_and_deadline_before_delivering_a_result() {
         if cancelled {
             cancellation.cancel();
         }
-        completion.send(Ok(json!({"committed": true})));
+        completion.send(Ok(committed(json!({"committed": true}))));
         let report = receive.try_recv().unwrap();
         assert_eq!(report.timings.queue, Some(Duration::from_nanos(2)));
         assert_eq!(report.timings.initial_call, Some(Duration::from_nanos(3)));
@@ -73,7 +80,7 @@ fn closed_receiver_revokes_completion_and_live_receiver_keeps_hook_failure() {
         completion.invalid().unwrap().kind(),
         ScriptErrorKind::Cancelled
     );
-    completion.send(Ok(json!({"committed": true})));
+    completion.send(Ok(committed(json!({"committed": true}))));
     assert!(matches!(
         receive.try_recv(),
         Err(oneshot::error::TryRecvError::Closed)
@@ -90,6 +97,46 @@ fn closed_receiver_revokes_completion_and_live_receiver_keeps_hook_failure() {
     completion.send(Err(ScriptError::new(ScriptErrorKind::Contract)));
     assert_eq!(
         receive.try_recv().unwrap().outcome.unwrap_err().kind(),
+        ScriptErrorKind::Contract
+    );
+}
+
+#[test]
+fn observation_envelopes_validate_ids_capacity_and_safe_dropped_counts() {
+    let options = RuntimeOptions {
+        observation_names: vec!["first".into(), "second".into()],
+        max_observations_per_hook: 1,
+        ..RuntimeOptions::default()
+    };
+    let output = decode_output(json!({"context": {}, "observations": {"events": [1], "dropped": 9_007_199_254_740_991_u64}}), &options).unwrap();
+    assert_eq!(output.observations.events, [1]);
+    assert_eq!(output.observations.dropped, 9_007_199_254_740_991);
+    for envelope in [
+        json!({"context": {}, "observations": {"events": [2], "dropped": 0}}),
+        json!({"context": {}, "observations": {"events": [0, 1], "dropped": 0}}),
+        json!({"context": {}, "observations": {"events": [0], "dropped": -1}}),
+        json!({"context": {}, "observations": {"events": [], "dropped": 9_007_199_254_740_992_u64}}),
+        json!({"context": {}, "observations": {"events": [0.5], "dropped": 0}}),
+        json!({"context": {}, "observations": {"events": [256], "dropped": 0}}),
+        json!({"context": {}, "observations": {"events": [], "dropped": 0, "extra": true}}),
+        json!({"context": {}}),
+    ] {
+        assert_eq!(
+            decode_output(envelope, &options).unwrap_err().kind(),
+            ScriptErrorKind::Contract
+        );
+    }
+    let options = RuntimeOptions {
+        max_observations_per_hook: 2,
+        ..options
+    };
+    assert_eq!(
+        decode_output(
+            json!({"context": {}, "observations": {"events": [0, 0], "dropped": 0}}),
+            &options
+        )
+        .unwrap_err()
+        .kind(),
         ScriptErrorKind::Contract
     );
 }
