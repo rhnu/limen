@@ -3,7 +3,10 @@ use std::time::{Duration, Instant};
 use limen_script::Cancellation;
 use serde_json::{Value, json};
 
-use super::error::{ErrorCode, Failure};
+use super::{
+    error::{ErrorCode, Failure},
+    stats::Statistics,
+};
 
 /// Mutable data is owned by one request. Hook snapshots enter the VM by value.
 pub(super) struct Lifecycle {
@@ -29,6 +32,7 @@ pub(super) struct Lifecycle {
     pub upstream_headers_ms: Option<u64>,
     pub output_bytes: usize,
     pub response_headers: http::HeaderMap,
+    pub statistics: Statistics,
 }
 
 impl Lifecycle {
@@ -57,6 +61,7 @@ impl Lifecycle {
             upstream_headers_ms: None,
             output_bytes: 0,
             response_headers: http::HeaderMap::new(),
+            statistics: Statistics::default(),
         }
     }
 
@@ -66,6 +71,19 @@ impl Lifecycle {
 
     pub fn context(&self, phase: &'static str) -> Value {
         json!({"meta":self.meta(phase),"state":self.state,"client":self.client})
+    }
+
+    pub fn stats(&self) -> Value {
+        let mut stats = self.statistics.snapshot();
+        let legacy = json!({"inputBytes":self.input_bytes,"outboundBytes":self.outbound_bytes,
+            "upstreamBytes":self.upstream_bytes,"outputBytes":self.output_bytes,
+            "upstreamHeadersMs":self.upstream_headers_ms,
+            "elapsedMs":super::pipeline::elapsed_ms(self.started),
+            "finalUpstreamModel":self.final_model,"target":self.target});
+        if let (Some(stats), Some(legacy)) = (stats.as_object_mut(), legacy.as_object()) {
+            stats.extend(legacy.clone());
+        }
+        stats
     }
 
     pub fn record(&self, result: &Result<(), Failure>) {
@@ -107,6 +125,7 @@ impl Lifecycle {
             elapsed_ms = self.started.elapsed().as_millis(),
             "request finished"
         );
+        super::stats::record(&self.request_id, &self.statistics.snapshot());
         if let Err(failure) = result {
             if matches!(
                 failure.code,

@@ -125,6 +125,7 @@ async fn rejection() -> TestResult {
         let error = runtime
             .invoke(call(id, index as u64, json!({"mode": mode})))
             .await
+            .into_context()
             .err()
             .ok_or("throw or rejection succeeded")?;
         check(&error, ScriptErrorKind::JavaScript, class)?;
@@ -144,7 +145,8 @@ async fn rejection() -> TestResult {
     }
     let output = runtime
         .invoke(call(hook(&config, "onFinish")?, 100, json!({})))
-        .await?;
+        .await
+        .into_context()?;
     ensure(
         output == json!({"touched": 0, "ok": true}),
         "diagnostics executed script accessors or poisoned the VM",

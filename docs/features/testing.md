@@ -57,15 +57,18 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 
 每个用例至少声明一个有效输出断言，按需选择以下类别：
 
-| 断言                                   | 用途                                        |
-| -------------------------------------- | ------------------------------------------- |
-| `sent`                                 | 是否发送了上游请求                          |
-| `outbound.url` / `headers` / `body`    | 最终发送的 URL、请求头和正文                |
-| `response.status` / `headers` / `body` | 客户端状态、头和完整 JSON                   |
-| `response.events` / `done`             | 下游 SSE 的有序 JSON chunk 列表与成功终止符 |
-| `state`                                | 最后一次成功提交的请求状态                  |
-| `error`                                | 终态 code、status、phase                    |
-| `observationFailed`                    | 观察 hook 是否失败或无法执行                |
+| 断言                                   | 用途                                             |
+| -------------------------------------- | ------------------------------------------------ |
+| `sent`                                 | 是否发送了上游请求                               |
+| `outbound.url` / `headers` / `body`    | 最终发送的 URL、请求头和正文                     |
+| `response.status` / `headers` / `body` | 客户端状态、头和完整 JSON                        |
+| `response.events` / `done`             | 下游 SSE 的有序 JSON chunk 列表与成功终止符      |
+| `state`                                | 最后一次成功提交的请求状态                       |
+| `error`                                | 终态 code、status、phase                         |
+| `observationFailed`                    | 观察 hook 是否失败或无法执行                     |
+| `stats.usage`                          | 完整的原生用量快照，包含来源、质量与上游完成事实 |
+| `stats.hookCalls`                      | 声明的业务 hook 阶段调用次数；未调用阶段为零     |
+| `stats.timingPresence`                 | 声明的耗时字段是否已采样，不比较实际毫秒值       |
 
 已声明的对象、数组和头集合做完整相等比较，不是子集匹配。头名按 HTTP 规则处理，重复值使用数组。未声明的普通输出字段不比较；`error` 和 `observationFailed` 缺省分别断言无请求错误、无观察失败。
 
@@ -83,6 +86,8 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 ```
 
 这是 `expect` 对象的内容，需放入完整用例。截断流用例应声明错误、`done: false`，并可检查已输出事件；SSE 的 `event: error` 不计入 `response.events`，错误本身用 `expect.error` 断言。
+
+`stats` 的三个分组可单独声明。`usage` 完整相等比较；`hookCalls` 和 `timingPresence` 仅比较声明的阶段或字段，未知名称会拒绝用例。空的 `stats` 不构成有效断言。用量字段与耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，回归素材见 [`fixtures/gateway/statistics/`](../../fixtures/gateway/statistics/)。确定性时间算术由 Rust 单元测试检查，离线用例不对真实运行耗时设置脆弱的精确值或阈值。
 
 失败分类可直接定位检查边界：`outbound.body` 指向请求策略，`response.events` 指向事件变换，`state` 指向提交，`error` 指向终态。fixture 使用合成数据；即使比较器隐藏值，也不要把真实 token、正文或 Cookie 保存进仓库。
 

@@ -16,6 +16,7 @@ use super::{
     lifecycle::Lifecycle,
     logic,
     response::Delivery,
+    stats::WaitKind,
     upstream::is_json_media,
 };
 
@@ -47,6 +48,7 @@ impl Gateway {
             return Err(Failure::new(ErrorCode::InvalidRequest, "request_body"));
         }
         lifecycle.phase = "request_body";
+        let decode = lifecycle.statistics.timings.measure(WaitKind::Decode);
         lifecycle.client = logic::client_context(
             request.headers(),
             &self.server.script_context.client_headers,
@@ -56,6 +58,7 @@ impl Gateway {
             .map_err(Failure::body)?;
         lifecycle.input_bytes = bytes.len();
         if models {
+            drop(decode);
             let body = logic::models_json(&self.business);
             let bytes = json::encode(
                 &body,
@@ -72,6 +75,7 @@ impl Gateway {
             )));
         }
         let (body, stream) = logic::parse_request(&bytes, &self.server.limits)?;
+        drop(decode);
         lifecycle.client_stream = Some(stream);
         self.complete(body, lifecycle, delivery).await
     }
@@ -132,6 +136,7 @@ impl Gateway {
             header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
+        lifecycle.statistics.timings.start_upstream(Instant::now());
         let response = self.transport.send(url, headers, bytes).await?;
         self.receive(provider, model, response, lifecycle, delivery)
             .await
@@ -187,7 +192,9 @@ impl Gateway {
     ) -> Result<Value, Failure> {
         lifecycle.phase = phase;
         lifecycle.step = step.map(str::to_owned);
-        self.runtime
+        let measurement = lifecycle.statistics.timings.hook(phase);
+        let report = self
+            .runtime
             .invoke(HookCall {
                 call_id: self.next_call(),
                 hook_id,
@@ -195,7 +202,11 @@ impl Gateway {
                 deadline: self.hook_deadline(lifecycle),
                 cancellation: lifecycle.cancellation.clone(),
             })
-            .await
+            .await;
+        measurement.finish(&report);
+        report
+            .outcome
+            .map(|output| output.context)
             .map_err(|source| Failure::script(source, phase, step))
     }
 }

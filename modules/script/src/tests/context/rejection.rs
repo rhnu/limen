@@ -25,7 +25,8 @@ async fn successful_void_hooks_project_owned_rejection_and_draft() -> TestResult
             for status in [400, 403, 422] {
                 let output = runtime
                     .invoke(call(id, 1, input(phase, operation, json!(status))))
-                    .await?;
+                    .await
+                    .into_context()?;
                 ensure(
                     output["rejection"] == json!({"status": status})
                         && output["state"]["before"] == true
@@ -43,14 +44,15 @@ async fn successful_void_hooks_project_owned_rejection_and_draft() -> TestResult
         }
         let mut context = input(phase, "sync", Value::Null);
         context["meta"]["defaultStatus"] = json!(true);
-        let output = runtime.invoke(call(id, 2, context)).await?;
+        let output = runtime.invoke(call(id, 2, context)).await.into_context()?;
         ensure(
             output["rejection"] == json!({"status": 400}),
             "missing rejection status did not use 400",
         )?;
         let output = runtime
             .invoke(call(id, 3, input(phase, "inspect", json!(422))))
-            .await?;
+            .await
+            .into_context()?;
         ensure(
             output["rejection"] == json!({"status": 422}),
             "frozen nonenumerable reject method did not return undefined",
@@ -82,6 +84,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
             runtime
                 .invoke(call(id, 1, input("onRequest", "sync", status)))
                 .await
+                .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
             "invalid business rejection status was accepted",
         )?;
@@ -91,6 +94,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
             runtime
                 .invoke(call(id, 2, input("beforeSend", operation, json!(422))))
                 .await
+                .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
             "duplicate, extra, or forged rejection operation was accepted",
         )?;
@@ -102,6 +106,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
             runtime
                 .invoke(call(id, 3, context))
                 .await
+                .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
             "plain scheduler input forged a rejection effect",
         )?;
@@ -123,6 +128,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
                 runtime
                     .invoke(call(id, 3, context))
                     .await
+                    .into_context()
                     .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
                 "reserved input field forged a rejection effect",
             )?;
@@ -130,7 +136,8 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
         if !matches!(phase, "onRequest" | "beforeSend") {
             let output = runtime
                 .invoke(call(id, 4, input(phase, "noop", json!(422))))
-                .await?;
+                .await
+                .into_context()?;
             ensure(
                 output.get("reject").is_none() && output.get("rejection").is_none(),
                 "restricted phase exposed a rejection effect",
@@ -139,6 +146,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
                 runtime
                     .invoke(call(id, 5, input(phase, "inspect", json!(422))))
                     .await
+                    .into_context()
                     .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
                 "restricted phase exposed the rejection method",
             )?;
@@ -169,6 +177,7 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
             runtime
                 .invoke(call(id, 1, input("onRequest", operation, json!(403))))
                 .await
+                .into_context()
                 .is_err_and(|error| error.kind() == expected),
             "a recorded business rejection replaced a hook failure",
         )?;
@@ -176,7 +185,7 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
     let pending = call(id, 2, input("beforeSend", "pending", json!(422)));
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -192,9 +201,13 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
     )?;
     runtime
         .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
-        .await?;
+        .await
+        .into_context()?;
     let original = input("onRequest", "noop", json!(400));
-    let output = runtime.invoke(call(id, 4, original.clone())).await?;
+    let output = runtime
+        .invoke(call(id, 4, original.clone()))
+        .await
+        .into_context()?;
     ensure(
         output == original && output.get("rejection").is_none(),
         "failed or late rejection draft polluted the next invocation",

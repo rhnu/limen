@@ -12,14 +12,17 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
 use crate::{
-    Cancellation, Command, HookId, RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
+    Cancellation, Command, HookId, HookReport, HookTimings, RuntimeOptions, ScriptError,
+    ScriptErrorKind, json::Bridge,
 };
 
 /// Only settlement authority survives after the input becomes a private VM draft.
 struct Completion {
     cancellation: Cancellation,
     deadline: Instant,
-    response: oneshot::Sender<Result<Json, ScriptError>>,
+    response: oneshot::Sender<HookReport>,
+    timings: HookTimings,
+    pending_since: Option<Instant>,
 }
 
 impl Completion {
@@ -35,7 +38,18 @@ impl Completion {
 
     fn send(self, result: Result<Json, ScriptError>) {
         let result = self.invalid().map_or(result, Err);
-        let _sent = self.response.send(result);
+        self.finish(result);
+    }
+
+    fn observe_pending(&mut self) {
+        if let Some(started) = self.pending_since.take() {
+            self.timings.pending = Some(started.elapsed());
+        }
+    }
+
+    fn finish(mut self, result: Result<Json, ScriptError>) {
+        self.observe_pending();
+        let _sent = self.response.send(HookReport::new(result, self.timings));
     }
 }
 
@@ -60,7 +74,7 @@ pub(super) async fn serve(
         .cloned()
         .unwrap_or_else(|| ScriptError::new(ScriptErrorKind::Stopped));
     for waiting in pending {
-        let _sent = waiting.completion.response.send(Err(failure.clone()));
+        waiting.completion.finish(Err(failure.clone()));
     }
     outcome
 }
@@ -116,9 +130,14 @@ async fn admit(
     pending: &mut Vec<Pending>,
 ) -> Result<(), ScriptError> {
     if pending.len() >= vm.options.pending_capacity {
-        let _sent = command
-            .response
-            .send(Err(ScriptError::new(ScriptErrorKind::Busy)));
+        let timings = HookTimings {
+            queue: Some(command.enqueued_at.elapsed()),
+            ..HookTimings::default()
+        };
+        let _sent = command.response.send(HookReport::new(
+            Err(ScriptError::new(ScriptErrorKind::Busy)),
+            timings,
+        ));
         return Ok(());
     }
     vm.budget.arm(Instant::now() + vm.options.execution_timeout);
@@ -206,21 +225,25 @@ async fn begin(
         context: input,
         deadline,
         cancellation,
+        enqueued_at,
         response,
     } = command;
-    let completion = Completion {
+    let mut completion = Completion {
         cancellation,
         deadline,
         response,
+        timings: HookTimings {
+            queue: Some(enqueued_at.elapsed()),
+            ..HookTimings::default()
+        },
+        pending_since: None,
     };
     if let Some(error) = completion.invalid() {
-        let _sent = completion.response.send(Err(error));
+        completion.finish(Err(error));
         return Ok(None);
     }
     let Some(hook) = lookup_hook(hooks, hook_id) else {
-        let _sent = completion
-            .response
-            .send(Err(ScriptError::new(ScriptErrorKind::UnknownHook)));
+        completion.finish(Err(ScriptError::new(ScriptErrorKind::UnknownHook)));
         return Ok(None);
     };
     let result = context
@@ -229,22 +252,31 @@ async fn begin(
                 .clone()
                 .restore(&ctx)
                 .map_err(|e| bridge.failure(&ctx, e))?;
-            let draft = ctx.json_parse(input).map_err(|e| bridge.failure(&ctx, e))?;
-            let prepare = bridge
-                .prepare
-                .clone()
-                .restore(&ctx)
-                .map_err(|e| bridge.failure(&ctx, e))?;
-            let draft: Value = prepare
-                .call((draft,))
-                .map_err(|e| bridge.failure(&ctx, e))?;
-            let result: Value = hook
-                .call((draft.clone(),))
-                .map_err(|e| bridge.failure(&ctx, e))?;
+            let input_started = Instant::now();
+            let draft = (|| {
+                let draft = ctx.json_parse(input).map_err(|e| bridge.failure(&ctx, e))?;
+                let prepare = bridge
+                    .prepare
+                    .clone()
+                    .restore(&ctx)
+                    .map_err(|e| bridge.failure(&ctx, e))?;
+                prepare
+                    .call::<_, Value>((draft,))
+                    .map_err(|e| bridge.failure(&ctx, e))
+            })();
+            completion.timings.input_bridge = input_started.elapsed();
+            let draft = draft?;
+            let argument = draft.clone();
+            let call_started = Instant::now();
+            let result = hook.call::<_, Value>((argument,));
+            completion.timings.initial_call = Some(call_started.elapsed());
+            let returned_at = Instant::now();
+            let result = result.map_err(|e| bridge.failure(&ctx, e))?;
             if result.is_undefined() {
-                let json = output(&ctx, bridge, draft, options)?;
+                let json = timed_output(&ctx, bridge, draft, options, &mut completion.timings)?;
                 Ok(Ok(json))
             } else if let Some(promise) = result.into_promise() {
+                completion.pending_since = Some(returned_at);
                 Ok(Err((
                     Persistent::save(&ctx, draft),
                     Persistent::save(&ctx, promise),
@@ -266,7 +298,7 @@ async fn begin(
             promise,
         })),
         Err(error) => {
-            let _sent = completion.response.send(Err(error.clone()));
+            completion.finish(Err(error.clone()));
             if fatal(&error) { Err(error) } else { Ok(None) }
         },
     }
@@ -276,6 +308,19 @@ async fn begin(
 fn lookup_hook<T>(hooks: &[T], hook_id: HookId) -> Option<&T> {
     let index = usize::try_from(hook_id.checked_sub(1)?).ok()?;
     hooks.get(index)
+}
+
+fn timed_output<'js>(
+    ctx: &Ctx<'js>,
+    bridge: &Bridge,
+    draft: Value<'js>,
+    options: &RuntimeOptions,
+    timings: &mut HookTimings,
+) -> Result<Json, ScriptError> {
+    let started = Instant::now();
+    let result = output(ctx, bridge, draft, options);
+    timings.output_bridge = Some(started.elapsed());
+    result
 }
 
 fn output<'js>(
@@ -317,13 +362,13 @@ async fn poll_pending(
     while index < pending.len() {
         if let Some(error) = pending[index].completion.invalid() {
             let waiting = pending.swap_remove(index);
-            let _sent = waiting.completion.response.send(Err(error));
+            waiting.completion.finish(Err(error));
             continue;
         }
         budget.arm(Instant::now() + options.execution_timeout);
         let result = context
             .with(|ctx| {
-                let waiting = &pending[index];
+                let waiting = &mut pending[index];
                 let promise = waiting
                     .promise
                     .clone()
@@ -332,6 +377,7 @@ async fn poll_pending(
                 let Some(result) = promise.result::<Value>() else {
                     return Ok(None);
                 };
+                waiting.completion.observe_pending();
                 let value = result.map_err(|e| bridge.failure(&ctx, e))?;
                 if !value.is_undefined() {
                     return Err(ScriptError::new(ScriptErrorKind::Contract));
@@ -341,7 +387,14 @@ async fn poll_pending(
                     .clone()
                     .restore(&ctx)
                     .map_err(|e| bridge.failure(&ctx, e))?;
-                output(&ctx, bridge, draft, options).map(Some)
+                timed_output(
+                    &ctx,
+                    bridge,
+                    draft,
+                    options,
+                    &mut waiting.completion.timings,
+                )
+                .map(Some)
             })
             .await;
         match budget.check_result(result) {

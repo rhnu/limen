@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::{http::header, response::Response};
 use limen_chat::{Aggregator, ChunkTracker, Decoder, Event, JsonChunks};
 use limen_config::{Model, Provider, ResourceLimits, validate_json};
@@ -12,6 +14,7 @@ use super::{
     logic,
     pipeline::{commit_state, elapsed_ms, hook_invalid},
     response::{Delivery, apply_alias},
+    stats::WaitKind,
 };
 
 impl Gateway {
@@ -26,6 +29,7 @@ impl Gateway {
         let original_status = response.status();
         lifecycle.upstream_status = Some(original_status);
         lifecycle.upstream_headers_ms = Some(elapsed_ms(lifecycle.started));
+        lifecycle.statistics.timings.headers(Instant::now());
         // Parser selection always uses the frozen upstream facts, never hook drafts.
         let media = response
             .headers()
@@ -48,6 +52,7 @@ impl Gateway {
             return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_media"));
         }
         let client_stream = lifecycle.client_stream.unwrap_or(false);
+        lifecycle.statistics.source = Some(media);
         delivery.configure(status, headers.clone());
         let body = if media == "sse" {
             self.receive_sse(
@@ -122,7 +127,7 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = read_chunk(response, lifecycle).await? {
             if chunk.len()
                 > self
                     .server
@@ -149,6 +154,8 @@ impl Gateway {
         if !body.is_object() {
             return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
         }
+        lifecycle.statistics.usage.observe(body.get("usage"));
+        lifecycle.statistics.upstream_completed = true;
         Ok(body)
     }
 
@@ -169,7 +176,7 @@ impl Gateway {
         let mut downstream_tracker = ChunkTracker::new(limits.max_json_nodes);
         let mut aggregate = (!client_stream)
             .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events));
-        'upstream: while let Some(chunk) = response.chunk().await? {
+        'upstream: while let Some(chunk) = read_chunk(response, lifecycle).await? {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
                 let event = decoder
@@ -186,6 +193,8 @@ impl Gateway {
                         upstream_tracker
                             .push(&event)
                             .map_err(|source| protocol(source, "upstream_sse"))?;
+                        lifecycle.statistics.timings.first_chunk(Instant::now());
+                        lifecycle.statistics.usage.observe(event.get("usage"));
                         let mut budget = EventBudget::new();
                         let events = self
                             .event_hooks(
@@ -228,6 +237,7 @@ impl Gateway {
         upstream_tracker
             .finish()
             .map_err(|source| protocol(source, "upstream_sse"))?;
+        lifecycle.statistics.upstream_completed = true;
         if let Some(aggregate) = aggregate {
             return finish_aggregate(aggregate, limits).map(Some);
         }
@@ -271,6 +281,10 @@ impl Gateway {
             lifecycle.phase = "response";
             lifecycle.step = None;
             delivery.emit(bytes).await?;
+            lifecycle
+                .statistics
+                .timings
+                .first_output(lifecycle.started, Instant::now());
         }
         Ok(())
     }
@@ -316,6 +330,22 @@ impl Gateway {
         }
         Ok((status, headers))
     }
+}
+
+async fn read_chunk(
+    response: &mut super::transport::Incoming,
+    lifecycle: &mut Lifecycle,
+) -> Result<Option<axum::body::Bytes>, Failure> {
+    let measurement = lifecycle.statistics.timings.measure(WaitKind::Read);
+    let result = response.chunk().await;
+    drop(measurement);
+    if result
+        .as_ref()
+        .is_ok_and(|chunk| chunk.as_ref().is_some_and(|bytes| !bytes.is_empty()))
+    {
+        lifecycle.statistics.timings.first_byte(Instant::now());
+    }
+    result
 }
 
 /// Individual SSE events can fit the JSON limits while their combined choices or

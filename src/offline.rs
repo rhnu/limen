@@ -183,6 +183,14 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
             "case must declare at least one output assertion",
         ));
     }
+    if case
+        .expect
+        .stats
+        .as_ref()
+        .is_some_and(|stats| !stats.valid_fields())
+    {
+        return Err(Error::Invalid("unknown statistics assertion field"));
+    }
     if case.name.is_empty()
         || case.name.len() > 128
         || !case
@@ -399,6 +407,9 @@ fn compare(
     if let Some(state) = expected.state {
         check("state", state == trace.state);
     }
+    if let Some(stats) = expected.stats {
+        compare_statistics(stats, &trace.stats, &mut check);
+    }
     if let Some(error) = expected.error {
         check(
             "error",
@@ -414,6 +425,36 @@ fn compare(
         check("observationFailed", !trace.observation_failed);
     }
     Ok(report)
+}
+
+fn compare_statistics(
+    expected: schema::ExpectedStats,
+    actual: &Value,
+    check: &mut impl FnMut(&'static str, bool),
+) {
+    if let Some(usage) = expected.usage {
+        check("stats.usage", actual["usage"] == usage);
+    }
+    if !expected.hook_calls.is_empty() {
+        check(
+            "stats.hookCalls",
+            expected.hook_calls.iter().all(|(phase, count)| {
+                actual["timings"]["hooks"][phase]["calls"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    == *count
+            }),
+        );
+    }
+    if !expected.timing_presence.is_empty() {
+        check(
+            "stats.timingPresence",
+            expected
+                .timing_presence
+                .iter()
+                .all(|(field, present)| actual["timings"][field].is_number() == *present),
+        );
+    }
 }
 
 fn stream(bytes: &[u8], limits: &ResourceLimits) -> Result<(Vec<Value>, bool), Error> {

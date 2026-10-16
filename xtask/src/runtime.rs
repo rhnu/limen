@@ -127,7 +127,7 @@ async fn retirement(fixture: &Fixture, case: &str) -> TestResult {
             .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
             .await;
         ensure(
-            result.is_err_and(|error| error.kind() == expected),
+            result.outcome.is_err_and(|error| error.kind() == expected),
             "resource failure or conservative OOM signal had the wrong classification",
         )?;
         // Retiring the VM must wake an HTTP server even when there is no next request.
@@ -142,7 +142,7 @@ async fn retirement(fixture: &Fixture, case: &str) -> TestResult {
         let later = runtime
             .invoke(call(hook(&config, "onRequest")?, 2, json!({})))
             .await;
-        ensure(later.is_err(), "retired VM accepted a new call")?;
+        ensure(later.outcome.is_err(), "retired VM accepted a new call")?;
     }
     Ok(())
 }

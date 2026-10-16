@@ -61,7 +61,9 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
     let id = hook(&config, "onRequest")?;
     let output = runtime
         .invoke(call(id, 1, json!({"action":"check"})))
-        .await?;
+        .await
+        .outcome?
+        .context;
     ensure(
         output["checked"] == true,
         "environment error contracts were not checked",
@@ -69,6 +71,7 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
     let error = runtime
         .invoke(call(id, 2, json!({"action":"uncaught"})))
         .await
+        .outcome
         .err()
         .ok_or("invalid environment name must fail the hook")?;
     ensure(
@@ -79,7 +82,9 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
     )?;
     let output = runtime
         .invoke(call(id, 3, json!({"action":"read"})))
-        .await?;
+        .await
+        .outcome?
+        .context;
     ensure(
         output["token"] == "synthetic-upstream-token" && output["fallback"] == "fallback",
         "async hook environment lookup failed after a rejected access",

@@ -1,0 +1,94 @@
+{
+  "name": "missing-usage-remains-success",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "stream": false,
+    "mode": "delete"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "statistics",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "statistics",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    },
+    "state": {
+      "mode": "delete"
+    },
+    "stats": {
+      "usage": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "totalTokens": null,
+        "cachedInputTokens": null,
+        "reasoningOutputTokens": null,
+        "quality": "missing",
+        "source": "json",
+        "upstreamCompleted": true
+      },
+      "hookCalls": {
+        "onRequest": 1,
+        "beforeSend": 1,
+        "afterReceive": 1,
+        "onResponse": 1,
+        "onUpstreamEvent": 0,
+        "onStreamEvent": 0
+      },
+      "timingPresence": {
+        "requestMs": true,
+        "requestDecodeMs": true,
+        "upstreamHeadersWaitMs": true,
+        "upstreamFirstByteMs": true,
+        "upstreamFirstChunkMs": false,
+        "downstreamFirstEventMs": false,
+        "upstreamReadWaitMs": true,
+        "downstreamQueueWaitMs": false,
+        "downstreamDrainMs": false
+      }
+    }
+  }
+}

@@ -92,6 +92,35 @@ const forwardTenant = {
 
 观察 hook 共享有限清理预算。观察失败只产生诊断，不改变请求终态；前一个观察耗尽预算或 VM 已退役时，后续观察可能不执行。不要依赖它们保证外部副作用完成。
 
+### 原生用量与阶段耗时
+
+`stats.usage` 在脚本处理前提取原始上游的 `usage`。JSON 在完整解析后采样；SSE 在合法 chunk 进入 `onUpstreamEvent` 前采样。脚本删除、替换或展开事件不会改变这些事实，网关也不自动设置 `stream_options.include_usage`。
+
+| 字段                                           | 含义                                                                                                                          |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `source`                                       | `json`、`sse` 或尚未进入正文处理时的 `null`                                                                                   |
+| `quality`                                      | `missing` 无有效计数；`partial` 核心三项不齐；`reported` 核心三项齐全；`invalid` 已知计数字段非法；`conflicting` 多次报告冲突 |
+| `upstreamCompleted`                            | 原始 JSON 完整解析，或原始 SSE 同时满足 `[DONE]` 和 choice 完成；不代表后续策略、转换或下游成功                               |
+| `inputTokens` / `outputTokens` / `totalTokens` | 上游的 prompt、completion 和 total 计数                                                                                       |
+| `cachedInputTokens` / `reasoningOutputTokens`  | 上游 details 中的缓存输入和推理输出子计数                                                                                     |
+
+计数只接受非负安全整数，缺失为 `null`，零仍为零。空或 `null` 报告不会擦除已有值，累计 usage 不按 chunk 相加；相同报告可重复出现，冲突或非法报告会抑制全部有效计数。未知扩展不复制，缺失总数不估算，子计数不再次加入总数。统计异常本身不新增请求失败；既有协议校验仍然生效。截断流可能已报告 usage，也可能没有，不能将缺失解释为未计费。
+
+`stats.timings` 使用毫秒，保留亚毫秒小数；尚未进入的阶段为 `null`。新用量与耗时在请求终态确定时冻结，`onError` 和 `onFinish` 看到相同内容。既有 `elapsedMs` 仍在每次观察时采样。
+
+| 字段                                           | 口径                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `requestMs`                                    | 网关开始处理请求至终态确定，不含之后的失败帧写入和终结观察             |
+| `requestDecodeMs`                              | 请求正文读取、初始解析和校验                                           |
+| `upstreamHeadersWaitMs`                        | 发起上游请求至响应头到达；旧 `upstreamHeadersMs` 仍从请求开始计时      |
+| `upstreamFirstByteMs` / `upstreamFirstChunkMs` | 发起上游请求至首个非空正文片段、首个合法 Chat chunk；JSON 上游没有后者 |
+| `downstreamFirstEventMs`                       | 请求开始至首个模型事件进入有界响应体，不是客户端实际收到的时间         |
+| `upstreamReadWaitMs`                           | 等待上游读取的累计时间，不包含处理事件和等待下游的间隔                 |
+| `downstreamQueueWaitMs` / `downstreamDrainMs`  | 等待输出通道和 SSE 响应体排空确认的累计时间；JSON 路径没有排空确认     |
+| `hooks`                                        | 按业务 hook 阶段汇总调用、失败、中断、返回报告次数与 `wallMs`          |
+
+每个 hook 汇总还有 `queue`、`initialCall`、`pending`、`inputBridge`、`outputBridge`，均为 `{ totalMs, samples }`。它们分别表示命令排队、初次函数调用、Promise 返回到终结观察、输入桥接、输出投影转换。`samples: 0` 表示没有采样，区别于实测零耗时。外层取消仍记录已经等待的 wall 时间和中断次数，无法取得的运行时细分不补零样本。Promise 等待包含共享调度时间，不是该 hook 的 CPU 时间；里程碑与持续时间不能简单相加。终结观察自身的计时单独进入清理诊断，不放入其尚未结束时读取的请求快照。
+
 ## 流事件替换
 
 事件 hook 默认继续发送修改后的 `ctx.event`；调用 `ctx.replaceEvents(events)` 可丢弃、替换或按顺序拆分事件，每次调用最多一次：

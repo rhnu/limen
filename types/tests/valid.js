@@ -88,6 +88,9 @@ export const config = {
       void message;
     }
     const tags = ctx.state.details?.tags;
+    const usage = ctx.stats.usage;
+    const timing = ctx.stats.timings.hooks.beforeSend;
+    void [usage.quality, usage.cachedInputTokens, ctx.stats.timings.requestMs, timing?.queue.samples];
     tags?.map(tag => tag.toUpperCase());
     void [ctx.stats.inputBytes, ctx.stats.outboundBytes, ctx.stats.upstreamBytes,
       ctx.stats.outputBytes, ctx.stats.upstreamHeadersMs, ctx.stats.elapsedMs,

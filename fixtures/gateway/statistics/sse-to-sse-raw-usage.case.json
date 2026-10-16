@@ -1,0 +1,89 @@
+{
+  "name": "sse-to-sse-raw-usage",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "stream": true,
+    "mode": "delete"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "usage.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "statistics",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": "hello"
+              },
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "statistics",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": []
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "mode": "delete"
+    },
+    "stats": {
+      "usage": {
+        "inputTokens": 4,
+        "outputTokens": 6,
+        "totalTokens": 10,
+        "cachedInputTokens": 2,
+        "reasoningOutputTokens": 3,
+        "quality": "reported",
+        "source": "sse",
+        "upstreamCompleted": true
+      },
+      "hookCalls": {
+        "onRequest": 1,
+        "beforeSend": 1,
+        "afterReceive": 1,
+        "onResponse": 0,
+        "onUpstreamEvent": 2,
+        "onStreamEvent": 2
+      },
+      "timingPresence": {
+        "requestMs": true,
+        "requestDecodeMs": true,
+        "upstreamHeadersWaitMs": true,
+        "upstreamFirstByteMs": true,
+        "upstreamFirstChunkMs": true,
+        "downstreamFirstEventMs": true,
+        "upstreamReadWaitMs": true,
+        "downstreamQueueWaitMs": true,
+        "downstreamDrainMs": true
+      }
+    }
+  }
+}

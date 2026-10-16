@@ -7,7 +7,7 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    pipeline::elapsed_ms,
+    stats::Timings,
 };
 
 impl Gateway {
@@ -51,7 +51,7 @@ impl Gateway {
             }
             let mut context = lifecycle.context(phase);
             context["outcome"] = json!(outcome);
-            context["stats"] = json!({"inputBytes":lifecycle.input_bytes,"outboundBytes":lifecycle.outbound_bytes,"upstreamBytes":lifecycle.upstream_bytes,"outputBytes":lifecycle.output_bytes,"upstreamHeadersMs":lifecycle.upstream_headers_ms,"elapsedMs":elapsed_ms(lifecycle.started),"finalUpstreamModel":lifecycle.final_model,"target":lifecycle.target});
+            context["stats"] = lifecycle.stats();
             if let Some(failure) = failure {
                 context["error"] = failure.error_json(&lifecycle.request_id)["error"].clone();
                 context["error"]["phase"] = json!(failure.phase);
@@ -59,7 +59,9 @@ impl Gateway {
                 context["error"]["step"] =
                     json!(failure.step.as_deref().or(lifecycle.step.as_deref()));
             }
-            let result = self
+            let timings = Timings::default();
+            let measurement = timings.hook(phase);
+            let report = self
                 .runtime
                 .invoke(HookCall {
                     call_id: self.next_call(),
@@ -69,7 +71,9 @@ impl Gateway {
                     cancellation: Cancellation::new(),
                 })
                 .await;
-            match result {
+            measurement.finish(&report);
+            super::stats::record_cleanup(&lifecycle.request_id, &timings.snapshot());
+            match report.outcome {
                 Ok(_) => tracing::debug!(
                     request_id = lifecycle.request_id,
                     phase,

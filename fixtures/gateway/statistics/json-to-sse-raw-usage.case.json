@@ -1,0 +1,135 @@
+{
+  "name": "json-to-sse-raw-usage",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "synthetic"
+      }
+    ],
+    "stream": true,
+    "mode": "delete"
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "statistics",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "real-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 6,
+        "total_tokens": 10,
+        "prompt_tokens_details": {
+          "cached_tokens": 2
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3
+        }
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "statistics",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "statistics",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "hello"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "statistics",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      ],
+      "done": true
+    },
+    "state": {
+      "mode": "delete"
+    },
+    "stats": {
+      "usage": {
+        "inputTokens": 4,
+        "outputTokens": 6,
+        "totalTokens": 10,
+        "cachedInputTokens": 2,
+        "reasoningOutputTokens": 3,
+        "quality": "reported",
+        "source": "json",
+        "upstreamCompleted": true
+      },
+      "hookCalls": {
+        "onRequest": 1,
+        "beforeSend": 1,
+        "afterReceive": 1,
+        "onResponse": 1,
+        "onUpstreamEvent": 0,
+        "onStreamEvent": 3
+      },
+      "timingPresence": {
+        "requestMs": true,
+        "requestDecodeMs": true,
+        "upstreamHeadersWaitMs": true,
+        "upstreamFirstByteMs": true,
+        "upstreamFirstChunkMs": false,
+        "downstreamFirstEventMs": true,
+        "upstreamReadWaitMs": true,
+        "downstreamQueueWaitMs": true,
+        "downstreamDrainMs": true
+      }
+    }
+  }
+}

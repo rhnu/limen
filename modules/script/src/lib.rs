@@ -129,12 +129,54 @@ pub struct HookCall {
     pub cancellation: Cancellation,
 }
 
+/// Owned draft released only after the hook's completion checks succeed.
+#[derive(Debug)]
+pub struct HookOutput {
+    pub context: Value,
+}
+
+/// Elapsed durations, rather than CPU attribution. Missing phases were not sampled.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HookTimings {
+    /// Caller entry until the report is ready, including scheduling and bridges.
+    pub wall: Duration,
+    /// Successful enqueue until the VM begins its admission decision.
+    pub queue: Option<Duration>,
+    /// Only the initial JavaScript function call, before any Promise jobs.
+    pub initial_call: Option<Duration>,
+    /// Promise return until settlement or failure is observed, including scheduling.
+    pub pending: Option<Duration>,
+    /// Caller JSON serialization plus VM JSON parsing and draft preparation.
+    pub input_bridge: Duration,
+    /// Draft projection and conversion into owned JSON, when attempted.
+    pub output_bridge: Option<Duration>,
+}
+
+/// Every returned invocation carries its outcome and all available timing samples.
+#[derive(Debug)]
+pub struct HookReport {
+    pub outcome: Result<HookOutput, ScriptError>,
+    pub timings: HookTimings,
+}
+
+impl HookReport {
+    fn new(outcome: Result<Value, ScriptError>, timings: HookTimings) -> Self {
+        Self {
+            outcome: outcome.map(|context| HookOutput { context }),
+            timings,
+        }
+    }
+
+    fn failed(error: ScriptError) -> Self { Self::new(Err(error), HookTimings::default()) }
+}
+
 pub(crate) struct Command {
     hook_id: HookId,
     context: Vec<u8>,
     deadline: Instant,
     cancellation: Cancellation,
-    response: oneshot::Sender<Result<Value, ScriptError>>,
+    enqueued_at: Instant,
+    response: oneshot::Sender<HookReport>,
 }
 
 struct WakeOnDrop(Arc<Notify>);
@@ -247,53 +289,92 @@ impl ScriptRuntime {
         }
     }
 
-    /// Execute one hook and return its validated, privately owned draft.
-    ///
-    /// # Errors
-    /// Reports cancellation, deadlines, capacity, hook contracts and VM retirement.
-    pub async fn invoke(&self, call: HookCall) -> Result<Value, ScriptError> {
+    /// Execute one hook and report its validated draft or failure with available timings.
+    /// Dropping this future prevents reporting; it does not stop pending JavaScript work.
+    pub async fn invoke(&self, call: HookCall) -> HookReport {
+        let started = Instant::now();
         let span = tracing::debug_span!(
             "script_invoke",
             call_id = call.call_id,
             hook_id = call.hook_id
         );
-        async move {
-        let HookCall { hook_id, context, deadline, cancellation, .. } = call;
-        let bytes = json::encode_owned(&context, self.limits)?;
+        let HookCall {
+            hook_id,
+            context,
+            deadline,
+            cancellation,
+            ..
+        } = call;
+        let input_started = Instant::now();
+        let bytes = json::encode_owned(&context, self.limits);
+        let caller_input = input_started.elapsed();
         drop(context);
+        let mut report = match bytes {
+            Ok(bytes) => {
+                self.invoke_encoded(hook_id, bytes, deadline, cancellation)
+                    .instrument(span)
+                    .await
+            },
+            Err(error) => HookReport::failed(error),
+        };
+        report.timings.input_bridge += caller_input;
+        report.timings.wall = started.elapsed();
+        report
+    }
+
+    async fn invoke_encoded(
+        &self,
+        hook_id: HookId,
+        bytes: Vec<u8>,
+        deadline: Instant,
+        cancellation: Cancellation,
+    ) -> HookReport {
         if cancellation.is_cancelled() {
-            return Err(ScriptError::new(ScriptErrorKind::Cancelled));
+            return HookReport::failed(ScriptError::new(ScriptErrorKind::Cancelled));
         }
         if Instant::now() >= deadline {
-            return Err(ScriptError::new(ScriptErrorKind::Deadline));
+            return HookReport::failed(ScriptError::new(ScriptErrorKind::Deadline));
         }
         let _wake_on_drop = WakeOnDrop(Arc::clone(&self.wake));
         let (response, mut receive) = oneshot::channel();
-        self.commands
-            .try_send(Command { hook_id, context: bytes, deadline, cancellation: cancellation.clone(), response })
+        let sent = self
+            .commands
+            .try_send(Command {
+                hook_id,
+                context: bytes,
+                deadline,
+                cancellation: cancellation.clone(),
+                enqueued_at: Instant::now(),
+                response,
+            })
             .map_err(|error| {
                 let kind = match &error {
                     mpsc::error::TrySendError::Full(_) => ScriptErrorKind::Busy,
                     mpsc::error::TrySendError::Closed(_) => ScriptErrorKind::Retired,
                 };
                 let error = ScriptError::with_source(kind, error);
-                if kind == ScriptErrorKind::Retired { self.retirement_or(error) } else { error }
-            })?;
-        let result = tokio::select! {
+                if kind == ScriptErrorKind::Retired {
+                    self.retirement_or(error)
+                } else {
+                    error
+                }
+            });
+        if let Err(error) = sent {
+            return HookReport::failed(error);
+        }
+        let mut report = tokio::select! {
             biased;
-            () = cancellation.cancelled() => Err(ScriptError::new(ScriptErrorKind::Cancelled)),
-            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => Err(ScriptError::new(ScriptErrorKind::Deadline)),
-            result = &mut receive => result.unwrap_or_else(|error| Err(self.retirement_or(ScriptError::with_source(ScriptErrorKind::Retired, error)))),
+            () = cancellation.cancelled() => receive.try_recv().unwrap_or_else(|_| HookReport::failed(ScriptError::new(ScriptErrorKind::Cancelled))),
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => receive.try_recv().unwrap_or_else(|_| HookReport::failed(ScriptError::new(ScriptErrorKind::Deadline))),
+            result = &mut receive => result.unwrap_or_else(|error| HookReport::failed(self.retirement_or(ScriptError::with_source(ScriptErrorKind::Retired, error)))),
         };
         receive.close();
         if cancellation.is_cancelled() {
-            return Err(ScriptError::new(ScriptErrorKind::Cancelled));
+            report.outcome = Err(ScriptError::new(ScriptErrorKind::Cancelled));
+        } else if Instant::now() >= deadline {
+            report.outcome = Err(ScriptError::new(ScriptErrorKind::Deadline));
         }
-        if Instant::now() >= deadline {
-            return Err(ScriptError::new(ScriptErrorKind::Deadline));
-        }
-        result
-        }.instrument(span).await
+        report
     }
 
     /// Completion is reported only after pending refs, hooks, context and VM drop.

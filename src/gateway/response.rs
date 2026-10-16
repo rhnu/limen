@@ -20,6 +20,7 @@ use super::{
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
     pipeline::{commit_state, require_body},
+    stats::{Timings, WaitKind},
 };
 
 // Rust-owned error envelopes have a fixed bound independent of the model data cap.
@@ -36,6 +37,7 @@ pub(super) struct Delivery {
     headers: HeaderMap,
     request_id: String,
     done_sent: bool,
+    pub(super) timings: Timings,
 }
 
 impl Delivery {
@@ -53,6 +55,7 @@ impl Delivery {
             headers: HeaderMap::new(),
             request_id,
             done_sent: false,
+            timings: Timings::default(),
         }
     }
 
@@ -110,6 +113,7 @@ impl Delivery {
             .sender
             .as_ref()
             .ok_or_else(|| Failure::new(ErrorCode::Internal, "response"))?;
+        let _measurement = self.timings.measure(WaitKind::Queue);
         sender
             .send(Bytes::from(bytes))
             .await
@@ -121,6 +125,7 @@ impl Delivery {
         self.done_sent = true;
         self.sender.take();
         if let Some(drained) = self.drained.take() {
+            let _measurement = self.timings.measure(WaitKind::Drain);
             drained.await.map_err(|source| {
                 Failure::new(ErrorCode::Cancelled, "response").with_source(source)
             })?;

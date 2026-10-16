@@ -30,6 +30,7 @@ pub(crate) struct Trace {
     pub state: Value,
     pub error: Option<Value>,
     pub observation_failed: bool,
+    pub stats: Value,
 }
 
 pub(super) enum Transport {
@@ -103,11 +104,12 @@ impl Transport {
         }
     }
 
-    pub async fn complete(&self, state: &Value, error: Option<Value>) {
+    pub async fn complete(&self, state: &Value, error: Option<Value>, statistics: Value) {
         if let Self::Fixture { trace, .. } = self {
             let mut trace = trace.lock().await;
             trace.state = state.clone();
             trace.error = error;
+            trace.stats = statistics;
         }
     }
 

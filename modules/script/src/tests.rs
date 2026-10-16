@@ -12,8 +12,15 @@ use crate::{Cancellation, HookCall, RuntimeOptions, RuntimeStatus, ScriptRuntime
 mod context;
 mod diagnostics;
 mod runtime;
+mod timings;
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
+
+impl crate::HookReport {
+    fn into_context(self) -> Result<Value, crate::ScriptError> {
+        self.outcome.map(|output| output.context)
+    }
+}
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -84,7 +91,12 @@ async fn stop(runtime: &ScriptRuntime) -> TestResult {
 async fn wait_for(runtime: &ScriptRuntime, id: u64, expected: Value) -> TestResult {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            if runtime.invoke(call(id, 1000, json!({}))).await? == expected {
+            if runtime
+                .invoke(call(id, 1000, json!({})))
+                .await
+                .into_context()?
+                == expected
+            {
                 return Ok(());
             }
             tokio::task::yield_now().await;

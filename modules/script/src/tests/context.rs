@@ -47,7 +47,7 @@ async fn headers() -> TestResult {
     let id = hook(&config, "onRequest")?;
     let mut input = draft("beforeSend");
     input["meta"]["mode"] = json!("valid");
-    let output = runtime.invoke(call(id, 1, input)).await?;
+    let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
     ensure(
         output["headers"]
             == json!([
@@ -77,7 +77,7 @@ async fn headers() -> TestResult {
             input["meta"]["operation"] = json!(operation);
             input["meta"]["name"] = json!(name);
             input["meta"]["value"] = json!("synthetic");
-            let output = runtime.invoke(call(id, 2, input)).await;
+            let output = runtime.invoke(call(id, 2, input)).await.into_context();
             ensure(
                 output.is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
                 "invalid or transport header mutation was accepted",
@@ -88,14 +88,18 @@ async fn headers() -> TestResult {
         let mut input = draft("beforeSend");
         input["meta"] = json!({"phase": "beforeSend", "mode": "invalid", "operation": "append", "name": "x-example", "value": value});
         ensure(
-            runtime.invoke(call(id, 3, input)).await.is_err(),
+            runtime
+                .invoke(call(id, 3, input))
+                .await
+                .into_context()
+                .is_err(),
             "invalid header value was accepted",
         )?;
     }
     let mut input = draft("afterReceive");
     input["meta"]["mode"] = json!("get");
     input["headers"] = json!([{"name": "Host", "value": "fictional.invalid"}]);
-    let output = runtime.invoke(call(id, 4, input)).await?;
+    let output = runtime.invoke(call(id, 4, input)).await.into_context()?;
     ensure(
         output["headers"] == json!([{"name": "host", "value": "fictional.invalid"}]),
         "read access to transport header failed",
@@ -146,7 +150,7 @@ async fn readonly() -> TestResult {
                 || (operation == "status" && phase == "afterReceive")
                 || (operation == "headers" && matches!(phase, "beforeSend" | "afterReceive"));
             let original = input.clone();
-            let result = runtime.invoke(call(id, 1, input)).await;
+            let result = runtime.invoke(call(id, 1, input)).await.into_context();
             if allowed {
                 let output = result?;
                 ensure(
@@ -198,7 +202,7 @@ async fn isolation() -> TestResult {
     let pending = call(id, 1, input.clone());
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -207,7 +211,7 @@ async fn isolation() -> TestResult {
     .await?;
     let mut second = draft("onRequest");
     second["meta"]["requestId"] = json!("independent");
-    let mut output = runtime.invoke(call(id, 2, second)).await?;
+    let mut output = runtime.invoke(call(id, 2, second)).await.into_context()?;
     ensure(
         output["state"]["order"] == json!(["request", "completed"])
             && output["body"]["private"] == "independent",
@@ -222,7 +226,8 @@ async fn isolation() -> TestResult {
     )?;
     runtime
         .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
-        .await?;
+        .await
+        .into_context()?;
     let mut next = draft("beforeSend");
     next["state"] = output["state"].take();
     next["body"] = output["body"].take();
@@ -233,8 +238,14 @@ async fn isolation() -> TestResult {
     let model = config["models"]["m"]["pipeline"][0]["beforeSend"]
         .as_u64()
         .ok_or("missing model hook")?;
-    let output = runtime.invoke(call(provider, 4, output)).await?;
-    let output = runtime.invoke(call(model, 5, output)).await?;
+    let output = runtime
+        .invoke(call(provider, 4, output))
+        .await
+        .into_context()?;
+    let output = runtime
+        .invoke(call(model, 5, output))
+        .await
+        .into_context()?;
     ensure(
         output["state"]["order"] == json!(["request", "completed", "provider", "model"]),
         "async hook outputs did not feed subsequent steps in order",
@@ -253,13 +264,16 @@ async fn isolation() -> TestResult {
     ] {
         let mut input = draft("onRequest");
         input["meta"]["failure"] = json!(failure);
-        let output = runtime.invoke(call(id, 6, input)).await;
+        let output = runtime.invoke(call(id, 6, input)).await.into_context();
         ensure(
             output.is_err_and(|error| error.kind() == expected),
             "failed async hook exposed partial state",
         )?;
     }
-    let output = runtime.invoke(call(id, 7, draft("onRequest"))).await?;
+    let output = runtime
+        .invoke(call(id, 7, draft("onRequest")))
+        .await
+        .into_context()?;
     ensure(
         output["state"]["order"] == json!(["request", "completed"]),
         "failed or late hook polluted later request state",
@@ -282,7 +296,7 @@ async fn stream() -> TestResult {
             ("split", json!([{"text":"a"}, {"text":"b"}])),
         ] {
             let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{"text":"initial"}});
-            let output = runtime.invoke(call(id, 1, input)).await?;
+            let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
             ensure(
                 output["events"] == expected && output.get("event").is_none(),
                 "stream projection lost edits, drop or output order",
@@ -304,7 +318,11 @@ async fn stream() -> TestResult {
         ] {
             let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{}});
             ensure(
-                runtime.invoke(call(id, 2, input)).await.is_err(),
+                runtime
+                    .invoke(call(id, 2, input))
+                    .await
+                    .into_context()
+                    .is_err(),
                 "invalid stream output committed",
             )?;
         }
@@ -315,7 +333,8 @@ async fn stream() -> TestResult {
             3,
             json!({"meta":{"phase":"onRequest","operation":"missing"},"state":{},"body":{}}),
         ))
-        .await?;
+        .await
+        .into_context()?;
     ensure(
         output.get("events").is_none(),
         "non-stream context exposed event output",
@@ -327,7 +346,7 @@ async fn stream() -> TestResult {
     );
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -343,14 +362,16 @@ async fn stream() -> TestResult {
     )?;
     runtime
         .invoke(call(hook(&config, "onFinish")?, 5, json!({})))
-        .await?;
+        .await
+        .into_context()?;
     let output = runtime
         .invoke(call(
             id,
             6,
             json!({"meta":{"phase":"onStreamEvent","operation":"drop"},"state":{},"event":{}}),
         ))
-        .await?;
+        .await
+        .into_context()?;
     ensure(
         output["events"] == json!([]) && output["state"].get("late").is_none(),
         "late stream output polluted a later call",

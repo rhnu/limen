@@ -84,6 +84,10 @@ export const config = {
     ctx.error.code = "cancelled";
     // @ts-expect-error Statistics cannot be changed.
     ctx.stats.elapsedMs = 0;
+    // @ts-expect-error nested statistics are read-only
+    ctx.stats.usage.inputTokens = 1;
+    // @ts-expect-error nested timing samples are read-only
+    ctx.stats.timings.hooks.beforeSend.queue.samples = 1;
     // @ts-expect-error Observers do not receive draft bodies.
     ctx.body = {};
     /** @type {"success"} */

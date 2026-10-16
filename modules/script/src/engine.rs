@@ -154,7 +154,7 @@ pub(crate) async fn run(
             .err()
             .cloned()
             .unwrap_or_else(|| ScriptError::new(ScriptErrorKind::Stopped));
-        let _sent = command.response.send(Err(error));
+        let _sent = command.response.send(crate::HookReport::failed(error));
     }
     // Pending refs drop in serve, then hook/bridge refs, then context, then VM.
     drop(hooks);

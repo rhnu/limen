@@ -29,6 +29,14 @@ fn completion_rechecks_cancellation_and_deadline_before_delivering_a_result() {
             cancellation: cancellation.clone(),
             deadline: Instant::now() + Duration::from_secs(60),
             response,
+            timings: HookTimings {
+                queue: Some(Duration::from_nanos(2)),
+                initial_call: Some(Duration::from_nanos(3)),
+                input_bridge: Duration::from_nanos(5),
+                output_bridge: Some(Duration::from_nanos(7)),
+                ..HookTimings::default()
+            },
+            pending_since: None,
         };
         if expired {
             completion.deadline = Instant::now();
@@ -37,7 +45,12 @@ fn completion_rechecks_cancellation_and_deadline_before_delivering_a_result() {
             cancellation.cancel();
         }
         completion.send(Ok(json!({"committed": true})));
-        let result = receive.try_recv().unwrap();
+        let report = receive.try_recv().unwrap();
+        assert_eq!(report.timings.queue, Some(Duration::from_nanos(2)));
+        assert_eq!(report.timings.initial_call, Some(Duration::from_nanos(3)));
+        assert_eq!(report.timings.input_bridge, Duration::from_nanos(5));
+        assert_eq!(report.timings.output_bridge, Some(Duration::from_nanos(7)));
+        let result = report.outcome.map(|output| output.context);
         match expected {
             None => assert_eq!(result.unwrap(), json!({"committed": true})),
             Some(expected) => assert_eq!(result.unwrap_err().kind(), expected),
@@ -52,6 +65,8 @@ fn closed_receiver_revokes_completion_and_live_receiver_keeps_hook_failure() {
         cancellation: Cancellation::new(),
         deadline: Instant::now() + Duration::from_secs(60),
         response,
+        timings: HookTimings::default(),
+        pending_since: None,
     };
     receive.close();
     assert_eq!(
@@ -69,10 +84,12 @@ fn closed_receiver_revokes_completion_and_live_receiver_keeps_hook_failure() {
         cancellation: Cancellation::new(),
         deadline: Instant::now() + Duration::from_secs(60),
         response,
+        timings: HookTimings::default(),
+        pending_since: None,
     };
     completion.send(Err(ScriptError::new(ScriptErrorKind::Contract)));
     assert_eq!(
-        receive.try_recv().unwrap().unwrap_err().kind(),
+        receive.try_recv().unwrap().outcome.unwrap_err().kind(),
         ScriptErrorKind::Contract
     );
 }

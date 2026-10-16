@@ -54,6 +54,8 @@ pub(super) struct Expected {
     pub error: Option<Error>,
     #[serde(default, deserialize_with = "present")]
     pub observation_failed: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    pub stats: Option<ExpectedStats>,
 }
 
 impl Expected {
@@ -62,6 +64,10 @@ impl Expected {
             || self.state.is_some()
             || self.error.is_some()
             || self.observation_failed.is_some()
+            || self
+                .stats
+                .as_ref()
+                .is_some_and(ExpectedStats::has_assertion)
             || self
                 .outbound
                 .as_ref()
@@ -73,6 +79,50 @@ impl Expected {
                     || r.events.is_some()
                     || r.done.is_some()
             })
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(super) struct ExpectedStats {
+    #[serde(default, deserialize_with = "present")]
+    pub usage: Option<Value>,
+    #[serde(default)]
+    pub hook_calls: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub timing_presence: BTreeMap<String, bool>,
+}
+
+impl ExpectedStats {
+    pub fn has_assertion(&self) -> bool {
+        self.usage.is_some() || !self.hook_calls.is_empty() || !self.timing_presence.is_empty()
+    }
+
+    pub fn valid_fields(&self) -> bool {
+        self.hook_calls.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "onRequest"
+                    | "beforeSend"
+                    | "afterReceive"
+                    | "onResponse"
+                    | "onUpstreamEvent"
+                    | "onStreamEvent"
+            )
+        }) && self.timing_presence.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "requestMs"
+                    | "requestDecodeMs"
+                    | "upstreamHeadersWaitMs"
+                    | "upstreamFirstByteMs"
+                    | "upstreamFirstChunkMs"
+                    | "downstreamFirstEventMs"
+                    | "upstreamReadWaitMs"
+                    | "downstreamQueueWaitMs"
+                    | "downstreamDrainMs"
+            )
+        })
     }
 }
 

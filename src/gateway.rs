@@ -6,6 +6,7 @@ mod logic;
 mod observe;
 mod pipeline;
 mod response;
+mod stats;
 mod transport;
 mod upstream;
 
@@ -102,13 +103,14 @@ impl Gateway {
         let request_id = format!("limen-{}", self.requests.fetch_add(1, Ordering::Relaxed));
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             let failure = Failure::new(ErrorCode::Busy, "admission");
-            let lifecycle = Lifecycle::new(
+            let mut lifecycle = Lifecycle::new(
                 request_id.clone(),
                 Cancellation::new(),
                 self.server.limits.request_ms,
             );
-            lifecycle.record(&Err(failure));
-            let failure = Failure::new(ErrorCode::Busy, "admission");
+            lifecycle
+                .statistics
+                .freeze(lifecycle.started, Instant::now());
             // HTTP/1 drivers bound these rejected lifetimes too. Their observations
             // await inline and cannot create an unbounded second task queue.
             self.observe(
@@ -117,6 +119,8 @@ impl Gateway {
                 Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms),
             )
             .await;
+            lifecycle.record(&Err(failure));
+            let failure = Failure::new(ErrorCode::Busy, "admission");
             return error_response(&failure, &request_id);
         };
         let cancellation = Cancellation::new();
@@ -136,6 +140,7 @@ impl Gateway {
             let cancellation = lifecycle.cancellation.clone();
             let deadline = lifecycle.deadline;
             let mut delivery = Delivery::new(reply, cancellation.clone(), lifecycle.request_id.clone());
+            delivery.timings = lifecycle.statistics.timings.clone();
             let result = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => Err(Failure::new(ErrorCode::Cancelled, lifecycle.phase)),
@@ -150,6 +155,7 @@ impl Gateway {
                 Err(Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase))
             } else { result };
             let cleanup_deadline = Instant::now() + Duration::from_millis(gateway.server.limits.cleanup_ms);
+            lifecycle.statistics.freeze(lifecycle.started, Instant::now());
             let terminal = match result {
                 Ok(response) => {
                     if let Some(response) = response { delivery.send_json(response); }
@@ -166,10 +172,10 @@ impl Gateway {
                     Err(failure)
                 },
             };
-            lifecycle.record(&terminal);
             gateway.observe(&lifecycle, terminal.as_ref().err(), cleanup_deadline).await;
+            lifecycle.record(&terminal);
             let error = terminal.as_ref().err().map(|failure| serde_json::json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase}));
-            gateway.transport.complete(&lifecycle.state, error).await;
+            gateway.transport.complete(&lifecycle.state, error, lifecycle.stats()).await;
         }.instrument(span));
         drop(tasks);
         let response = tokio::select! {

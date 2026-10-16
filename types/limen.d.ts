@@ -171,6 +171,8 @@ export interface ObserverError {
   readonly step: string | null;
 }
 export interface ObserverStats {
+  readonly usage: UsageStats;
+  readonly timings: RequestTimings;
   readonly inputBytes: number;
   readonly outboundBytes: number;
   readonly upstreamBytes: number;
@@ -181,6 +183,46 @@ export interface ObserverStats {
   readonly finalUpstreamModel: string | null;
   /** Sanitized origin (scheme, host and optional port), without path or query. */
   readonly target: string | null;
+}
+
+export interface UsageStats {
+  readonly source: "json" | "sse" | null;
+  readonly quality: "missing" | "partial" | "reported" | "invalid" | "conflicting";
+  readonly upstreamCompleted: boolean;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly totalTokens: number | null;
+  readonly cachedInputTokens: number | null;
+  readonly reasoningOutputTokens: number | null;
+}
+export interface TimingSample {
+  readonly totalMs: number;
+  readonly samples: number;
+}
+export interface HookTimingSummary {
+  readonly calls: number;
+  readonly failedCalls: number;
+  readonly interruptedCalls: number;
+  readonly reportedCalls: number;
+  readonly wallMs: number;
+  readonly queue: TimingSample;
+  readonly initialCall: TimingSample;
+  readonly pending: TimingSample;
+  readonly inputBridge: TimingSample;
+  readonly outputBridge: TimingSample;
+}
+export type RequestHookPhase = Exclude<Phase, "onError" | "onFinish">;
+export interface RequestTimings {
+  readonly requestMs: number | null;
+  readonly requestDecodeMs: number | null;
+  readonly upstreamHeadersWaitMs: number | null;
+  readonly upstreamFirstByteMs: number | null;
+  readonly upstreamFirstChunkMs: number | null;
+  readonly downstreamFirstEventMs: number | null;
+  readonly upstreamReadWaitMs: number | null;
+  readonly downstreamQueueWaitMs: number | null;
+  readonly downstreamDrainMs: number | null;
+  readonly hooks: Readonly<Partial<Record<RequestHookPhase, HookTimingSummary>>>;
 }
 
 interface ObserverContext<P extends "onError" | "onFinish", State extends JsonObject> {
