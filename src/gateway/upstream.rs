@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use axum::{http::header, response::Response};
-use limen_chat::{Aggregator, ChunkTracker, Decoder, Event, JsonChunks};
+use limen_chat::{Aggregator, ChunkTracker, Event, Frame, FrameDecoder, JsonChunks};
 use limen_config::{Model, Provider, ResourceLimits, validate_json};
 use serde_json::{Value, json};
 
@@ -13,6 +13,7 @@ use super::{
     lifecycle::Lifecycle,
     logic,
     pipeline::{commit_effects, elapsed_ms, hook_invalid},
+    protocol,
     response::{Delivery, apply_alias},
     stats::WaitKind,
 };
@@ -87,6 +88,7 @@ impl Gateway {
                         model,
                         event,
                         false,
+                        None,
                         &mut budget,
                         &mut tracker,
                         lifecycle,
@@ -99,7 +101,7 @@ impl Gateway {
                     .map_err(|source| hook_protocol(source, "onStreamEvent"))?;
                 lifecycle.phase = "response";
                 lifecycle.step = None;
-                delivery.finish().await?;
+                delivery.finish(None).await?;
                 return Ok(None);
             }
             lifecycle.phase = "response";
@@ -214,7 +216,8 @@ impl Gateway {
         client_stream: bool,
     ) -> Result<Option<Value>, Failure> {
         let limits = &self.server.limits;
-        let mut decoder = Decoder::new(limits.max_event_bytes);
+        let mut decoder = FrameDecoder::new(limits.max_event_bytes);
+        let mut terminator = None;
         // Tracking is bounded independently of aggregation event count: one event
         // may legally contain multiple choices, and passthrough never aggregates.
         let mut upstream_tracker = ChunkTracker::new(limits.max_json_nodes);
@@ -224,17 +227,37 @@ impl Gateway {
         'upstream: while let Some(chunk) = read_chunk(response, lifecycle).await? {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
-                let event = decoder
+                let frame = decoder
                     .push(byte)
                     .map_err(|source| protocol(source, "upstream_sse"))?;
-                let Some(event) = event else {
+                let Some(frame) = frame else {
                     continue;
                 };
+                let event = protocol::interpret_frame(&frame, limits)?;
                 match event {
                     // Stop at the terminator itself so trailing bytes cannot make
                     // success depend on how the network divided the response.
-                    Event::Done => break 'upstream,
+                    Event::Done => {
+                        if client_stream {
+                            protocol::control_frame(&frame, limits)?;
+                        }
+                        terminator = Some(frame);
+                        break 'upstream;
+                    },
+                    Event::KeepAlive => {
+                        if client_stream {
+                            let bytes = protocol::control_frame(&frame, limits)?;
+                            lifecycle.output_bytes =
+                                lifecycle.output_bytes.saturating_add(bytes.len());
+                            delivery.emit(bytes.to_vec()).await?;
+                        }
+                    },
                     Event::Chunk(event) => {
+                        validate_json(&event, limits.max_json_depth, limits.max_json_nodes)
+                            .map_err(|source| {
+                                Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse")
+                                    .with_source(source)
+                            })?;
                         upstream_tracker
                             .push(&event)
                             .map_err(|source| protocol(source, "upstream_sse"))?;
@@ -246,7 +269,9 @@ impl Gateway {
                                 provider,
                                 model,
                                 event,
-                                EventConsumer::Upstream,
+                                EventConsumer::Upstream {
+                                    frame: Some(&frame),
+                                },
                                 &mut budget,
                                 lifecycle,
                             )
@@ -262,6 +287,7 @@ impl Gateway {
                                     model,
                                     event,
                                     true,
+                                    Some(&frame),
                                     &mut budget,
                                     &mut downstream_tracker,
                                     lifecycle,
@@ -276,12 +302,7 @@ impl Gateway {
             lifecycle.phase = "upstream_receive";
             lifecycle.step = None;
         }
-        decoder
-            .finish()
-            .map_err(|source| protocol(source, "upstream_sse"))?;
-        upstream_tracker
-            .finish()
-            .map_err(|source| protocol(source, "upstream_sse"))?;
+        let terminator = protocol::finish_stream(decoder, upstream_tracker, terminator)?;
         lifecycle.statistics.upstream_completed = true;
         if let Some(aggregate) = aggregate {
             return finish_aggregate(aggregate, limits).map(Some);
@@ -291,7 +312,7 @@ impl Gateway {
             .map_err(|source| hook_protocol(source, "onStreamEvent"))?;
         lifecycle.phase = "response";
         lifecycle.step = None;
-        delivery.finish().await?;
+        delivery.finish(Some(&terminator)).await?;
         Ok(None)
     }
 
@@ -305,6 +326,7 @@ impl Gateway {
         model: &Model,
         mut event: Value,
         alias: bool,
+        frame: Option<&Frame>,
         budget: &mut EventBudget,
         tracker: &mut ChunkTracker,
         lifecycle: &mut Lifecycle,
@@ -322,13 +344,15 @@ impl Gateway {
                 tracker,
                 frames: &mut frames,
                 max_event_bytes: self.server.limits.max_event_bytes,
+                frame,
+                stream_started: lifecycle.output_bytes > 0,
             },
             budget,
             lifecycle,
         )
         .await?;
-        // Hook expansion bounds the accumulated JSON payloads and event count;
-        // encoding adds only the fixed framing bytes for each bounded event.
+        // Both semantic expansion work and encoded frames have independent byte
+        // bounds; preserved outer fields can be much larger than JSON data.
         for bytes in frames {
             lifecycle.output_bytes = lifecycle.output_bytes.saturating_add(bytes.len());
             lifecycle.phase = "response";

@@ -122,8 +122,11 @@ impl Delivery {
             .map_err(|source| Failure::new(ErrorCode::Cancelled, "response").with_source(source))
     }
 
-    pub async fn finish(&mut self) -> Result<(), Failure> {
-        self.emit(limen_chat::DONE.to_vec()).await?;
+    pub async fn finish(&mut self, terminator: Option<&limen_chat::Frame>) -> Result<(), Failure> {
+        self.emit(
+            terminator.map_or_else(|| limen_chat::DONE.to_vec(), |frame| frame.raw().to_vec()),
+        )
+        .await?;
         self.done_sent = true;
         self.sender.take();
         if let Some(drained) = self.drained.take() {
@@ -148,15 +151,27 @@ impl Delivery {
                 &lifecycle.request_id,
                 lifecycle.response_headers.clone(),
             ));
-        } else if self.sender.is_some()
-            && !self.done_sent
-            && failure.code != ErrorCode::Cancelled
-            && let Ok(bytes) = limen_chat::encode_error(
-                &failure.error_json(&lifecycle.request_id),
-                CONTROL_EVENT_BYTES,
-            )
-        {
-            let _sent = self.emit(bytes).await;
+        } else if self.sender.is_some() && !self.done_sent && failure.code != ErrorCode::Cancelled {
+            let native = failure
+                .response
+                .as_ref()
+                .and_then(|response| serde_json::from_slice::<Value>(&response.body).ok());
+            let envelope = native.unwrap_or_else(|| failure.error_json(&lifecycle.request_id));
+            // Native structured errors were bounded at the protocol boundary.
+            // If their encoded framing cannot fit, still terminate without DONE.
+            let limit = failure
+                .response
+                .as_ref()
+                .map_or(CONTROL_EVENT_BYTES, |response| {
+                    response
+                        .body
+                        .len()
+                        .saturating_add(64)
+                        .max(CONTROL_EVENT_BYTES)
+                });
+            if let Ok(bytes) = limen_chat::encode_error(&envelope, limit) {
+                let _sent = self.emit(bytes).await;
+            }
         }
         self.sender.take();
         if let Some(drained) = self.drained.take() {

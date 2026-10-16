@@ -53,5 +53,61 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
             }
         }
         Ok(())
+    }).await?;
+    protocol_frames(laboratory).await
+}
+
+/// The same protocol survives real read boundaries, metadata tails and failures.
+async fn protocol_frames(laboratory: &mut Laboratory<'_>) -> Result<()> {
+    laboratory.with_fixture(Options::default(), async |item| {
+        let first = json!({"id":"protocol","object":"chat.completion.chunk","created":1,"model":"real-model",
+            "choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"text","text":"hello"}],
+                "audio":{"id":"audio","data":"YQ=="}},"finish_reason":null}]});
+        let final_content = json!({"id":"protocol","object":"chat.completion.chunk","created":1,"model":"real-model",
+            "choices":[{"index":0,"delta":{"audio":{"data":"Yg=="}},"finish_reason":"stop"}]});
+        let expiry = json!({"object":"","id":"","model":"","created":0,
+            "choices":[{"index":0,"delta":{"audio":{"expires_at":42}}}]});
+        let annotation = json!({"choices":[{"index":0,"content_filter_offsets":{"start_offset":0,"end_offset":5}}]});
+        let content = format!("\u{feff}: heartbeat\r\n\r\nevent: update\r\nid: frame-1\r\nretry: 1500\r\ndata: {first}\r\n\r\ndata: {final_content}\r\n\r\ndata: {expiry}\r\n\r\ndata: {annotation}\r\n\r\n");
+        let complete = format!("{content}: final-note\nid: end\ndata: [DONE]\n\n");
+        for split in [1, content.len() / 2] {
+            {
+                let mut upstream = item.upstream.controls.lock().await;
+                upstream.media = "text/event-stream";
+                upstream.raw = Some(complete.as_bytes().to_vec());
+                upstream.split_at = Some(split);
+            }
+            for stream in [false, true] {
+                let reply = item.send(request(&[("stream", json!(stream))]), Method::POST,
+                    "/v1/chat/completions", &[("Connection", None)]).await?;
+                ensure!(reply.status == 200, "valid protocol frames failed at an HTTP read boundary");
+                if stream {
+                    let text = reply.text()?;
+                    for field in [": heartbeat\r\n", "event: update\r\n", "id: frame-1\r\n", "retry: 1500\r\n", ": final-note\nid: end\ndata: [DONE]\n\n"] {
+                        ensure!(text.contains(field), "SSE outer field was lost");
+                    }
+                    ensure!(text.matches("[DONE]").count() == 1, "native terminator duplicated");
+                } else {
+                    ensure!(reply.body["choices"][0]["message"]["audio"]["data"] == "YWI=", "padded audio fragments were not combined as bytes");
+                    ensure!(reply.body["choices"][0]["message"]["audio"]["expires_at"] == 42, "audio metadata tail was lost");
+                    ensure!(reply.body["choices"][0]["content_filter_offsets"]["end_offset"] == 5, "annotation scope was lost");
+                }
+                item.statistics(reply.request_id()?, &[]).await?.outcome("success", None)?;
+            }
+        }
+        for bytes in [content, ": heartbeat\n\ndata: {\"error\":{\"code\":\"capacity\",\"message\":\"synthetic-body-secret\"}}\n\n".into()] {
+            {
+                let mut upstream = item.upstream.controls.lock().await;
+                upstream.raw = Some(bytes.into_bytes());
+                upstream.split_at = None;
+            }
+            let reply = item.send(request(&[("stream", json!(true))]), Method::POST,
+                "/v1/chat/completions", &[("Connection", None)]).await?;
+            ensure!(reply.status == 200 && !reply.text()?.contains("[DONE]") && reply.text()?.contains("event: error"), "partial or failed stream was reported successful");
+            let log = item.statistics(reply.request_id()?, &[]).await?;
+            log.outcome("failed", Some("upstream_protocol"))?;
+            ensure!(log.event("request statistics")?["upstream_completed"] == false, "partial stream fabricated native completion");
+        }
+        Ok(())
     }).await
 }

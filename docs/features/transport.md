@@ -19,23 +19,31 @@
 
 ## 同形传递与跨形转换
 
-JSON → JSON 要求正文为合法 JSON 对象，保留扩展字段，不强制完整 Chat response schema。SSE → SSE 会解析、校验并重新编码 Chat chunk；不是原始字节透传，合法的同形扩展字段可保留。
+JSON → JSON 要求正文为合法 JSON 对象，保留扩展字段，不强制完整 Chat response schema。SSE 分帧与 Chat 解释独立；SSE → SSE 保留原始事件的命名、ID、retry、注释与未知 JSON 扩展。数据未变化时保留原始载荷，别名或 hook 改写时只重编码 data；改写后的字节不保证相同。
 
-JSON ↔ SSE 转换只接受当前实现能保真表达的结构：文本 `content`、`refusal`、function tool calls、多 choice、usage，以及支持的响应元数据。tool calls 按 choice 与工具 index 组合；ID、函数名和 arguments 的分片按顺序拼接，空 continuation 不抹除已有值。
+JSON ↔ SSE 转换按字段语义处理文本、内容块、`refusal`、字符串与结构化推理、function/custom 工具、legacy function_call、logprobs、音频、多 choice、累计 usage 和作用域明确的标注元数据。工具按 choice 与工具 index 组合；参数片段按顺序追加，空 continuation 不抹除已有值。累计 usage 保留最新快照而不求和，流专用 `obfuscation` 在跨形时移除。
 
-转换拒绝未知结构，避免静默丢字段：例如多模态响应 content、未知扩展键、非 `null` 的 logprobs、非 function 工具或冲突元数据。相同格式能传递的扩展，不保证能跨形转换。需要适配时，在转换前的 `onUpstreamEvent` 或 `onResponse` 中明确整理结构。
+内容块转换支持 text、thinking 和 refusal，保留块顺序及字符串与数组之间的转换。音频的独立 padded base64 片段先按字节合并再编码；未 padding 的连续片段按连续编码处理。
 
-JSON → SSE 按角色、内容、工具、完成原因和 usage 生成增量事件；超长文本与工具字符串仅在 UTF-8 字符边界切分。SSE → JSON 受累计输入事件数、累计字节和完整输出 JSON 限制。
+转换拒绝没有已知语义的扩展键或内容块，避免通用深合并或静默丢字段；固定元数据冲突仍然失败。多份不同的 filter/offset 快照无法保真压成完整响应中的单个字段，会明确拒绝跨形转换，同形仍保留全部事件。相同格式能传递的扩展，不保证能跨形转换。需要适配时，在转换前的 `onUpstreamEvent` 或 `onResponse` 中明确整理结构。
+
+JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆分的文本在 UTF-8 边界切分，内容块数组按块拆分；不能安全拆分且超出事件上限的数据明确失败。SSE → JSON 受累计输入事件数、累计字节和完整输出 JSON 限制，不缓存完整事件历史。
 
 可运行的四路径例子在 [`examples/testing/`](../../examples/testing/)，工具、扩展和截断回归素材在 [`fixtures/gateway/transport/`](../../fixtures/gateway/transport/)。
 
 ## SSE 完成与失败
 
-数据事件必须是合法 `chat.completion.chunk`。choice index 在同一 chunk 中不能重复，tool index 在同一 choice 中不能重复，两者均为非负整数。`finish_reason` 必须为字符串或 `null`，每个已出现 choice 最终都要以非 `null` 字符串完成，完成后不能继续追加内容。
+数据事件是开放的 Chat JSON 对象，元数据和 `choices` 可省略；choice 的 `delta` 和 `finish_reason` 可省略，用于无生成内容的标注或元数据。choice index 在同一事件中不能重复，tool index 在同一 choice 中不能重复，两者均为非负整数。已观察的生成 choice 最终都要以非 `null` 字符串 `finish_reason` 完成。
 
-允许 `choices: []` 的 usage 事件，也兼容 [OpenRouter 的统计尾事件](https://openrouter.ai/docs/api_reference/streaming#the-final-usage-chunk-chat-completions)：usage 必须为对象，已完成 choice 只可重复相同的 `finish_reason`，delta 只允许空对象、`role: "assistant"`、空或 `null` 的 content/refusal、空 tool_calls 数组，logprobs 必须缺失或为 `null`。统计事件不重新打开 choice，也不改变聚合后的 message；新增正文、拒绝内容、工具分片、未知 delta 字段或改变完成原因仍然失败。hook 改写后同样执行这些检查；若删除 usage，须一并移除其重复的已完成 choice。provider、native_finish_reason 等扩展仍遵循上述同形传递与跨形转换边界。
+完成后仍可接收标注、音频到期时间、usage 和相同 finish reason 的统计尾事件，无需附带特定供应商的 usage 形状。它们不重新打开生成状态。继续增加正文、refusal、工具、推理或音频数据，以及改变既定 finish reason，仍然失败。未知扩展可同形保留，但不能据此推断 choice 已完成。hook 改写后同样检查下游生成状态；原生上游完成事实独立保留。
 
-上游必须提供由空行结束的 `data: [DONE]`；仅有 finish_reason 或直接 EOF 都算截断。网关在第一个有效 `[DONE]` 立即停止读取，忽略其后字节。注释、多行 data、UTF-8 BOM 和常见换行形式可以解析；非默认命名事件、上游 `event: error` 或普通 data 事件中非 `null` 的顶层 `error` 都会失败。错误事件即使带完整 chunk 字段与完成原因，也不算成功，其原始错误正文不透传。
+上游必须提供由空行结束的 `data: [DONE]`；仅有 finish_reason 或直接 EOF 都算截断。网关在第一个有效 `[DONE]` 立即停止读取，忽略其后字节。注释、多行 data、UTF-8 BOM 和 CR/LF/CRLF 均受有界分帧处理。命名事件保留，数据仍按 Chat 解释；原生 Messages/Gemini 流不属于支持范围。
+
+注释和无 data 帧向 SSE 下游转发，JSON 下游聚合时忽略。首个存活帧会提交 HTTP 状态，后续错误只能流内表达；它们不触发业务事件 hook、不增加生成计数，也不延长总请求期限。
+
+原始终止帧的注释、ID 等外层字段也在成功校验后保留。hook 展开时只保留一次流首 BOM；实际编码字节（包括外层字段）与 hook JSON 展开分别受 `max_output_bytes` 约束，无业务 hook 的存活帧与终止帧也检查输出上限。
+
+上游 `event: error` 或普通 data 中非 `null` 的顶层 `error` 均终止为失败。合法有界的结构化原始错误保留为私有响应数据：流开始前可经 `onErrorResponse` 适配，开始后作为错误帧发出；非法错误载荷使用网关固定 envelope。错误载荷不进入日志或观察上下文，也不能被后续 `[DONE]` 覆盖。
 
 下游成功时由 Rust 发送 `[DONE]`。失败发生在流启动前时，返回普通 JSON 错误；启动后 HTTP 状态已确定，尽可能发送 `event: error` 后结束，不发送成功 `[DONE]`。客户端断开时取消请求，错误帧不保证送达。
 
@@ -46,6 +54,8 @@ JSON → SSE 按角色、内容、工具、完成原因和 usage 生成增量事
 上游 HTTP 失败的正文按字节透传，保留原始 `Content-Type` 与 `Content-Encoding`，不要求 JSON 或 Chat schema，不改模型别名；空正文、文本、HTML 和非 UTF-8 正文都可传递。即使客户端请求了流，也返回上游错误响应，不包装成成功 SSE。读取仍受请求期限与 `max_output_bytes` 限制；读取失败、超限或截断不能作为完整上游错误返回，使用相应网关错误。
 
 成功响应媒体类型由 Rust 最终设置。JSON 使用 `application/json`，SSE 使用 `text/event-stream` 并设置 `Cache-Control: no-cache`；Limen 响应附带 `X-Limen-Request-Id` 便于关联日志。默认转发的元数据和响应头 draft 权限见[脚本文档](scripting.md#头部与客户端上下文)。
+
+出站 `Accept` 在业务 hook 结束后按最终上游 `stream` 补默认值：流使用 `text/event-stream`，完整响应使用 `application/json`；配置或 hook 显式设置的值优先。该头不决定收到响应后的解析器。
 
 网关自身错误默认使用固定 JSON envelope：
 

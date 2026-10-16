@@ -77,22 +77,27 @@ export type StreamToolCall = JsonObject & {
 };
 export type StreamDelta = JsonObject & {
   role?: string;
-  content?: string | null;
+  content?: string | JsonObject[] | null;
   refusal?: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+  reasoning_details?: JsonObject[] | null;
+  audio?: JsonObject | null;
   tool_calls?: StreamToolCall[];
 };
 export type StreamChoice = JsonObject & {
   index: number;
-  delta: StreamDelta;
-  finish_reason: string | null;
+  delta?: StreamDelta;
+  finish_reason?: string | null;
 };
+/** Open Chat data, including annotation and metadata events without generation choices. */
 export type StreamEvent = JsonObject & {
-  id: string;
-  object: "chat.completion.chunk";
-  created: number;
-  model: string;
-  choices: StreamChoice[];
-  usage?: JsonObject | null;
+  id?: string;
+  object?: string;
+  created?: number;
+  model?: string;
+  choices?: StreamChoice[];
+  usage?: JsonValue;
 };
 
 /** A frozen API with mutable contents; names are case-insensitive at runtime. */
@@ -160,6 +165,8 @@ export interface EventContext<P extends "onUpstreamEvent" | "onStreamEvent", Sta
   readonly meta: ReceivedMeta<P>;
   readonly state: State;
   event: StreamEvent;
+  /** Original SSE envelope; null for events synthesized from a complete JSON response. */
+  readonly sse: DeepReadonly<{ event: string; id: string | null; retry: string | null }> | null;
   /** At most once per invocation. [] drops the event; [a, b] replaces it in order. */
   readonly replaceEvents: (events: StreamEvent[]) => void;
 }

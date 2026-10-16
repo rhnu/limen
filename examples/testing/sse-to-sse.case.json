@@ -26,7 +26,7 @@
       "url": "https://example.invalid/v1/chat/completions",
       "headers": {
         "accept": [
-          "application/json"
+          "text/event-stream"
         ],
         "content-type": [
           "application/json"

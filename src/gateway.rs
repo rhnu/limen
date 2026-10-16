@@ -7,6 +7,7 @@ mod logic;
 mod observations;
 mod observe;
 mod pipeline;
+mod protocol;
 mod response;
 mod stats;
 mod transport;

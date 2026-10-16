@@ -173,8 +173,7 @@ async fn data_error_frames_fail_before_and_after_stream_start() {
                     response["events"] = json!(expected);
                     response["done"] = json!(false);
                 } else {
-                    response["body"] = json!({"error":{"code":"upstream_protocol",
-                        "message":"The upstream response is not supported","request_id":"limen-1"}});
+                    response["body"] = error.clone();
                 }
                 events.push(error);
                 assert_passed(

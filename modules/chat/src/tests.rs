@@ -3,8 +3,8 @@ use std::error::Error as _;
 use serde_json::{Value, json};
 
 use crate::{
-    Aggregator, ChunkTracker, DONE, Decoder, Error, Event, JsonChunks, encode_chunk, encode_error,
-    validate_chunk,
+    Aggregator, ChunkTracker, DONE, Error, Event, FrameDecoder, JsonChunks, encode_chunk,
+    encode_error, validate_chunk,
 };
 
 mod compatibility;
@@ -31,10 +31,14 @@ fn response(message: Value) -> Value {
 }
 
 fn decode(input: &[u8], limit: usize) -> Result<Vec<Event>, Error> {
-    let mut decoder = Decoder::new(limit);
+    let mut decoder = FrameDecoder::new(limit);
     let mut events = Vec::new();
     for &byte in input {
-        if let Some(event) = decoder.push(byte)? {
+        if let Some(frame) = decoder.push(byte)? {
+            let event = frame.event()?;
+            if matches!(event, Event::KeepAlive) {
+                continue;
+            }
             events.push(event);
         }
     }
@@ -189,10 +193,10 @@ fn decoder_accepts_utf8_bom_comments_multiline_and_all_line_endings() {
 }
 
 #[test]
-fn decoder_requires_delimited_done_even_after_finish_reason() {
+fn framing_requires_delimiters_without_deciding_chat_completion() {
     let value = one(0, json!({"role":"assistant"}), json!("stop"));
     let mut bytes = encode_chunk(&value, 1024).unwrap();
-    assert!(matches!(decode(&bytes, 1024), Err(Error::Truncated)));
+    assert!(decode(&bytes, 1024).is_ok());
     bytes.extend_from_slice(b"data: [DONE]\n");
     assert!(matches!(decode(&bytes, 1024), Err(Error::Truncated)));
     bytes.push(b'\n');
@@ -220,18 +224,7 @@ fn decoder_does_not_hide_invalid_json_or_named_error_events() {
         decode(b"event: error\ndata: {}\n\n", 100),
         Err(Error::UpstreamError)
     ));
-    assert!(matches!(
-        decode(b"event: custom\ndata: {}\n\n", 100),
-        Err(Error::InvalidChunk)
-    ));
-}
-
-#[test]
-fn decoder_rejects_data_after_done() {
-    assert!(matches!(
-        decode(b"data: [DONE]\n\ndata: [DONE]\n\n", 100),
-        Err(Error::AfterDone)
-    ));
+    assert!(decode(b"event: custom\ndata: {}\n\ndata: [DONE]\n\n", 100).is_ok());
 }
 
 #[test]
@@ -286,16 +279,13 @@ fn tracker_waits_for_all_choices_but_allows_usage_tail() {
 }
 
 #[test]
-fn tracker_rejects_unfinished_duplicate_finished_and_unbounded_choices() {
+fn tracker_allows_finished_empty_tails_but_rejects_unfinished_or_excess_choices() {
     let mut tracker = ChunkTracker::new(1);
     tracker.push(&one(0, json!({}), Value::Null)).unwrap();
     assert!(matches!(tracker.finish(), Err(Error::UnfinishedChoices)));
     let mut tracker = ChunkTracker::new(1);
     tracker.push(&one(0, json!({}), json!("stop"))).unwrap();
-    assert!(matches!(
-        tracker.push(&one(0, json!({}), Value::Null)),
-        Err(Error::ChoiceFinished)
-    ));
+    tracker.push(&one(0, json!({}), Value::Null)).unwrap();
     assert!(matches!(
         tracker.push(&one(1, json!({}), Value::Null)),
         Err(Error::ChoiceLimit)
@@ -418,13 +408,7 @@ fn cross_shape_conversion_rejects_extensions_instead_of_dropping_them() {
         Aggregator::new(100_000, 10).push(value),
         Err(Error::Unsupported)
     ));
-    let full = response(json!({"role":"assistant","content":"a","audio":{}}));
-    assert!(matches!(
-        JsonChunks::new(full, 4096),
-        Err(Error::Unsupported)
-    ));
-    let mut full = response(json!({"role":"assistant","content":"a"}));
-    full["choices"][0]["logprobs"] = json!({"content":[]});
+    let full = response(json!({"role":"assistant","content":"a","vendor_extension":{}}));
     assert!(matches!(
         JsonChunks::new(full, 4096),
         Err(Error::Unsupported)

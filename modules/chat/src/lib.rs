@@ -12,7 +12,7 @@ pub use aggregate::Aggregator;
 pub use chunk::{ChunkTracker, validate_chunk};
 pub use convert::JsonChunks;
 pub use error::Error;
-pub use sse::{DONE, Decoder, Event, encode_chunk, encode_error};
+pub use sse::{DONE, Event, Frame, FrameDecoder, encode_chunk, encode_error};
 pub use usage::{UsageQuality, UsageStats, UsageTracker};
 
 #[cfg(test)]

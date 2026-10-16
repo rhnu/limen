@@ -5,6 +5,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("SSE event exceeds its byte limit")]
     EventLimit,
+    #[error("invalid SSE UTF-8")]
+    Utf8(#[source] std::str::Utf8Error),
     #[error("Chat aggregation exceeds its byte limit")]
     AggregateBytes,
     #[error("Chat aggregation exceeds its event limit")]
@@ -13,6 +15,8 @@ pub enum Error {
     ChoiceLimit,
     #[error("invalid Chat Completions event JSON")]
     Json(#[source] serde_json::Error),
+    #[error("invalid Chat Completions audio encoding")]
+    Audio(#[source] base64::DecodeError),
     #[error("invalid Chat Completions chunk structure")]
     InvalidChunk,
     #[error("unsupported Chat Completions conversion structure")]
@@ -25,8 +29,6 @@ pub enum Error {
     UnfinishedChoices,
     #[error("Chat Completions stream ended without DONE")]
     Truncated,
-    #[error("Chat Completions stream contains data after DONE")]
-    AfterDone,
     #[error("upstream returned a Chat Completions error event")]
     UpstreamError,
 }

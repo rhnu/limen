@@ -385,3 +385,46 @@ async fn stream() -> TestResult {
     )?;
     stop(&runtime).await
 }
+
+#[tokio::test]
+async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -> TestResult {
+    let fixture = Fixture::new()?;
+    let (runtime, config) = fixture
+        .start(
+            r"
+        export default { providers:{}, models:{}, onRequest(ctx) {
+            if (ctx.meta.operation === 'field') ctx.sse.event = 'changed';
+            else if (ctx.meta.operation === 'replace') ctx.sse = null;
+            else { ctx.state.envelope = ctx.sse; ctx.event = {annotations:[]}; }
+        }};
+    ",
+        )
+        .await?;
+    let id = hook(&config, "onRequest")?;
+    let envelope = json!({"event":"annotation","id":"frame-1","retry":"1500"});
+    for phase in ["onUpstreamEvent", "onStreamEvent"] {
+        let input =
+            json!({"meta":{"phase":phase,"operation":"read"},"state":{},"event":{},"sse":envelope});
+        let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
+        ensure(
+            output["sse"] == envelope && output["state"]["envelope"] == envelope,
+            "stream envelope was not preserved",
+        )?;
+        ensure(
+            output["events"] == json!([{"annotations":[]}]),
+            "data replacement changed the envelope",
+        )?;
+        for operation in ["field", "replace"] {
+            let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{},"sse":envelope});
+            ensure(
+                runtime
+                    .invoke(call(id, 2, input))
+                    .await
+                    .into_context()
+                    .is_err(),
+                "stream envelope mutation committed",
+            )?;
+        }
+    }
+    stop(&runtime).await
+}

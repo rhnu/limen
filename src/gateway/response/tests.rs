@@ -142,10 +142,63 @@ async fn success_waits_for_body_drain_and_appends_one_done() {
     delivery.emit(b"data: first\n\n".to_vec()).await.unwrap();
     let response = receive.try_recv().unwrap();
     let (result, bytes) = tokio::join!(
-        delivery.finish(),
+        delivery.finish(None),
         axum::body::to_bytes(response.into_body(), 2048)
     );
     result.unwrap();
     assert_eq!(&bytes.unwrap()[..], b"data: first\n\ndata: [DONE]\n\n");
     assert!(!cancellation.is_cancelled());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_stream_errors_remain_response_data_after_heartbeat_commits_status() {
+    let lifecycle = Lifecycle::new("native".into(), Cancellation::new(), 1000);
+    let mut failure = Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse");
+    failure.response = Some(Box::new(super::super::error::FailureResponse {
+        body: br#"{"error":{"code":"capacity","message":"synthetic-private-detail"}}"#.to_vec(),
+        content_type: Some(HeaderValue::from_static("application/json")),
+        content_encoding: Vec::new(),
+    }));
+    let (reply, mut receive) = oneshot::channel();
+    let mut delivery = Delivery::new(reply, Cancellation::new(), "native".into());
+    delivery.emit(b": alive\n\n".to_vec()).await.unwrap();
+    let response = receive.try_recv().unwrap();
+    assert_eq!(response.status(), 200);
+    let ((), bytes) = tokio::join!(
+        delivery.fail(&failure, &lifecycle),
+        axum::body::to_bytes(response.into_body(), 2048)
+    );
+    let bytes = bytes.unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.starts_with(": alive\n\nevent: error\ndata: "));
+    assert!(text.contains("synthetic-private-detail"));
+    assert!(!text.contains("[DONE]"));
+    assert!(!failure.to_string().contains("synthetic-private-detail"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn success_preserves_native_terminator_metadata_after_validation() {
+    let terminal = b": final-note\nid: end\nretry: 1000\ndata: [DONE]\n\n";
+    let mut decoder = limen_chat::FrameDecoder::new(1024);
+    let mut frame = None;
+    for byte in terminal {
+        if let Some(value) = decoder.push(*byte).unwrap() {
+            frame = Some(value);
+        }
+    }
+    let frame = frame.unwrap();
+    assert_eq!(frame.event().unwrap(), limen_chat::Event::Done);
+    let (reply, mut receive) = oneshot::channel();
+    let mut delivery = Delivery::new(reply, Cancellation::new(), "terminal".into());
+    delivery.emit(b": first\n\n".to_vec()).await.unwrap();
+    let response = receive.try_recv().unwrap();
+    let (result, bytes) = tokio::join!(
+        delivery.finish(Some(&frame)),
+        axum::body::to_bytes(response.into_body(), 2048)
+    );
+    result.unwrap();
+    assert_eq!(
+        bytes.unwrap().as_ref(),
+        [b": first\n\n".as_slice(), terminal].concat()
+    );
 }

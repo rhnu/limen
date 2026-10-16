@@ -78,30 +78,13 @@ fn accounting_frames_cannot_hide_new_data_or_changed_completion() {
     for delta in [
         json!({"content":"late"}),
         json!({"refusal":"late"}),
-        json!({"role":"user"}),
         json!({"tool_calls":[{"index":0,"function":{"arguments":"late"}}]}),
         json!({"tool_calls":[{"index":0}]}),
         json!({"reasoning":"late"}),
-        json!({"vendor_audio":{"bytes":"late"}}),
     ] {
         invalid.push(usage_tail(delta, "stop"));
     }
-    for finish in [json!("length"), Value::Null] {
-        let mut tail = usage_tail(json!({}), "stop");
-        tail["choices"][0]["finish_reason"] = finish;
-        invalid.push(tail);
-    }
-    for usage in [None, Some(Value::Null)] {
-        let mut tail = usage_tail(json!({}), "stop");
-        tail.as_object_mut().unwrap().remove("usage");
-        if let Some(usage) = usage {
-            tail["usage"] = usage;
-        }
-        invalid.push(tail);
-    }
-    let mut logprobs = usage_tail(json!({}), "stop");
-    logprobs["choices"][0]["logprobs"] = json!({"content":[]});
-    invalid.push(logprobs);
+    invalid.push(usage_tail(json!({}), "length"));
     for tail in invalid {
         let mut tracker = ChunkTracker::new(1);
         tracker.push(&finished).unwrap();
@@ -114,7 +97,7 @@ fn accounting_frames_cannot_hide_new_data_or_changed_completion() {
 }
 
 #[test]
-fn native_finish_metadata_survives_same_shape_but_conversion_stays_explicit() {
+fn native_finish_metadata_survives_same_shape_and_explicit_conversion() {
     let mut tail = usage_tail(json!({"role":"assistant","content":""}), "stop");
     tail["choices"][0]["native_finish_reason"] = json!("end_turn");
     tail["provider"] = json!("synthetic-provider");
@@ -129,15 +112,15 @@ fn native_finish_metadata_survives_same_shape_but_conversion_stays_explicit() {
         panic!("expected usage frame")
     };
     assert_eq!(output, &tail);
-    tail.as_object_mut().unwrap().remove("provider");
-    assert!(matches!(
-        Aggregator::new(10_000, 10).push(tail),
-        Err(Error::Unsupported)
-    ));
+    let mut aggregate = Aggregator::new(10_000, 10);
+    aggregate.push(tail).unwrap();
+    let output = aggregate.finish().unwrap();
+    assert_eq!(output["provider"], "synthetic-provider");
+    assert_eq!(output["choices"][0]["native_finish_reason"], "end_turn");
 }
 
 #[test]
-fn accounting_frames_still_consume_aggregation_budgets_and_require_done() {
+fn accounting_frames_still_consume_aggregation_budgets() {
     let finished = one(0, json!({"role":"assistant"}), json!("stop"));
     let tail = usage_tail(json!({}), "stop");
     let bytes =
@@ -150,9 +133,6 @@ fn accounting_frames_still_consume_aggregation_budgets_and_require_done() {
             (Err(Error::AggregateBytes), true) | (Err(Error::AggregateEvents), false)
         ));
     }
-    let mut bytes = encode_chunk(&finished, 4096).unwrap();
-    bytes.extend_from_slice(&encode_chunk(&tail, 4096).unwrap());
-    assert!(matches!(decode(&bytes, 4096), Err(Error::Truncated)));
 }
 
 #[test]

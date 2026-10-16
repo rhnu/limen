@@ -191,8 +191,10 @@ export const phases = {
     ctx.event = null;
     // @ts-expect-error Control frames belong to Rust, not JSON event output.
     ctx.replaceEvents(["[DONE]"]);
-    // @ts-expect-error Every replacement must be a complete chunk object.
-    ctx.replaceEvents([{}]);
+    // @ts-expect-error Choice indices remain numeric in open event objects.
+    ctx.replaceEvents([{ choices: [{ index: "invalid" }] }]);
+    // @ts-expect-error The original SSE envelope is read-only.
+    ctx.sse = null;
     // @ts-expect-error replaceEvents accepts an array, not a single event.
     ctx.replaceEvents(ctx.event);
     // @ts-expect-error replaceEvents itself cannot be replaced.

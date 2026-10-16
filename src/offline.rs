@@ -39,6 +39,8 @@ pub(crate) enum Error {
     JsonLimits(#[source] limen_config::ConfigError),
     #[error("invalid fixture header name")]
     HeaderName(#[source] http::header::InvalidHeaderName),
+    #[error("invalid bounded SSE output")]
+    Stream(#[from] limen_chat::Error),
     #[error("invalid fixture header value")]
     HeaderValue(#[source] http::header::InvalidHeaderValue),
     #[error("fixture headers exceed capacity")]
@@ -474,26 +476,37 @@ fn compare_statistics(
 }
 
 fn stream(bytes: &[u8], limits: &ResourceLimits) -> Result<(Vec<Value>, bool), Error> {
-    let mut parser = sse_parse::SseParser::new().max_buffer(limits.max_event_bytes.max(1024));
+    let mut parser = limen_chat::FrameDecoder::new(limits.max_event_bytes.max(1024));
     let mut events = Vec::new();
     let mut done = false;
     for byte in bytes {
-        parser.feed(&[*byte]);
-        if parser.overflows() != 0 {
-            return Err(Error::Invalid("offline SSE event exceeds byte limit"));
-        }
-        if let Some(event) = parser.next_event() {
-            if event.event == "error" {
-                continue;
+        let frame = parser.push(*byte).map_err(|source| {
+            if matches!(source, limen_chat::Error::EventLimit) {
+                Error::Invalid("offline SSE event exceeds byte limit")
+            } else {
+                Error::Stream(source)
             }
-            if event.data == "[DONE]" {
-                done = true;
+        })?;
+        if let Some(frame) = frame {
+            let event = match frame.event() {
+                Err(limen_chat::Error::UpstreamError) => continue,
+                result => result?,
+            };
+            let value = match event {
+                limen_chat::Event::KeepAlive => continue,
+                limen_chat::Event::Done => {
+                    done = true;
+                    continue;
+                },
+                limen_chat::Event::Chunk(value) => value,
+            };
+            if frame.event == "error" {
                 continue;
             }
             if events.len() >= limits.max_aggregate_events {
                 return Err(Error::Invalid("offline SSE exceeds event limit"));
             }
-            events.push(serde_json::from_str(&event.data)?);
+            events.push(value);
         }
     }
     Ok((events, done))

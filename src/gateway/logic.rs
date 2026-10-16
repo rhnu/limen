@@ -147,9 +147,6 @@ pub fn outbound_headers(provider: &Provider) -> Result<HeaderMap, Failure> {
             .map_err(|source| invalid().with_source(source))?;
         headers.insert(header::AUTHORIZATION, value);
     }
-    if !headers.contains_key(header::ACCEPT) {
-        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
-    }
     Ok(headers)
 }
 

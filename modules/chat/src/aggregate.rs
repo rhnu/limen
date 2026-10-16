@@ -4,9 +4,11 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     Error,
-    chunk::{index, known_keys, object, validate_usage_tail},
+    chunk::{index, known_keys, object, validate_tail},
     validate_chunk,
 };
+
+pub(crate) mod fields;
 
 const ROOT_KEYS: &[&str] = &[
     "id",
@@ -17,6 +19,24 @@ const ROOT_KEYS: &[&str] = &[
     "usage",
     "system_fingerprint",
     "service_tier",
+    "provider",
+    "native_finish_reason",
+    "annotations",
+    "prompt_annotations",
+    "prompt_filter_results",
+    "content_filter_results",
+    "content_filter_offsets",
+    "offsets",
+    "obfuscation",
+];
+
+pub(crate) const CHOICE_METADATA: &[&str] = &[
+    "annotations",
+    "content_filter_results",
+    "content_filter_offsets",
+    "offsets",
+    "native_finish_reason",
+    "provider",
 ];
 
 pub(crate) fn conversion_root(value: &Value) -> Result<(), Error> {
@@ -25,19 +45,16 @@ pub(crate) fn conversion_root(value: &Value) -> Result<(), Error> {
 
 #[derive(Default)]
 struct Choice {
-    role: Option<Value>,
-    content: Option<Value>,
-    refusal: Option<Value>,
-    tools: BTreeMap<u64, Value>,
-    tools_present: bool,
+    message: Map<String, Value>,
+    metadata: Map<String, Value>,
     finish: Option<Value>,
-    logprobs: Option<Value>,
+    generated: bool,
 }
 
-/// Accumulates supported Chat deltas, with cumulative input and result byte bounds.
+/// Accumulates understood Chat fields without retaining an event history.
 pub struct Aggregator {
     root: Map<String, Value>,
-    // Each distinct choice consumes input JSON bytes, so the cumulative byte cap also bounds this map.
+    // Cumulative input bytes bound both distinct choices and accumulated fields.
     choices: BTreeMap<u64, Choice>,
     bytes: usize,
     events: usize,
@@ -59,7 +76,7 @@ impl Aggregator {
         }
     }
 
-    /// Adds one chunk; a failed push permanently rejects further aggregation.
+    /// Adds one chunk; an error permanently rejects further aggregation.
     ///
     /// # Errors
     /// Returns protocol, unsupported-conversion, metadata or resource-limit errors.
@@ -67,14 +84,15 @@ impl Aggregator {
         if self.failed {
             return Err(Error::InvalidChunk);
         }
-        let result = self.push_inner(chunk);
+        let result = self.push_inner(&chunk);
+        drop(chunk);
         if result.is_err() {
             self.failed = true;
         }
         result
     }
 
-    fn push_inner(&mut self, chunk: Value) -> Result<(), Error> {
+    fn push_inner(&mut self, chunk: &Value) -> Result<(), Error> {
         if self.events >= self.max_events {
             return Err(Error::AggregateEvents);
         }
@@ -82,91 +100,68 @@ impl Aggregator {
             .max_bytes
             .checked_sub(self.bytes)
             .ok_or(Error::AggregateBytes)?;
-        let len = crate::bounded::json_size(&chunk, remaining)?.ok_or(Error::AggregateBytes)?;
-        let bytes = self.bytes + len;
-        conversion_root(&chunk)?;
-        validate_chunk(&chunk)?;
-        // Check the whole event before merging fields, preserving the completion
-        // error even when the same event also contains conflicting metadata.
-        for choice in chunk["choices"].as_array().ok_or(Error::InvalidChunk)? {
-            let index = index(&choice["index"])?;
+        let size = crate::bounded::json_size(chunk, remaining)?.ok_or(Error::AggregateBytes)?;
+        validate_chunk(chunk)?;
+        let choices = chunk.get("choices").and_then(Value::as_array);
+        // Completion violations take precedence over conflicts in the same event.
+        for source in choices.into_iter().flatten() {
             if let Some(finish) = self
                 .choices
-                .get(&index)
-                .and_then(|choice| choice.finish.as_ref())
+                .get(&index(&source["index"])?)
+                .and_then(|c| c.finish.as_ref())
                 .and_then(Value::as_str)
             {
-                validate_usage_tail(&chunk, choice, finish)?;
+                validate_tail(chunk, source, finish)?;
             }
         }
+        conversion_root(chunk)?;
+        self.bytes += size;
         self.events += 1;
-        self.bytes = bytes;
-        let Value::Object(mut root) = chunk else {
-            return Err(Error::InvalidChunk);
-        };
-        let choices = root.remove("choices").ok_or(Error::InvalidChunk)?;
-        root.remove("object");
-        for (key, value) in root {
-            merge_metadata(&mut self.root, &key, value)?;
+        let auxiliary = choices.into_iter().flatten().all(fields::auxiliary_choice);
+        for (key, value) in object(chunk)? {
+            match key.as_str() {
+                "object" | "choices" | "obfuscation" => {},
+                "usage" => {
+                    fields::merge_usage(&mut self.root, value)?;
+                },
+                "id" | "model" if auxiliary && value.as_str() == Some("") => {},
+                "created" if auxiliary && value.as_u64() == Some(0) => {},
+                _ => fields::merge_metadata(&mut self.root, key, value.clone())?,
+            }
         }
-        for choice in choices.as_array().ok_or(Error::InvalidChunk)? {
-            self.push_choice(object(choice)?)?;
+        for source in choices.into_iter().flatten() {
+            self.push_choice(source)?;
         }
         Ok(())
     }
 
-    fn push_choice(&mut self, source: &Map<String, Value>) -> Result<(), Error> {
-        known_keys(source, &["index", "delta", "finish_reason", "logprobs"])?;
-        let choice_index = index(&source["index"])?;
-        let target = self.choices.entry(choice_index).or_default();
-        // A validated usage tail updates root metadata only. Merging its empty
-        // delta could otherwise introduce content into a tool-only message.
-        if target.finish.is_some() {
-            return Ok(());
-        }
-        if let Some(value) = source.get("logprobs") {
-            if !value.is_null() {
-                return Err(Error::Unsupported);
-            }
-            target.logprobs = Some(value.clone());
-        }
-        let delta = object(&source["delta"])?;
-        known_keys(delta, &["role", "content", "refusal", "tool_calls"])?;
-        if let Some(role) = delta.get("role") {
-            if target.role.as_ref().is_some_and(|v| v != role) {
-                return Err(Error::ConflictingMetadata);
-            }
-            target.role = Some(role.clone());
-        }
-        append_nullable(&mut target.content, delta.get("content"))?;
-        append_nullable(&mut target.refusal, delta.get("refusal"))?;
-        if let Some(calls) = delta.get("tool_calls") {
-            target.tools_present = true;
-            for call in calls.as_array().ok_or(Error::InvalidChunk)? {
-                let call = object(call)?;
-                known_keys(call, &["index", "id", "type", "function"])?;
-                let index = index(&call["index"])?;
-                let target_call = target.tools.entry(index).or_insert_with(|| json!({}));
-                let target_call = target_call.as_object_mut().ok_or(Error::InvalidChunk)?;
-                append_field(target_call, "id", call.get("id"))?;
-                if let Some(kind) = call.get("type").filter(|value| !value.is_null()) {
-                    if kind.as_str() != Some("function") {
-                        return Err(Error::Unsupported);
-                    }
-                    merge_metadata(target_call, "type", kind.clone())?;
-                }
-                if let Some(function) = call.get("function") {
-                    let function = object(function)?;
-                    known_keys(function, &["name", "arguments"])?;
-                    let target_fn = target_call.entry("function").or_insert_with(|| json!({}));
-                    let target_fn = target_fn.as_object_mut().ok_or(Error::InvalidChunk)?;
-                    append_field(target_fn, "name", function.get("name"))?;
-                    append_field(target_fn, "arguments", function.get("arguments"))?;
-                }
+    fn push_choice(&mut self, source: &Value) -> Result<(), Error> {
+        let generated = crate::chunk::generation_choice(source);
+        let source = object(source)?;
+        let mut keys = vec!["index", "delta", "finish_reason", "logprobs", "obfuscation"];
+        keys.extend_from_slice(CHOICE_METADATA);
+        known_keys(source, &keys)?;
+        let target = self.choices.entry(index(&source["index"])?).or_default();
+        if let Some(delta) = source.get("delta") {
+            let delta = object(delta)?;
+            if target.finish.is_some() {
+                fields::merge_tail_message(&mut target.message, delta)?;
+            } else {
+                fields::merge_message(&mut target.message, delta)?;
             }
         }
-        if !source["finish_reason"].is_null() {
-            target.finish = Some(source["finish_reason"].clone());
+        target.generated |= generated;
+        if let Some(logprobs) = source.get("logprobs") {
+            fields::merge_logprobs(&mut target.metadata, logprobs)?;
+        }
+        for key in CHOICE_METADATA {
+            if let Some(value) = source.get(*key) {
+                fields::merge_metadata(&mut target.metadata, key, value.clone())?;
+            }
+        }
+        if let Some(finish) = source.get("finish_reason").filter(|value| !value.is_null()) {
+            target.finish = Some(finish.clone());
+            target.generated = true;
         }
         Ok(())
     }
@@ -174,39 +169,37 @@ impl Aggregator {
     /// Builds a complete response after the caller has observed upstream DONE.
     ///
     /// # Errors
-    /// Rejects failed aggregation, unfinished choices, incomplete tools or oversized output.
+    /// Rejects failed aggregation, unfinished choices, incomplete fields or oversized output.
     pub fn finish(mut self) -> Result<Value, Error> {
         if self.failed {
             return Err(Error::InvalidChunk);
         }
-        if self.choices.is_empty() || self.choices.values().any(|choice| choice.finish.is_none()) {
+        if self.choices.is_empty()
+            || self
+                .choices
+                .values()
+                .any(|choice| choice.generated && choice.finish.is_none())
+        {
             return Err(Error::UnfinishedChoices);
         }
         let mut choices = Vec::with_capacity(self.choices.len());
-        for (index, choice) in self.choices {
-            let mut message = Map::new();
-            let role = choice.role.ok_or(Error::InvalidChunk)?;
-            message.insert("role".into(), role);
-            if let Some(content) = choice.content {
-                message.insert("content".into(), content);
+        for (index, mut choice) in self.choices {
+            if !choice.generated {
+                return Err(Error::Unsupported);
             }
-            if let Some(refusal) = choice.refusal {
-                message.insert("refusal".into(), refusal);
-            }
-            if choice.tools_present {
-                let mut tools = Vec::with_capacity(choice.tools.len());
-                for tool in choice.tools.into_values() {
-                    validate_complete_tool(&tool)?;
-                    tools.push(tool);
-                }
-                message.insert("tool_calls".into(), Value::Array(tools));
-            }
-            let mut output = json!({"index": index, "message": message,
-                "finish_reason": choice.finish.ok_or(Error::UnfinishedChoices)?});
-            if let Some(logprobs) = choice.logprobs {
-                output["logprobs"] = logprobs;
-            }
-            choices.push(output);
+            choice
+                .message
+                .entry("role")
+                .or_insert_with(|| json!("assistant"));
+            fields::finish_message(&mut choice.message)?;
+            let mut output = choice.metadata;
+            output.insert("index".into(), index.into());
+            output.insert("message".into(), Value::Object(choice.message));
+            output.insert(
+                "finish_reason".into(),
+                choice.finish.ok_or(Error::UnfinishedChoices)?,
+            );
+            choices.push(Value::Object(output));
         }
         self.root.insert("object".into(), "chat.completion".into());
         self.root.insert("choices".into(), Value::Array(choices));
@@ -216,73 +209,7 @@ impl Aggregator {
     }
 }
 
-pub(crate) fn validate_complete_tool(tool: &Value) -> Result<(), Error> {
-    let tool = object(tool)?;
-    known_keys(tool, &["id", "type", "function"])?;
-    if tool.get("type").and_then(Value::as_str) != Some("function") {
-        return Err(Error::Unsupported);
-    }
-    if !tool.get("id").is_some_and(Value::is_string) {
-        return Err(Error::InvalidChunk);
-    }
-    let function = object(tool.get("function").ok_or(Error::InvalidChunk)?)?;
-    known_keys(function, &["name", "arguments"])?;
-    if !function.get("name").is_some_and(Value::is_string)
-        || !function.get("arguments").is_some_and(Value::is_string)
-    {
-        return Err(Error::InvalidChunk);
-    }
-    Ok(())
-}
+pub(crate) use fields::validate_complete_tool;
 
-fn merge_metadata(target: &mut Map<String, Value>, key: &str, value: Value) -> Result<(), Error> {
-    if let Some(previous) = target.get(key) {
-        if !previous.is_null() && !value.is_null() && previous != &value {
-            return Err(Error::ConflictingMetadata);
-        }
-        if value.is_null() && !previous.is_null() {
-            return Ok(());
-        }
-    }
-    target.insert(key.to_owned(), value);
-    Ok(())
-}
-
-fn append_nullable(target: &mut Option<Value>, source: Option<&Value>) -> Result<(), Error> {
-    let Some(source) = source else { return Ok(()) };
-    if source.is_null() {
-        if target.is_none() {
-            *target = Some(Value::Null);
-        }
-        return Ok(());
-    }
-    let fragment = source.as_str().ok_or(Error::Unsupported)?;
-    let value = target.get_or_insert(Value::Null);
-    if value.is_null() {
-        *value = Value::String(String::new());
-    }
-    let Value::String(text) = value else {
-        return Err(Error::Unsupported);
-    };
-    text.push_str(fragment);
-    Ok(())
-}
-
-fn append_field(
-    target: &mut Map<String, Value>,
-    key: &str,
-    source: Option<&Value>,
-) -> Result<(), Error> {
-    // A null continuation adds no fragment and cannot supply a required complete field.
-    if let Some(source) = source.filter(|value| !value.is_null()) {
-        let fragment = source.as_str().ok_or(Error::Unsupported)?;
-        let value = target
-            .entry(key)
-            .or_insert_with(|| Value::String(String::new()));
-        let Value::String(text) = value else {
-            return Err(Error::Unsupported);
-        };
-        text.push_str(fragment);
-    }
-    Ok(())
-}
+#[cfg(test)]
+mod tests;

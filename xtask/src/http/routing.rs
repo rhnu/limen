@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use http::Method;
 use serde_json::{Value, json};
 
-use super::fixture::{Laboratory, Options, request};
+use super::fixture::{Fixture, Laboratory, Options, request};
 
 /// Check both protected endpoints, explicit models, header isolation, and single sends.
 pub async fn auth_routing(laboratory: &mut Laboratory<'_>) -> Result<()> {
@@ -91,11 +91,7 @@ pub async fn auth_routing(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 "upstream cookies excluded"
             );
             item.upstream.controls.lock().await.status = 307;
-            item.request(request(&[])).await?.error(
-                502,
-                "upstream_failed",
-                "redirect is an error",
-            )?;
+            redirect_failure(item).await?;
             ensure!(
                 item.upstream.controls.lock().await.records.len() == 2,
                 "one upstream send per request"
@@ -141,11 +137,7 @@ async fn dynamic_origin(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     }
                 }
                 item.upstream.controls.lock().await.status = 307;
-                item.request(request(&[])).await?.error(
-                    502,
-                    "upstream_failed",
-                    "dynamic target redirect is an error",
-                )?;
+                redirect_failure(item).await?;
                 ensure!(
                     item.upstream.controls.lock().await.records.len() == 3,
                     "dynamic target never follows a redirect or repeats generation"
@@ -154,4 +146,17 @@ async fn dynamic_origin(laboratory: &mut Laboratory<'_>) -> Result<()> {
             },
         )
         .await
+}
+
+async fn redirect_failure(item: &Fixture) -> Result<()> {
+    let reply = item.request(request(&[])).await?;
+    ensure!(
+        reply.status == 307
+            && reply.headers["location"] == "/redirect-target"
+            && reply.body["model"] == "real-model",
+        "redirect must retain upstream status, metadata and raw body"
+    );
+    item.statistics(reply.request_id()?, &[])
+        .await?
+        .outcome("failed", Some("upstream_failed"))
 }

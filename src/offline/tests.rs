@@ -11,6 +11,7 @@ use crate::bootstrap::Bootstrap;
 
 mod observation_output;
 mod policies;
+mod protocol;
 mod statistics;
 mod transport;
 

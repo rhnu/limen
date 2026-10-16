@@ -123,6 +123,39 @@ fn fragments_fill_missing_fields_without_mutating_previous_snapshots() {
 }
 
 #[test]
+fn increasing_snapshots_replace_each_count_without_adding_or_erasing() {
+    let mut tracker = UsageTracker::default();
+    tracker.observe(Some(&json!({"prompt_tokens":4,"completion_tokens":1})));
+    let partial = tracker.snapshot();
+    tracker.observe(Some(&json!({
+        "prompt_tokens":4,"completion_tokens":3,"total_tokens":7,
+        "prompt_tokens_details":{"cached_tokens":1},
+        "completion_tokens_details":{"reasoning_tokens":1},
+    })));
+    let intermediate = tracker.snapshot();
+    tracker.observe(Some(&json!({
+        "prompt_tokens":null,"completion_tokens":6,"total_tokens":10,
+        "prompt_tokens_details":{"cached_tokens":2},
+        "completion_tokens_details":null,
+    })));
+    tracker.observe(Some(&json!({
+        "prompt_tokens":5,"completion_tokens":null,"total_tokens":11,
+        "completion_tokens_details":{"reasoning_tokens":3},
+    })));
+    assert_eq!(partial.quality, UsageQuality::Partial);
+    assert_eq!(partial.output_tokens, Some(1));
+    assert_eq!(intermediate.output_tokens, Some(3));
+    assert_eq!(intermediate.quality, UsageQuality::Reported);
+    assert_eq!(
+        tracker.snapshot().to_json(),
+        json!({
+            "inputTokens":5,"outputTokens":6,"totalTokens":11,
+            "cachedInputTokens":2,"reasoningOutputTokens":3,"quality":"reported",
+        })
+    );
+}
+
+#[test]
 fn safe_integer_limits_and_integer_valued_floats_are_supported() {
     let stats = observed(&json!({
         "prompt_tokens":9_007_199_254_740_991_u64,
@@ -203,13 +236,13 @@ fn unknown_extensions_are_ignored_and_not_copied() {
 }
 
 #[test]
-fn conflicting_core_and_detail_counts_suppress_all_counts_permanently() {
+fn regressing_core_and_detail_counts_suppress_all_counts_permanently() {
     for changed in [
-        json!({"prompt_tokens":5}),
-        json!({"completion_tokens":7}),
-        json!({"total_tokens":11}),
-        json!({"prompt_tokens_details":{"cached_tokens":3}}),
-        json!({"completion_tokens_details":{"reasoning_tokens":4}}),
+        json!({"prompt_tokens":3}),
+        json!({"completion_tokens":5}),
+        json!({"total_tokens":9}),
+        json!({"prompt_tokens_details":{"cached_tokens":1}}),
+        json!({"completion_tokens_details":{"reasoning_tokens":2}}),
     ] {
         let mut tracker = UsageTracker::default();
         let usage = json!({
@@ -229,8 +262,8 @@ fn conflicting_core_and_detail_counts_suppress_all_counts_permanently() {
 fn invalid_quality_takes_precedence_independent_of_fragment_order() {
     for fragments in [
         [
-            json!({"prompt_tokens":1}),
             json!({"prompt_tokens":2}),
+            json!({"prompt_tokens":1}),
             json!({"total_tokens":"bad"}),
         ],
         [

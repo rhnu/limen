@@ -43,7 +43,7 @@ export const config = {
           ctx.replaceEvents([ctx.event, { ...ctx.event, choices: [] }]);
         },
         onStreamEvent(ctx) {
-          if (ctx.event.choices.length === 0) ctx.replaceEvents([]);
+          if (ctx.event.choices?.length === 0) ctx.replaceEvents([]);
           else ctx.event.model = ctx.meta.model;
         },
       }],

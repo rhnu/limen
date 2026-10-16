@@ -77,7 +77,7 @@ fn event_size_respects_single_and_cumulative_limits() {
 fn hook_output_events_still_reject_malformed_chunks() {
     assert_eq!(
         validate_event_payload(
-            &json!({}),
+            &json!({"choices":[{"index":-1}]}),
             &ResourceLimits::default(),
             ErrorCode::HookFailed,
             "onStreamEvent"
@@ -144,8 +144,14 @@ fn outgoing_usage_tail_cannot_gain_content_or_tools_from_hooks() {
             tracker: &mut tracker,
             frames: &mut frames,
             max_event_bytes: 4096,
+            frame: None,
+            stream_started: false,
         }
-        .consume(&[tail.clone()])
+        .consume(
+            &[tail.clone()],
+            &mut EventBudget::new(),
+            &ResourceLimits::default(),
+        )
         .unwrap();
         assert_eq!(frames.len(), 1);
         tail["choices"][0]["delta"] = delta;
@@ -153,11 +159,83 @@ fn outgoing_usage_tail_cannot_gain_content_or_tools_from_hooks() {
             tracker: &mut tracker,
             frames: &mut frames,
             max_event_bytes: 4096,
+            frame: None,
+            stream_started: false,
         }
-        .consume(&[tail])
+        .consume(&[tail], &mut EventBudget::new(), &ResourceLimits::default())
         .unwrap_err();
         assert_eq!(failure.code, ErrorCode::HookFailed);
         assert_eq!(failure.phase, "onStreamEvent");
         assert_eq!(frames.len(), 1);
     }
+}
+
+fn data_frame(bytes: &[u8]) -> limen_chat::Frame {
+    let mut decoder = limen_chat::FrameDecoder::new(4096);
+    for byte in bytes {
+        if let Some(frame) = decoder.push(*byte).unwrap()
+            && frame.data.is_some()
+        {
+            return frame;
+        }
+    }
+    panic!("complete synthetic frame required")
+}
+
+#[test]
+fn expanded_frames_emit_a_source_bom_once_and_preserve_both_data_events() {
+    let first = json!({"choices":[{"index":0,"delta":{"content":"first"}}]});
+    let last = json!({"choices":[{"index":0,"delta":{"content":"last"},"finish_reason":"stop"}]});
+    let frame = data_frame(format!("\u{feff}id: source\ndata: {first}\n\n").as_bytes());
+    let mut tracker = limen_chat::ChunkTracker::new(1);
+    let mut frames = Vec::new();
+    EventConsumer::Stream {
+        tracker: &mut tracker,
+        frames: &mut frames,
+        max_event_bytes: 4096,
+        frame: Some(&frame),
+        stream_started: false,
+    }
+    .consume(
+        &[first.clone(), last.clone()],
+        &mut EventBudget::new(),
+        &ResourceLimits::default(),
+    )
+    .unwrap();
+    tracker.finish().unwrap();
+    let bytes = frames.concat();
+    let mut decoder = limen_chat::FrameDecoder::new(4096);
+    let mut data = Vec::new();
+    for byte in bytes {
+        if let Some(frame) = decoder.push(byte).unwrap()
+            && let limen_chat::Event::Chunk(value) = frame.event().unwrap()
+        {
+            data.push(value);
+        }
+    }
+    decoder.finish().unwrap();
+    assert_eq!(data, [first, last]);
+}
+
+#[test]
+fn preserved_outer_fields_consume_the_shared_encoded_output_budget() {
+    let event = json!({"choices":[{"index":0,"delta":{"content":"x"}}]});
+    let frame = data_frame(format!(": {}\ndata: {event}\n\n", "x".repeat(700)).as_bytes());
+    let limits = ResourceLimits {
+        max_output_bytes: 1000,
+        ..ResourceLimits::default()
+    };
+    let mut tracker = limen_chat::ChunkTracker::new(1);
+    let mut frames = Vec::new();
+    let failure = EventConsumer::Stream {
+        tracker: &mut tracker,
+        frames: &mut frames,
+        max_event_bytes: 4096,
+        frame: Some(&frame),
+        stream_started: false,
+    }
+    .consume(&[event.clone(), event], &mut EventBudget::new(), &limits)
+    .unwrap_err();
+    assert_eq!(failure.code, ErrorCode::HookFailed);
+    assert_eq!(frames, [] as [Vec<u8>; 0]);
 }

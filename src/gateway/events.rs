@@ -11,36 +11,64 @@ use super::{
 
 /// Downstream batches must be fully encodable before their hook effects commit.
 pub(super) enum EventConsumer<'a> {
-    Upstream,
+    Upstream {
+        frame: Option<&'a limen_chat::Frame>,
+    },
     Stream {
         tracker: &'a mut limen_chat::ChunkTracker,
         frames: &'a mut Vec<Vec<u8>>,
         max_event_bytes: usize,
+        frame: Option<&'a limen_chat::Frame>,
+        stream_started: bool,
     },
 }
 
 impl EventConsumer<'_> {
     fn phase(&self) -> &'static str {
         match self {
-            Self::Upstream => "onUpstreamEvent",
+            Self::Upstream { .. } => "onUpstreamEvent",
             Self::Stream { .. } => "onStreamEvent",
         }
     }
 
-    fn consume(&mut self, events: &[Value]) -> Result<(), Failure> {
+    fn frame(&self) -> Option<&limen_chat::Frame> {
+        match self {
+            Self::Upstream { frame } | Self::Stream { frame, .. } => *frame,
+        }
+    }
+
+    fn consume(
+        &mut self,
+        events: &[Value],
+        budget: &mut EventBudget,
+        limits: &ResourceLimits,
+    ) -> Result<(), Failure> {
         if let Self::Stream {
             tracker,
             frames,
             max_event_bytes,
+            frame,
+            stream_started,
         } = self
         {
             let mut batch = Vec::with_capacity(events.len());
             for event in events {
                 // A failure terminates the request, so tracker changes need no rollback.
                 tracker.push(event).map_err(stream_failure)?;
-                batch.push(
-                    limen_chat::encode_chunk(event, *max_event_bytes).map_err(stream_failure)?,
-                );
+                let bytes = if let Some(frame) = frame {
+                    frame.encode(event, *max_event_bytes)
+                } else {
+                    limen_chat::encode_chunk(event, *max_event_bytes)
+                };
+                let mut bytes = bytes.map_err(stream_failure)?;
+                if frame.is_some_and(limen_chat::Frame::has_leading_bom)
+                    && (*stream_started || !batch.is_empty())
+                    && bytes.starts_with(b"\xef\xbb\xbf")
+                {
+                    bytes.drain(..3);
+                }
+                budget.charge_wire(bytes.len(), limits)?;
+                batch.push(bytes);
             }
             frames.extend(batch);
         }
@@ -56,6 +84,7 @@ fn stream_failure(source: limen_chat::Error) -> Failure {
 pub(super) struct EventBudget {
     events: usize,
     bytes: usize,
+    wire_bytes: usize,
 }
 
 impl EventBudget {
@@ -63,7 +92,16 @@ impl EventBudget {
         Self {
             events: 0,
             bytes: 0,
+            wire_bytes: 0,
         }
+    }
+
+    fn charge_wire(&mut self, bytes: usize, limits: &ResourceLimits) -> Result<(), Failure> {
+        if bytes > limits.max_output_bytes.saturating_sub(self.wire_bytes) {
+            return Err(Failure::new(ErrorCode::HookFailed, "onStreamEvent"));
+        }
+        self.wire_bytes += bytes;
+        Ok(())
     }
 
     fn charge(
@@ -109,7 +147,7 @@ impl Gateway {
             .filter(|step| event_hook(step, phase).is_some())
             .count();
         if remaining == 0 {
-            consumer.consume(&events)?;
+            consumer.consume(&events, budget, &self.server.limits)?;
         }
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             let Some(hook) = event_hook(step, phase) else {
@@ -121,6 +159,9 @@ impl Gateway {
             for event in events {
                 let mut context = lifecycle.context(phase);
                 context["event"] = event;
+                context["sse"] = consumer.frame().map_or(Value::Null, |frame| {
+                    serde_json::json!({"event":frame.event,"id":frame.id,"retry":frame.retry})
+                });
                 let mut output = self
                     .hook(hook, phase, Some(&step.name), context, lifecycle)
                     .await?;
@@ -145,7 +186,7 @@ impl Gateway {
                 // Earlier steps may still transform these events. The final step's
                 // whole batch must satisfy its consumer before any of its effects commit.
                 if final_hook {
-                    consumer.consume(produced)?;
+                    consumer.consume(produced, budget, &self.server.limits)?;
                 }
                 commit_effects(lifecycle, &mut output)?;
                 let Value::Array(produced) = output.context["events"].take() else {

@@ -15,7 +15,7 @@
 | `onRequest`       | 认证、正文校验后，路由前          | `body`、`state`；可 `reject()`                      |
 | `beforeSend`      | defaults 合并后，发送前           | `body`、`url`、`headers`、`state`；可 `reject()`    |
 | `afterReceive`    | 收到上游头后，读正文前            | `status`、响应 `headers`、`state`                   |
-| `onUpstreamEvent` | 每个真实上游 SSE chunk            | `event`、事件替换、`state`                          |
+| `onUpstreamEvent` | 每个真实上游 SSE JSON 数据事件    | `event`、事件替换、`state`                          |
 | `onResponse`      | 完整 JSON，包括 SSE 聚合结果      | `body`、`state`                                     |
 | `onStreamEvent`   | 每个即将发给客户端的 chunk        | `event`、事件替换、`state`                          |
 | `onErrorResponse` | 失败已确定、错误响应尚未发出      | `status`、`body`、`contentType`、`headers`、`state` |
@@ -122,17 +122,17 @@ const forwardTenant = {
 
 ### 原生用量与阶段耗时
 
-`stats.usage` 在脚本处理前提取原始上游的 `usage`。JSON 在完整解析后采样；SSE 在合法 chunk 进入 `onUpstreamEvent` 前采样。脚本删除、替换或展开事件不会改变这些事实，网关也不自动设置 `stream_options.include_usage`。
+`stats.usage` 在脚本处理前提取原始上游的 `usage`。JSON 在完整解析后采样；SSE 在 Chat 数据事件进入 `onUpstreamEvent` 前采样。脚本删除、替换或展开事件不会改变这些事实，网关也不自动设置 `stream_options.include_usage`。
 
 | 字段                                           | 含义                                                                                                                          |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `source`                                       | `json`、`sse` 或尚未进入正文处理时的 `null`                                                                                   |
-| `quality`                                      | `missing` 无有效计数；`partial` 核心三项不齐；`reported` 核心三项齐全；`invalid` 已知计数字段非法；`conflicting` 多次报告冲突 |
+| `quality`                                      | `missing` 无有效计数；`partial` 核心三项不齐；`reported` 核心三项齐全；`invalid` 已知计数字段非法；`conflicting` 累计计数回退 |
 | `upstreamCompleted`                            | 原始 JSON 完整解析，或原始 SSE 同时满足 `[DONE]` 和 choice 完成；不代表后续策略、转换或下游成功                               |
 | `inputTokens` / `outputTokens` / `totalTokens` | 上游的 prompt、completion 和 total 计数                                                                                       |
 | `cachedInputTokens` / `reasoningOutputTokens`  | 上游 details 中的缓存输入和推理输出子计数                                                                                     |
 
-计数只接受非负安全整数，缺失为 `null`，零仍为零。空或 `null` 报告不会擦除已有值，累计 usage 不按 chunk 相加；相同报告可重复出现，冲突或非法报告会抑制全部有效计数。未知扩展不复制，缺失总数不估算，子计数不再次加入总数。统计异常本身不新增请求失败；既有协议校验仍然生效。截断流可能已报告 usage，也可能没有，不能将缺失解释为未计费。
+计数只接受非负安全整数，缺失为 `null`，零仍为零。缺失、空或 `null` 报告不会擦除已有值，累计 usage 按字段保留最新非递减快照，不按 chunk 相加。回退或非法报告会持续抑制全部有效计数。未知扩展不复制，缺失总数不估算，子计数不再次加入总数。统计异常本身不新增请求失败。`reported` 只说明计数齐全，需要结合 `upstreamCompleted` 判断协议是否完成；截断流也可能已报告 usage，缺失不能解释为未计费。
 
 `stats.timings` 使用毫秒，保留亚毫秒小数；尚未进入的阶段为 `null`。新用量与耗时在请求终态确定时冻结，`onError` 和 `onFinish` 看到相同内容。既有 `elapsedMs` 仍在每次观察时采样。
 
@@ -191,7 +191,7 @@ const observeLimit = {
 const dropEmpty = {
   name: "drop-empty",
   onUpstreamEvent(ctx) {
-    if (ctx.event.choices.length === 0 && ctx.event.usage == null) {
+    if (ctx.event.choices?.length === 0 && ctx.event.usage == null) {
       ctx.replaceEvents([]);
     }
   },
@@ -200,7 +200,9 @@ const dropEmpty = {
 
 将 `dropEmpty` 放入所需 provider 或 model 的 pipeline。替换数组中的每个事件都会依次进入后续 step。`onUpstreamEvent` 的输出用于聚合或继续流处理；`onStreamEvent` 的输出只用于下游 SSE。不能操作 `[DONE]`，它由 Rust 在整体成功后发送。
 
-事件必须保持合法 Chat chunk 和 choice 完成语义。丢弃所有 choice、丢掉必要的 finish 事件或继续写入已完成 choice 会失败。一个源事件经过所有事件 hook 的累计产出受 `max_output_events`、`max_output_bytes` 限制，不能逐步展开绕过限额。
+`ctx.event` 是开放的 Chat JSON 对象，可能是内容增量、usage、标注或附加元数据。`choices`、`delta`、`finish_reason` 可能缺失，正文也可能是内容块数组；脚本读取时需要按形状判断。已完成 choice 可接收元数据尾事件，但不能继续生成正文、工具参数或推理内容。丢弃所有生成 choice 或必要的 finish 事件会失败。一个源事件经过所有事件 hook 的累计产出受 `max_output_events`、`max_output_bytes` 限制，不能逐步展开绕过限额。
+
+事件 hook 还可读取 `ctx.sse`：原始 SSE 的 `event`、`id`、`retry` 只读字段；由完整 JSON 合成的事件为 `null`。修改 JSON 数据不会删除原始 SSE 外层字段。注释和无 data 帧直接作为存活信号传递，不进入业务事件 hook；错误和 `[DONE]` 由协议终结路径处理。
 
 ## JSON 边界
 

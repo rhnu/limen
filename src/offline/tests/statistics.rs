@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::{Case, Error, Value, execute, fixtures, fs, group, json};
 
 #[tokio::test(flavor = "current_thread")]
@@ -17,6 +19,85 @@ async fn run_json_case(value: &Value) -> Result<super::Report, Error> {
     let path = directory.path().join("statistics.case.json");
     fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
     execute(&fixtures("statistics").join("server.toml"), &path).await
+}
+
+async fn run_usage_stream(reports: &[Value], done: bool, usage: Value) -> super::Report {
+    let directory = tempfile::tempdir().unwrap();
+    let content = json!({"id":"statistics","object":"chat.completion.chunk","created":1,
+        "model":"real-model","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},
+        "finish_reason":"stop"}]});
+    let mut bytes = format!("data: {content}\n\n");
+    for usage in reports {
+        let event = json!({"id":"statistics","object":"chat.completion.chunk","created":1,
+            "model":"real-model","choices":[],"usage":usage});
+        writeln!(bytes, "data: {event}\n").unwrap();
+    }
+    if done {
+        bytes.push_str("data: [DONE]\n\n");
+    }
+    fs::write(directory.path().join("usage.sse"), bytes).unwrap();
+    let mut case = json_case();
+    case["request"]["mode"] = json!("delete");
+    case["upstream"] = json!({"status":200,"headers":{"content-type":["text/event-stream"]},
+        "bodyFile":"usage.sse"});
+    case["expect"] = if done {
+        let mut body = case["expect"]["response"]["body"].clone();
+        body.as_object_mut().unwrap().remove("usage");
+        json!({"sent":true,"response":{"status":200,"body":body},"stats":{"usage":usage}})
+    } else {
+        json!({"sent":true,"response":{"status":502},
+            "error":{"code":"upstream_protocol","status":502,"phase":"upstream_sse"},
+            "stats":{"usage":usage}})
+    };
+    let path = directory.path().join("usage.case.json");
+    fs::write(&path, serde_json::to_vec(&case).unwrap()).unwrap();
+    execute(&fixtures("statistics").join("server.toml"), &path)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cumulative_usage_growth_nulls_and_partial_reports_preserve_latest_native_counts() {
+    let reports = [
+        json!({"prompt_tokens":4,"completion_tokens":1}),
+        json!({"prompt_tokens":4,"completion_tokens":3,"total_tokens":7,
+            "prompt_tokens_details":{"cached_tokens":1}}),
+        Value::Null,
+        json!({"prompt_tokens":null,"completion_tokens":6,"total_tokens":10,
+            "prompt_tokens_details":{"cached_tokens":2}}),
+        json!({"prompt_tokens":5,"total_tokens":11,
+            "completion_tokens_details":{"reasoning_tokens":3}}),
+    ];
+    for done in [false, true] {
+        let usage = json!({"inputTokens":5,"outputTokens":6,"totalTokens":11,
+            "cachedInputTokens":2,"reasoningOutputTokens":3,"quality":"reported",
+            "source":"sse","upstreamCompleted":done});
+        let report = run_usage_stream(&reports, done, usage).await;
+        assert!(report.passed(), "{}", report.mismatches.join(", "));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn malformed_native_usage_affects_quality_without_failing_json_or_sse_requests() {
+    for invalid in [
+        json!(false),
+        json!([]),
+        json!("invalid"),
+        json!({"total_tokens":-1}),
+    ] {
+        let mut usage = json!({"inputTokens":null,"outputTokens":null,"totalTokens":null,
+            "cachedInputTokens":null,"reasoningOutputTokens":null,"quality":"invalid",
+            "source":"sse","upstreamCompleted":true});
+        let report = run_usage_stream(std::slice::from_ref(&invalid), true, usage.clone()).await;
+        assert!(report.passed(), "{}", report.mismatches.join(", "));
+
+        let mut case = json_case();
+        case["upstream"]["body"]["usage"] = invalid;
+        usage["source"] = json!("json");
+        case["expect"]["stats"]["usage"] = usage;
+        let report = run_json_case(&case).await.unwrap();
+        assert!(report.passed(), "{}", report.mismatches.join(", "));
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -91,3 +91,31 @@ fn freezing_request_statistics_excludes_cleanup_and_late_work() {
     assert_eq!(frozen["timings"]["requestMs"], 10.0);
     assert!(frozen["timings"]["hooks"].as_object().unwrap().is_empty());
 }
+
+#[test]
+fn usage_quality_and_upstream_completion_are_independent_frozen_facts() {
+    let start = Instant::now();
+    for completed in [false, true] {
+        for (usage, quality) in [
+            (
+                json!({"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}),
+                "reported",
+            ),
+            (json!({"prompt_tokens":"invalid"}), "invalid"),
+        ] {
+            let mut stats = Statistics {
+                source: Some("sse"),
+                upstream_completed: completed,
+                ..Statistics::default()
+            };
+            stats.usage.observe(Some(&usage));
+            stats.freeze(start, start);
+            stats.upstream_completed = !completed;
+            stats.usage.observe(Some(&json!({"total_tokens":99})));
+            let frozen = stats.snapshot();
+            assert_eq!(frozen["usage"]["quality"], quality);
+            assert_eq!(frozen["usage"]["upstreamCompleted"], completed);
+            assert_eq!(frozen["usage"]["source"], "sse");
+        }
+    }
+}

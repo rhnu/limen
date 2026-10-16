@@ -51,7 +51,7 @@
     "outbound": {
       "headers": {
         "accept": [
-          "application/json"
+          "text/event-stream"
         ],
         "authorization": [
           "Bearer synthetic-upstream-secret"

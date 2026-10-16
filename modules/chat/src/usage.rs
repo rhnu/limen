@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-/// Completeness and trustworthiness of the upstream's explicit token report.
+/// Completeness and trustworthiness of explicit counts, independent of protocol completion.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum UsageQuality {
     #[default]
@@ -61,7 +61,7 @@ pub struct UsageTracker {
 impl UsageTracker {
     /// Observes a response's `usage` field. Missing and null values never erase prior counts.
     ///
-    /// Reports are cumulative: identical values are accepted, distinct non-null values conflict.
+    /// Reports are cumulative: nondecreasing values replace earlier counts; regressions conflict.
     /// Malformed reports affect usage quality only and never return a request error.
     pub fn observe(&mut self, usage: Option<&Value>) {
         let Some(usage) = usage.filter(|value| !value.is_null()) else {
@@ -81,7 +81,7 @@ impl UsageTracker {
         for (previous, reported) in self.counts.iter_mut().zip(reported) {
             match reported {
                 Ok(Some(value)) => {
-                    if previous.is_some_and(|previous| previous != value) {
+                    if previous.is_some_and(|previous| value < previous) {
                         self.conflicting = true;
                     } else {
                         *previous = Some(value);

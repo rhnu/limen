@@ -2,7 +2,7 @@ data: {"id":"statistics","object":"chat.completion.chunk","created":1,"model":"r
 
 data: {"id":"statistics","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":3}}}
 
-data: {"id":"statistics","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":6,"total_tokens":11}}
+data: {"id":"statistics","object":"chat.completion.chunk","created":1,"model":"real-model","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":6,"total_tokens":9}}
 
 data: [DONE]
 

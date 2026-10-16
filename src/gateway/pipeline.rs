@@ -14,7 +14,7 @@ use super::{
     error::{ErrorCode, Failure},
     json, json_response,
     lifecycle::Lifecycle,
-    logic,
+    logic, protocol,
     response::Delivery,
     stats::WaitKind,
     upstream::is_json_media,
@@ -120,22 +120,12 @@ impl Gateway {
         let (body, url, mut headers) = self.before_send(provider, model, body, lifecycle).await?;
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
-        logic::validate_body(&body, &self.server.limits)?;
-        let bytes = json::encode(
-            &body,
-            self.server.limits.max_output_bytes,
-            ErrorCode::PayloadTooLarge,
-            "upstream_body",
-        )?;
+        let bytes = protocol::encode_request(&body, &mut headers, &self.server.limits)?;
         lifecycle.outbound_bytes = bytes.len();
         lifecycle.final_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         lifecycle.target = Some(logic::safe_target(&url));
         drop(body);
         lifecycle.phase = "upstream_send";
-        headers.insert(
-            header::CONTENT_TYPE,
-            http::HeaderValue::from_static("application/json"),
-        );
         lifecycle.statistics.timings.start_upstream(Instant::now());
         let response = self.transport.send(url, headers, bytes).await?;
         self.receive(provider, model, response, lifecycle, delivery)

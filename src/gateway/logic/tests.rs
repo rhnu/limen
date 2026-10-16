@@ -78,7 +78,7 @@ fn client_auth_handles_case_and_multiple_values_without_forwarding_credentials()
     assert!(authorize(&auth, &headers).is_ok());
     let outgoing = outbound_headers(&config().providers["primary"]).unwrap();
     assert_eq!(outgoing[header::AUTHORIZATION], "Bearer upstream-token");
-    assert_eq!(outgoing[header::ACCEPT], "application/json");
+    assert!(!outgoing.contains_key(header::ACCEPT));
     assert!(!outgoing.contains_key(header::COOKIE));
     headers.append(
         header::AUTHORIZATION,
