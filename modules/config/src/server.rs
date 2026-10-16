@@ -13,6 +13,7 @@ use serde_saphyr::Location;
 use crate::{
     ConfigError, ConfigErrorKind,
     error::{present_option, safe_path},
+    json::MAX_JSON_DEPTH,
 };
 
 const MAX_SERVER_BYTES: usize = 1024 * 1024;
@@ -292,7 +293,7 @@ resource_limits! {
     max_aggregate_events: usize = 100_000, 1 => 1_000_000;
     max_modules: usize = 128, 1 => 4096;
     max_source_bytes: usize = 4 * 1024 * 1024, 1 => 64 * 1024 * 1024;
-    max_json_depth: usize = 64, 1 => 128;
+    max_json_depth: usize = 64, 1 => MAX_JSON_DEPTH;
     max_json_nodes: usize = 100_000, 1 => 1_000_000;
 }
 

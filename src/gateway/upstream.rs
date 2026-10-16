@@ -165,9 +165,9 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
         let bytes = self.receive_bytes(response, lifecycle).await?;
-        let body: Value = serde_json::from_slice(&bytes).map_err(|source| {
-            Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source)
-        })?;
+        let body = limen_config::parse_json_slice(&bytes, limen_config::MAX_JSON_DEPTH).map_err(
+            |source| Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source),
+        )?;
         validate_json(
             &body,
             self.server.limits.max_json_depth,
@@ -332,6 +332,19 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
     ) -> Result<(), Failure> {
+        if frame.is_none() {
+            // Native SSE was checked before its upstream tracker, and the VM
+            // validates hook outputs. Newly synthesized chunks have their own
+            // JSON boundary; their final encoded bytes are checked by the consumer.
+            validate_json(
+                &event,
+                self.server.limits.max_json_depth,
+                self.server.limits.max_json_nodes,
+            )
+            .map_err(|source| {
+                Failure::new(ErrorCode::UpstreamProtocol, "onStreamEvent").with_source(source)
+            })?;
+        }
         if alias {
             apply_alias(&mut event, lifecycle);
         }

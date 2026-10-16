@@ -176,7 +176,7 @@ fn read(path: &Path, limit: usize) -> Result<Vec<u8>, Error> {
 pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, Error> {
     let limits = &loaded.server.limits;
     let bytes = read(path, limits.max_source_bytes)?;
-    let value: Value = serde_json::from_slice(&bytes)?;
+    let value = limen_config::parse_json_slice(&bytes, limen_config::MAX_JSON_DEPTH)?;
     limen_config::validate_json(&value, limits.max_json_depth, limits.max_json_nodes)
         .map_err(Error::JsonLimits)?;
     let case: Case = serde_json::from_value(value)?;
@@ -379,7 +379,8 @@ fn compare(
         if let Some(body) = response.body {
             check(
                 "response.body",
-                serde_json::from_slice::<Value>(bytes).is_ok_and(|actual| actual == body),
+                limen_config::parse_json_slice(bytes, limen_config::MAX_JSON_DEPTH)
+                    .is_ok_and(|actual| actual == body),
             );
         }
         if response.events.is_some() || response.done.is_some() {

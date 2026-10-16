@@ -864,6 +864,7 @@ name = "limen-chat"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "limen-config",
  "serde_json",
  "thiserror",
 ]

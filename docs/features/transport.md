@@ -21,6 +21,8 @@
 
 JSON → JSON 要求正文为合法 JSON 对象，保留扩展字段，不强制完整 Chat response schema。SSE 分帧与 Chat 解释独立；SSE → SSE 保留原始事件的命名、ID、retry、注释与未知 JSON 扩展。数据未变化时保留原始载荷，别名或 hook 改写时只重编码 data；改写后的字节不保证相同。
 
+原生 SSE 的 `max_event_bytes` 按收到的完整帧计算；改写后的帧按实际编码字节检查，不用规范化 JSON 的大小替代原帧大小。JSON 解析在进入下一层前限制嵌套，支持配置允许的最大深度 128；节点数与安全数字检查仍作用于解析后的 JSON 树。
+
 JSON ↔ SSE 转换按字段语义处理文本、内容块、`refusal`、字符串与结构化推理、function/custom 工具、legacy function_call、logprobs、音频、多 choice、累计 usage 和作用域明确的标注元数据。工具按 choice 与工具 index 组合；参数片段按顺序追加，空 continuation 不抹除已有值。累计 usage 保留最新快照而不求和，流专用 `obfuscation` 在跨形时移除。
 
 内容块转换支持 text、thinking 和 refusal，保留块顺序及字符串与数组之间的转换。音频的独立 padded base64 片段先按字节合并再编码；未 padding 的连续片段按连续编码处理。

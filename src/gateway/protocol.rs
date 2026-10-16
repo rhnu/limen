@@ -47,7 +47,7 @@ pub(super) fn interpret_frame(frame: &Frame, limits: &ResourceLimits) -> Result<
             && let Some(data) = &frame.data
             && data.len() <= limits.max_output_bytes
         {
-            let parsed = serde_json::from_str::<Value>(data).ok();
+            let parsed = limen_config::parse_json_str(data, limen_config::MAX_JSON_DEPTH).ok();
             if parsed.as_ref().is_some_and(|value| {
                 validate_json(value, limits.max_json_depth, limits.max_json_nodes).is_ok()
             }) {

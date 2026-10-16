@@ -75,9 +75,10 @@ pub fn parse_request(bytes: &[u8], limits: &ResourceLimits) -> Result<(Value, bo
     if bytes.len() > limits.max_body_bytes {
         return Err(Failure::new(ErrorCode::PayloadTooLarge, "request_body"));
     }
-    let body = serde_json::from_slice(bytes).map_err(|source| {
-        Failure::new(ErrorCode::InvalidRequest, "request_body").with_source(source)
-    })?;
+    let body =
+        limen_config::parse_json_slice(bytes, limen_config::MAX_JSON_DEPTH).map_err(|source| {
+            Failure::new(ErrorCode::InvalidRequest, "request_body").with_source(source)
+        })?;
     validate_body(&body, limits)?;
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     Ok((body, stream))

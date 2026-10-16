@@ -67,6 +67,45 @@ fn config() -> BusinessConfig {
 }
 
 #[test]
+fn request_parser_accepts_the_configured_maximum_json_depth() {
+    let limits = ResourceLimits {
+        max_json_depth: 128,
+        ..ResourceLimits::default()
+    };
+    let mut nested = Value::Null;
+    for _ in 0..127 {
+        nested = Value::Array(vec![nested]);
+    }
+    let mut body = json!({"model":"chat", "messages":[{}], "extension":nested});
+    let (parsed, stream) = parse_request(&serde_json::to_vec(&body).unwrap(), &limits).unwrap();
+    assert_eq!(parsed, body);
+    assert!(!stream);
+    body["extension"] = Value::Array(vec![body["extension"].take()]);
+    let failure = parse_request(&serde_json::to_vec(&body).unwrap(), &limits).unwrap_err();
+    assert_eq!(failure.code, ErrorCode::InvalidRequest);
+    assert_eq!(failure.phase, "request_body");
+    assert!(
+        std::error::Error::source(&failure)
+            .unwrap()
+            .is::<serde_json::Error>()
+    );
+}
+
+#[test]
+fn request_tree_limits_keep_last_wins_duplicate_key_semantics() {
+    let limits = ResourceLimits {
+        max_json_depth: 4,
+        ..ResourceLimits::default()
+    };
+    let discarded = format!("{}null{}", "[".repeat(8), "]".repeat(8));
+    let bytes = format!(
+        "{{\"model\":\"chat\",\"messages\":[{{}}],\"extension\":{discarded},\"extension\":null}}"
+    );
+    let (body, _) = parse_request(bytes.as_bytes(), &limits).unwrap();
+    assert!(body["extension"].is_null());
+}
+
+#[test]
 fn client_auth_handles_case_and_multiple_values_without_forwarding_credentials() {
     let auth = ClientAuth::Bearer("client-token".to_owned());
     let mut headers = HeaderMap::new();

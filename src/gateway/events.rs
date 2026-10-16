@@ -133,12 +133,9 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<Vec<Value>, Failure> {
         let phase = consumer.phase();
-        validate_event(
-            &event,
-            &self.server.limits,
-            ErrorCode::UpstreamProtocol,
-            phase,
-        )?;
+        // Callers establish source JSON and Chat guarantees before this stage.
+        // Only fresh hook outputs need validation and expansion accounting here;
+        // counting normalized input JSON could reject an unchanged raw SSE frame.
         let mut events = vec![event];
         let mut remaining = provider
             .pipeline
@@ -206,17 +203,6 @@ fn event_hook(step: &limen_config::PipelineStep, phase: &str) -> Option<limen_sc
         "onStreamEvent" => step.on_stream_event,
         _ => None,
     }
-}
-
-fn validate_event(
-    event: &Value,
-    limits: &ResourceLimits,
-    code: ErrorCode,
-    phase: &'static str,
-) -> Result<usize, Failure> {
-    limen_config::validate_json(event, limits.max_json_depth, limits.max_json_nodes)
-        .map_err(|source| Failure::new(code, phase).with_source(source))?;
-    validate_event_payload(event, limits, code, phase)
 }
 
 fn validate_event_payload(

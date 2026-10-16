@@ -15,6 +15,22 @@ fn frames(input: &[u8], limit: usize) -> Result<Vec<Frame>, Error> {
 }
 
 #[test]
+fn data_at_the_shared_depth_limit_can_be_interpreted_and_preserved() {
+    let mut extension = Value::Null;
+    for _ in 0..127 {
+        extension = Value::Array(vec![extension]);
+    }
+    let value = json!({"choices":[], "extension":extension});
+    let input = format!("data: {value}\n\n");
+    let frame = frames(input.as_bytes(), 1024).unwrap().remove(0);
+    assert_eq!(frame.event().unwrap(), Event::Chunk(value.clone()));
+    assert_eq!(frame.encode(&value, 1024).unwrap(), input.as_bytes());
+    let input = format!("data: {{\"extension\":[{}]}}\n\n", value["extension"]);
+    let frame = frames(input.as_bytes(), 1024).unwrap().remove(0);
+    assert!(matches!(frame.event(), Err(Error::Json(_))));
+}
+
+#[test]
 fn preserves_raw_fields_comments_and_named_chat_events() {
     let input = b": heartbeat\nid: 001\nretry: 00042\nevent: custom\nx-extra: keep\ndata: {\ndata: \"choices\": []}\n\n";
     let output = frames(input, 1024).unwrap();

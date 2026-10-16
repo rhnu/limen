@@ -152,10 +152,9 @@ impl Delivery {
                 lifecycle.response_headers.clone(),
             ));
         } else if self.sender.is_some() && !self.done_sent && failure.code != ErrorCode::Cancelled {
-            let native = failure
-                .response
-                .as_ref()
-                .and_then(|response| serde_json::from_slice::<Value>(&response.body).ok());
+            let native = failure.response.as_ref().and_then(|response| {
+                limen_config::parse_json_slice(&response.body, limen_config::MAX_JSON_DEPTH).ok()
+            });
             let envelope = native.unwrap_or_else(|| failure.error_json(&lifecycle.request_id));
             // Native structured errors were bounded at the protocol boundary.
             // If their encoded framing cannot fit, still terminate without DONE.

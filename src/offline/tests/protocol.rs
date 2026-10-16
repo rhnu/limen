@@ -8,6 +8,7 @@ use crate::bootstrap::Bootstrap;
 enum Input<'a> {
     Sse(&'a str),
     Json(Value),
+    RawJson(&'a str),
 }
 
 async fn run(
@@ -35,6 +36,10 @@ async fn run(
         },
         Input::Json(body) => {
             json!({"status":200,"headers":{"content-type":["application/json"]},"body":body})
+        },
+        Input::RawJson(bytes) => {
+            fs::write(directory.path().join("input.json"), bytes).unwrap();
+            json!({"status":200,"headers":{"content-type":["application/json"]},"bodyFile":"input.json"})
         },
     };
     let case = json!({"name":"protocol-boundary",
@@ -99,6 +104,37 @@ fn usage(source: &str, completed: bool) -> Value {
 fn error(code: &str, phase: &str) -> Value {
     let status = if code == "hook_failed" { 500 } else { 502 };
     json!({"code":code,"status":status,"phase":phase})
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn maximum_json_depth_is_supported_by_both_upstream_formats() {
+    let extension = format!("{}null{}", "[".repeat(127), "]".repeat(127));
+    let json_body = format!("{{\"extension\":{extension}}}");
+    let sse = format!(
+        "data: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}],\"extension\":{extension}}}\n\ndata: [DONE]\n\n"
+    );
+    for (input, stream, source) in [
+        (Input::RawJson(&json_body), false, "json"),
+        (Input::Sse(&sse), true, "sse"),
+    ] {
+        let mut response = json!({"status":200});
+        if stream {
+            response["done"] = json!(true);
+        }
+        assert_passed(
+            &run(
+                input,
+                stream,
+                ["", ""],
+                json!({"response":response,"stats":{"usage":usage(source,true)}}),
+                Some(ResourceLimits {
+                    max_json_depth: 128,
+                    ..ResourceLimits::default()
+                }),
+            )
+            .await,
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -317,14 +353,22 @@ async fn comment_heartbeat_commits_stream_status_before_a_native_error() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn raw_frame_bytes_and_event_json_nodes_keep_independent_limits() {
+async fn raw_frames_and_native_json_keep_independent_resource_limits() {
     let complete = chunk(json!({"role":"assistant","content":"hello"}), json!("stop"));
     let large_frame = format!(
         "id: {}\ndata: {complete}\n\ndata: [DONE]\n\n",
         "x".repeat(400)
     );
-    let mut many_nodes = complete;
+    let mut many_nodes = complete.clone();
     many_nodes["vendor_extension"] = json!(vec![0; 150]);
+    let mut deep = complete.clone();
+    let mut nested = json!(0);
+    for _ in 0..20 {
+        nested = json!({"nested":nested});
+    }
+    deep["vendor_extension"] = nested;
+    let mut unsafe_number = complete;
+    unsafe_number["vendor_extension"] = json!(9_007_199_254_740_992_u64);
     for (bytes, limits) in [
         (
             large_frame,
@@ -340,6 +384,14 @@ async fn raw_frame_bytes_and_event_json_nodes_keep_independent_limits() {
                 ..ResourceLimits::default()
             },
         ),
+        (
+            encoded(&[deep], true),
+            ResourceLimits {
+                max_json_depth: 12,
+                ..ResourceLimits::default()
+            },
+        ),
+        (encoded(&[unsafe_number], true), ResourceLimits::default()),
     ] {
         assert_passed(
             &run(
@@ -349,6 +401,62 @@ async fn raw_frame_bytes_and_event_json_nodes_keep_independent_limits() {
                 json!({"response":{"status":502},"error":error("upstream_protocol","upstream_sse"),
                 "stats":{"usage":usage("sse",false)}}),
                 Some(limits),
+            )
+            .await,
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn unchanged_native_sse_uses_raw_frame_size_instead_of_normalized_json_size() {
+    // The complete frame is 161 bytes; serializing its parsed data would take
+    // 333 bytes because the scientific-notation extensions expand.
+    let numbers = ["1e9"; 20].join(",");
+    let bytes = format!(
+        "data: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}],\"extension\":[{numbers}]}}\n\ndata: [DONE]\n\n"
+    );
+    assert_passed(
+        &run(
+            Input::Sse(&bytes),
+            true,
+            ["", ""],
+            json!({"sent":true,"response":{"status":200,"done":true,
+                "events":[{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
+                    "extension":vec![1_000_000_000.0;20]}]},
+                "stats":{"usage":usage("sse",true)}}),
+            Some(ResourceLimits {
+                max_event_bytes: 200,
+                ..ResourceLimits::default()
+            }),
+        )
+        .await,
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_and_hook_rewrites_still_enforce_actual_encoded_frame_limits() {
+    let numbers = ["1e9"; 8].join(",");
+    let bytes = format!(
+        "id: {}\ndata: {{\"model\":\"x\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}],\"extension\":[{numbers}]}}\n\ndata: [DONE]\n\n",
+        "i".repeat(60)
+    );
+    // Both the source frame and each rewritten JSON payload fit 200 bytes.
+    // Re-encoding data while preserving the ID makes the actual frame too large.
+    for step in [
+        "",
+        "{name:'rewrite',onStreamEvent(ctx){ctx.event.extension[0]=2000000000;ctx.state.attempted=true;}}",
+    ] {
+        assert_passed(
+            &run(
+                Input::Sse(&bytes),
+                true,
+                [step, ""],
+                json!({"response":{"status":500},"state":{},
+                    "error":error("hook_failed","onStreamEvent")}),
+                Some(ResourceLimits {
+                    max_event_bytes: 200,
+                    ..ResourceLimits::default()
+                }),
             )
             .await,
         );

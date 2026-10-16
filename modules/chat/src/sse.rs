@@ -42,7 +42,8 @@ impl Frame {
         if data == "[DONE]" {
             return Ok(Event::Done);
         }
-        let value = serde_json::from_str(data).map_err(Error::Json)?;
+        let value = limen_config::parse_json_str(data, limen_config::MAX_JSON_DEPTH)
+            .map_err(Error::Json)?;
         validate_chunk(&value)?;
         Ok(Event::Chunk(value))
     }
@@ -54,7 +55,9 @@ impl Frame {
     pub fn encode(&self, value: &Value, max_bytes: usize) -> Result<Vec<u8>, Error> {
         validate_chunk(value)?;
         let data = self.data.as_ref().ok_or(Error::InvalidChunk)?;
-        if serde_json::from_str::<Value>(data).is_ok_and(|source| source == *value) {
+        if limen_config::parse_json_str(data, limen_config::MAX_JSON_DEPTH)
+            .is_ok_and(|source| source == *value)
+        {
             if self.raw.len() > max_bytes {
                 return Err(Error::EventLimit);
             }

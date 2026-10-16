@@ -34,7 +34,7 @@ process-wrap = { version = "10.0.1", default-features = false, features = ["std"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rquickjs = { version = "0.14.0", features = ["futures", "loader"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde_json = { version = "1.0.154", features = ["unbounded_depth"] }
 serde_path_to_error = "0.1.20"
 serde-saphyr = { version = "2.0.0", default-features = false, features = ["deserialize"] }
 thiserror = "2.0.21"

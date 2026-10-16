@@ -100,9 +100,10 @@ impl Transport {
                     .await
                     .take()
                     .ok_or_else(|| Failure::new(ErrorCode::Internal, "offline_send"))?;
-                let body = serde_json::from_slice(&body).map_err(|e| {
-                    Failure::new(ErrorCode::Internal, "offline_send").with_source(e)
-                })?;
+                let body = limen_config::parse_json_slice(&body, limen_config::MAX_JSON_DEPTH)
+                    .map_err(|e| {
+                        Failure::new(ErrorCode::Internal, "offline_send").with_source(e)
+                    })?;
                 trace.lock().await.sent = Some(SentRequest { url, headers, body });
                 Ok(Incoming::Fixture {
                     response,
