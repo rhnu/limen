@@ -160,13 +160,6 @@ impl Gateway {
                 };
                 logic::validate_body_shape(require_body(&output.context)?)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                if require_body(&output.context)?
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .is_none_or(|model| model.len() > 1024)
-                {
-                    return Err(hook_invalid("beforeSend", &step.name));
-                }
                 let next_url = output
                     .context
                     .get("url")

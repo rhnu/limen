@@ -77,7 +77,13 @@ impl Lifecycle {
     }
 
     pub fn context(&self, phase: &'static str) -> Value {
-        json!({"meta":self.meta(phase),"state":self.state,"client":self.client})
+        self.context_with_state(phase, self.state.clone())
+    }
+
+    pub fn context_with_state(&self, phase: &'static str, state: Value) -> Value {
+        let mut context = json!({"meta":self.meta(phase),"client":self.client});
+        context["state"] = state;
+        context
     }
 
     pub fn stats(&self) -> Value {

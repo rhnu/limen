@@ -278,11 +278,7 @@ impl ContentProjector {
     /// # Errors
     /// Rejects malformed policy output, invalid output lifecycles and edits that
     /// would invalidate positional metadata. State commits only after rendering.
-    pub fn render(
-        &mut self,
-        frame: ContentFrame,
-        events: Vec<Value>,
-    ) -> Result<Value, ContentError> {
+    pub fn render(&mut self, frame: ContentFrame, events: &[Value]) -> Result<Value, ContentError> {
         if frame.terminal {
             return Err(ContentError::Lifecycle);
         }
@@ -297,7 +293,7 @@ impl ContentProjector {
     pub fn render_end(
         &mut self,
         frame: ContentFrame,
-        events: Vec<Value>,
+        events: &[Value],
     ) -> Result<Option<Value>, ContentError> {
         if !frame.terminal || events.iter().any(|event| event["type"] != "response_end") {
             return Err(ContentError::Lifecycle);
@@ -313,7 +309,7 @@ impl ContentProjector {
     fn render_inner(
         &mut self,
         frame: ContentFrame,
-        events: Vec<Value>,
+        events: &[Value],
     ) -> Result<Value, ContentError> {
         let mut state = self.output.clone();
         let mut fragments = BTreeMap::new();
@@ -321,13 +317,13 @@ impl ContentProjector {
         let mut finishes = BTreeMap::new();
         let changed = frame.events != events;
         for event in events {
-            validate_content_event(&event)?;
+            validate_content_event(event)?;
             if event["type"] == "response_end" && !frame.terminal {
                 return Err(ContentError::Lifecycle);
             }
             apply_event(
                 &mut state,
-                &event,
+                event,
                 self.max_parts,
                 &mut fragments,
                 &mut order,

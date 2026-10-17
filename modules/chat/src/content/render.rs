@@ -215,14 +215,14 @@ pub(super) fn render_frame(
 ) -> Result<Value, ContentError> {
     let mut source = frame.source;
     let body_key = if frame.full { "message" } else { "delta" };
-    let mut choices = source
+    let Value::Array(mut choices) = source
         .as_object_mut()
         .ok_or(ContentError::InvalidSource)?
         .remove("choices")
         .unwrap_or_else(|| json!([]))
-        .as_array()
-        .ok_or(ContentError::InvalidSource)?
-        .clone();
+    else {
+        return Err(ContentError::InvalidSource);
+    };
     ensure_choices(&mut choices, order, finishes);
     for choice in &mut choices {
         let index = choice["index"]

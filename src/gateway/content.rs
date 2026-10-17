@@ -260,8 +260,7 @@ impl Gateway {
             }
             // The complete source batch is one step transaction. Neither state nor
             // observations escape if a later event or its rendered payload is invalid.
-            let mut state = lifecycle.state.clone();
-            let mut observations = lifecycle.observations.clone();
+            let mut effects = None;
             let mut next = Vec::new();
             let mut candidate = projector.stages[cursor].clone();
             let native_deadline = self.hook_deadline(lifecycle);
@@ -278,8 +277,10 @@ impl Gateway {
                     next.extend(produced);
                     continue;
                 }
-                let mut context = lifecycle.context("onContent");
-                context["state"] = state;
+                let (state, observations) = effects.get_or_insert_with(|| {
+                    (lifecycle.state.clone(), lifecycle.observations.clone())
+                });
+                let mut context = lifecycle.context_with_state("onContent", state.take());
                 context["event"] = event;
                 context["sse"] = envelope.map_or(
                     Value::Null,
@@ -301,7 +302,7 @@ impl Gateway {
                     .and_then(Value::as_array)
                     .ok_or_else(|| hook_invalid("onContent", &step.name))?;
                 charge(produced, budget, &self.server.limits, &step.name)?;
-                state = output
+                *state = output
                     .context
                     .get_mut("state")
                     .filter(|value| value.is_object())
@@ -315,12 +316,7 @@ impl Gateway {
             }
             // Every step validates against its own previous output. Later steps
             // may remove or change a part without changing an earlier step's input.
-            let value = render(
-                &mut candidate.projector,
-                frame.clone(),
-                next.clone(),
-                ending,
-            )?;
+            let value = render(&mut candidate.projector, frame.clone(), &next, ending)?;
             projector.capacity(Some((cursor, &candidate)), &self.server.limits)?;
             if let Some(value) = &value {
                 self.validate_content_render(value, complete, envelope, &step.name)?;
@@ -330,8 +326,10 @@ impl Gateway {
             } else {
                 self.request_active(lifecycle, &lifecycle.cancellation)?;
             }
-            lifecycle.state = state;
-            lifecycle.observations = observations;
+            if let Some((state, observations)) = effects {
+                lifecycle.state = state;
+                lifecycle.observations = observations;
+            }
             events = next;
             rendered = value;
             projector.stages[cursor] = candidate;
@@ -402,7 +400,18 @@ impl Gateway {
                 hook_invalid("onContent", step).with_source(source)
             });
         measurement.finish(&result);
-        result
+        let produced = result?;
+        // JS outputs already passed the VM bridge; native events need
+        // their generic JSON boundary before shared semantic accounting.
+        for event in &produced {
+            validate_json(
+                event,
+                self.server.limits.max_json_depth,
+                self.server.limits.max_json_nodes,
+            )
+            .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
+        }
+        Ok(produced)
     }
 }
 
@@ -414,8 +423,6 @@ fn charge(
 ) -> Result<(), Failure> {
     let bytes = events.iter().try_fold(0_usize, |sum, event| {
         validate_content_event(event).map_err(content_failure)?;
-        validate_json(event, limits.max_json_depth, limits.max_json_nodes)
-            .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
         let size = json::size(
             event,
             limits.max_output_bytes,
@@ -431,7 +438,7 @@ fn charge(
 fn render(
     projector: &mut ContentProjector,
     frame: ContentFrame,
-    events: Vec<Value>,
+    events: &[Value],
     ending: bool,
 ) -> Result<Option<Value>, Failure> {
     if ending {

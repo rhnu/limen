@@ -2,7 +2,7 @@ use std::{fs, sync::Arc};
 
 use limen_script::Cancellation;
 
-use super::*;
+use super::{super::observations::Observations, *};
 use crate::{bootstrap::Bootstrap, gateway::FixtureResponse};
 
 async fn configured() -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
@@ -73,6 +73,18 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
     let provider = &gateway.business.providers["p"];
     let model = &gateway.business.models["chat"];
     let mut lifecycle = lifecycle();
+    lifecycle.state = json!({"previous":{"text":"retained"}});
+    lifecycle.observations = Observations::new(4);
+    lifecycle.observations.commit(
+        limen_script::ObservationBatch {
+            events: vec![0],
+            dropped: 0,
+        },
+        "beforeSend",
+        Some("previous"),
+    );
+    let names = vec!["accepted".to_owned()];
+    let observations = lifecycle.observations.snapshot(&names);
     let mut pipeline = gateway
         .content_projector(provider, model, &lifecycle)
         .unwrap()
@@ -124,7 +136,8 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         .unwrap()
         .unwrap();
     assert_eq!(retry["choices"][0]["delta"]["content"], "ZZ");
-    assert_eq!(lifecycle.state, json!({}));
+    assert_eq!(lifecycle.state, json!({"previous":{"text":"retained"}}));
+    assert_eq!(lifecycle.observations.snapshot(&names), observations);
     loaded.shutdown().await.unwrap();
 }
 
@@ -221,7 +234,7 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
     for stage in &mut pipeline.stages {
         stage
             .projector
-            .render(frame.clone(), frame.events().to_vec())
+            .render(frame.clone(), frame.events())
             .unwrap();
     }
     let mut limits = ResourceLimits::default();
