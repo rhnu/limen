@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use axum::{http::header, response::Response};
 use limen_chat::{Aggregator, ChunkTracker, Event, Frame, FrameDecoder, JsonChunks};
-use limen_config::{Model, Provider, ResourceLimits, validate_json};
+use limen_config::{ResourceLimits, validate_json};
 use limen_script::{HookCandidate, HookInput, ResponseHead};
 use serde_json::Value;
 
@@ -18,6 +18,7 @@ use super::{
     lifecycle::Lifecycle,
     logic,
     pipeline::{commit_effects, elapsed_ms, hook_invalid},
+    plan::RoutePlan,
     protocol,
     response::{Delivery, apply_alias},
     stats::WaitKind,
@@ -26,8 +27,7 @@ use super::{
 impl Gateway {
     pub(super) async fn receive(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         mut response: super::transport::Incoming,
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
@@ -43,9 +43,7 @@ impl Gateway {
             .and_then(|v| v.to_str().ok())
             .map_or("other", media_kind);
         lifecycle.upstream_media = Some(media.to_owned());
-        let (status, headers) = self
-            .after_receive(provider, model, &response, lifecycle)
-            .await?;
+        let (status, headers) = self.after_receive(route, &response, lifecycle).await?;
         lifecycle.phase = "upstream_receive";
         lifecycle.step = None;
         lifecycle.response_headers = headers.clone();
@@ -61,24 +59,17 @@ impl Gateway {
         lifecycle.statistics.source = Some(media);
         delivery.configure(status, headers.clone());
         let body = if media == "sse" {
-            self.receive_sse(
-                provider,
-                model,
-                &mut response,
-                lifecycle,
-                delivery,
-                client_stream,
-            )
-            .await?
+            self.receive_sse(route, &mut response, lifecycle, delivery, client_stream)
+                .await?
         } else {
             Some(self.receive_json(&mut response, lifecycle).await?)
         };
         if let Some(body) = body {
-            let mut body = self.response_body(provider, model, body, lifecycle).await?;
+            let mut body = self.response_body(route, body, lifecycle).await?;
             // SSE content was already transformed before aggregation. A complete
             // JSON source enters the same semantic stage exactly once here.
             if media == "json" {
-                body = self.content_json(provider, model, body, lifecycle).await?;
+                body = self.content_json(route, body, lifecycle).await?;
             }
             if client_stream {
                 json::size(
@@ -94,8 +85,7 @@ impl Gateway {
                     let event = event.map_err(|source| protocol(source, "json_to_sse"))?;
                     let mut budget = EventBudget::new();
                     self.send_stream_event(
-                        provider,
-                        model,
+                        route,
                         event,
                         false,
                         None,
@@ -218,8 +208,7 @@ impl Gateway {
 
     async fn receive_sse(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
@@ -233,7 +222,7 @@ impl Gateway {
         let mut upstream_tracker = ChunkTracker::new(limits.max_json_nodes);
         let mut output = SseOutput {
             tracker: ChunkTracker::new(limits.max_json_nodes),
-            content: self.content_projector(provider, model, lifecycle)?,
+            content: self.content_projector(route),
             aggregate: (!client_stream)
                 .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events)),
         };
@@ -277,8 +266,7 @@ impl Gateway {
                         lifecycle.statistics.timings.first_chunk(Instant::now());
                         lifecycle.statistics.usage.observe(event.get("usage"));
                         self.content_stream_event(
-                            provider,
-                            model,
+                            route,
                             event,
                             &frame,
                             &mut output,
@@ -295,8 +283,7 @@ impl Gateway {
         let terminator = protocol::finish_stream(decoder, upstream_tracker, terminator)?;
         lifecycle.statistics.upstream_completed = true;
         if let Some(content) = &mut output.content {
-            self.content_end(provider, model, content, lifecycle)
-                .await?;
+            self.content_end(content, lifecycle).await?;
         }
         if let Some(aggregate) = output.aggregate {
             return finish_aggregate(aggregate, limits).map(Some);
@@ -317,8 +304,7 @@ impl Gateway {
     )]
     pub(super) async fn send_stream_event(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         mut event: Value,
         alias: bool,
         frame: Option<&Frame>,
@@ -345,8 +331,7 @@ impl Gateway {
         }
         let mut frames = Vec::new();
         self.event_hooks(
-            provider,
-            model,
+            route,
             event,
             EventConsumer::Stream {
                 tracker,
@@ -376,37 +361,35 @@ impl Gateway {
 
     pub(super) async fn after_receive(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         response: &super::transport::Incoming,
         lifecycle: &mut Lifecycle,
     ) -> Result<(u16, http::HeaderMap), Failure> {
         let original_status = response.status();
         let mut status = original_status;
         let mut headers = logic::response_headers(response.headers());
-        for step in provider.pipeline.iter().chain(&model.pipeline) {
-            if let Some(hook) = step.after_receive {
-                let context = lifecycle.context(HookInput::AfterReceive(ResponseHead {
-                    status,
-                    headers: logic::header_fields(&headers)?,
-                }));
-                let output = self
-                    .hook(hook, Some(&step.name), context, lifecycle)
-                    .await?;
-                let HookCandidate::AfterReceive(head) = output.candidate else {
-                    return Err(hook_invalid("afterReceive", &step.name));
-                };
-                let next_status = head.status;
-                validate_response_status(original_status, next_status).map_err(|source| {
-                    hook_invalid("afterReceive", &step.name).with_source(StatusMapping(source))
-                })?;
-                let next_headers = logic::headers_from_fields(&head.headers).map_err(|source| {
-                    hook_invalid("afterReceive", &step.name).with_source(source)
-                })?;
-                commit_effects(lifecycle, output.effects);
-                status = next_status;
-                headers = next_headers;
-            }
+        let (provider_steps, model_steps) = route.after_receive();
+        for step in provider_steps.iter().chain(model_steps) {
+            let hook = step.executor;
+            let context = lifecycle.context(HookInput::AfterReceive(ResponseHead {
+                status,
+                headers: logic::header_fields(&headers)?,
+            }));
+            let output = self
+                .hook(hook, Some(&step.name), context, lifecycle)
+                .await?;
+            let HookCandidate::AfterReceive(head) = output.candidate else {
+                return Err(hook_invalid("afterReceive", &step.name));
+            };
+            let next_status = head.status;
+            validate_response_status(original_status, next_status).map_err(|source| {
+                hook_invalid("afterReceive", &step.name).with_source(StatusMapping(source))
+            })?;
+            let next_headers = logic::headers_from_fields(&head.headers)
+                .map_err(|source| hook_invalid("afterReceive", &step.name).with_source(source))?;
+            commit_effects(lifecycle, output.effects);
+            status = next_status;
+            headers = next_headers;
         }
         Ok((status, headers))
     }

@@ -25,8 +25,8 @@ impl Gateway {
             Some(_) => HookOutcome::Failed,
         };
         for (phase, hook) in [
-            (HookPhase::OnError, failure.and(self.business.on_error)),
-            (HookPhase::OnFinish, self.business.on_finish),
+            (HookPhase::OnError, failure.and(self.plans.on_error)),
+            (HookPhase::OnFinish, self.plans.on_finish),
         ] {
             let phase_name = phase.as_str();
             let Some(hook_id) = hook else {

@@ -5,7 +5,6 @@ use axum::{
     http::{Request, header},
     response::Response,
 };
-use limen_config::{Model, Provider};
 use limen_script::{
     HookCall, HookCandidate, HookContext, HookEffects, HookId, HookInput, HookOutput,
     RejectionStatus, RequestDraft,
@@ -16,7 +15,9 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    logic, native, protocol,
+    logic, native,
+    plan::{BeforeSendExecutor, RoutePlan},
+    protocol,
     response::Delivery,
     stats::WaitKind,
     upstream::is_json_media,
@@ -61,7 +62,7 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
         delivery: &mut Delivery,
     ) -> Result<Option<Response>, Failure> {
-        if let Some(hook) = self.business.on_request {
+        if let Some(hook) = self.plans.on_request {
             let context = lifecycle.context(HookInput::OnRequest { body });
             let output = self.hook(hook, None, context, lifecycle).await?;
             let HookCandidate::OnRequest {
@@ -82,21 +83,17 @@ impl Gateway {
             .get("model")
             .and_then(Value::as_str)
             .ok_or_else(|| Failure::new(ErrorCode::InvalidRequest, "routing"))?;
-        let model = self
-            .business
-            .models
-            .get(alias)
+        let route = self
+            .plans
+            .route(&self.business, alias)
             .ok_or_else(|| Failure::new(ErrorCode::UnknownModel, "routing"))?;
-        let provider = self
-            .business
-            .providers
-            .get(&model.provider)
-            .ok_or_else(|| Failure::new(ErrorCode::Internal, "routing"))?;
+        let model = route.model;
+        let provider = route.provider;
         lifecycle.alias = Some(alias.to_owned());
         lifecycle.provider = Some(model.provider.clone());
         lifecycle.configured_model = Some(model.upstream.clone());
         let body = logic::merge_body(provider, model, body)?;
-        let (body, url, mut headers) = self.before_send(provider, model, body, lifecycle).await?;
+        let (body, url, mut headers) = self.before_send(&route, body, lifecycle).await?;
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
         let bytes = protocol::encode_request(&body, &mut headers, &self.server.limits)?;
@@ -107,33 +104,27 @@ impl Gateway {
         lifecycle.phase = "upstream_send";
         lifecycle.statistics.timings.start_upstream(Instant::now());
         let response = self.transport.send(url, headers, bytes).await?;
-        self.receive(provider, model, response, lifecycle, delivery)
-            .await
+        self.receive(&route, response, lifecycle, delivery).await
     }
 
     async fn before_send(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         mut body: Value,
         lifecycle: &mut Lifecycle,
     ) -> Result<(Value, String, http::HeaderMap), Failure> {
-        let mut url = provider.endpoint.clone();
-        let mut headers = logic::outbound_headers(provider)?;
-        for step in provider.pipeline.iter().chain(&model.pipeline) {
-            if step.before_send.is_some()
-                || step
-                    .builtin
-                    .as_ref()
-                    .is_some_and(limen_config::BuiltinPolicy::has_before_send)
-            {
-                let request = RequestDraft {
-                    body,
-                    url,
-                    headers: logic::header_fields(&headers)?,
-                };
-                let deadline = self.hook_deadline(lifecycle);
-                let output = if let Some(policy) = &step.builtin {
+        let mut url = route.provider.endpoint.clone();
+        let mut headers = logic::outbound_headers(route.provider)?;
+        let (provider_steps, model_steps) = route.before_send();
+        for step in provider_steps.iter().chain(model_steps) {
+            let request = RequestDraft {
+                body,
+                url,
+                headers: logic::header_fields(&headers)?,
+            };
+            let deadline = self.hook_deadline(lifecycle);
+            let output = match &step.executor {
+                BeforeSendExecutor::Native(policy) => {
                     lifecycle.phase = "beforeSend";
                     lifecycle.step = Some(step.name.clone());
                     let measurement = lifecycle.statistics.timings.native("beforeSend");
@@ -147,7 +138,6 @@ impl Gateway {
                             policy,
                             request,
                             &context.client,
-                            &self.server.observability.events,
                             &step.name,
                             &mut || self.native_active(lifecycle, deadline),
                         )?;
@@ -166,35 +156,35 @@ impl Gateway {
                     })();
                     measurement.finish(&result);
                     result?
-                } else {
+                },
+                BeforeSendExecutor::Script(hook) => {
                     self.hook(
-                        step.before_send
-                            .ok_or_else(|| hook_invalid("beforeSend", &step.name))?,
+                        *hook,
                         Some(&step.name),
                         lifecycle.context(HookInput::BeforeSend(request)),
                         lifecycle,
                     )
                     .await?
-                };
-                let HookCandidate::BeforeSend { request, rejection } = output.candidate else {
-                    return Err(hook_invalid("beforeSend", &step.name));
-                };
-                logic::validate_body_shape(&request.body)
-                    .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                logic::validate_url(&request.url)
-                    .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                let next_headers = logic::headers_from_fields(&request.headers)
-                    .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                if step.builtin.is_some() {
-                    self.native_active(lifecycle, deadline)?;
-                } else {
-                    self.request_active(lifecycle, &lifecycle.cancellation)?;
-                }
-                commit_request(lifecycle, output.effects, rejection)?;
-                body = request.body;
-                url = request.url;
-                headers = next_headers;
+                },
+            };
+            let HookCandidate::BeforeSend { request, rejection } = output.candidate else {
+                return Err(hook_invalid("beforeSend", &step.name));
+            };
+            logic::validate_body_shape(&request.body)
+                .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
+            logic::validate_url(&request.url)
+                .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
+            let next_headers = logic::headers_from_fields(&request.headers)
+                .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
+            if matches!(&step.executor, BeforeSendExecutor::Native(_)) {
+                self.native_active(lifecycle, deadline)?;
+            } else {
+                self.request_active(lifecycle, &lifecycle.cancellation)?;
             }
+            commit_request(lifecycle, output.effects, rejection)?;
+            body = request.body;
+            url = request.url;
+            headers = next_headers;
         }
         Ok((body, url, headers))
     }

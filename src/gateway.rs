@@ -11,6 +11,7 @@ mod observations;
 mod observe;
 mod persistence;
 mod pipeline;
+mod plan;
 mod protocol;
 mod response;
 mod stats;
@@ -30,11 +31,11 @@ use axum::{
     http::{HeaderValue, Request, header},
     response::Response,
 };
-pub(crate) use content::NativeContentTemplates;
 use error::{ErrorCode, Failure};
 use lifecycle::Lifecycle;
 use limen_config::{BusinessConfig, ServerConfig};
 use limen_script::{Cancellation, RuntimeStatus, ScriptRuntime};
+pub(crate) use plan::{Error as PlanError, ExecutionPlans};
 use response::Delivery;
 use tokio::{
     sync::{Mutex, Semaphore, oneshot},
@@ -50,7 +51,7 @@ use crate::bootstrap::Bootstrap;
 pub struct Gateway {
     server: ServerConfig,
     business: BusinessConfig,
-    native_content: Arc<NativeContentTemplates>,
+    plans: Arc<ExecutionPlans>,
     runtime: ScriptRuntime,
     transport: transport::Transport,
     shutdown: Cancellation,
@@ -121,7 +122,7 @@ impl Gateway {
         Arc::new(Self {
             server: loaded.server.clone(),
             business: loaded.business.clone(),
-            native_content: Arc::clone(&loaded.native_content),
+            plans: Arc::clone(&loaded.plans),
             runtime: loaded.runtime.clone(),
             transport,
             shutdown,

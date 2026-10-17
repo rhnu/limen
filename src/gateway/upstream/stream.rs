@@ -2,7 +2,7 @@
 
 use super::{
     Aggregator, ChunkTracker, ContentInput, Delivery, ErrorCode, EventBudget, EventConsumer,
-    Failure, Frame, Gateway, Lifecycle, Model, Provider, Value, content, protocol,
+    Failure, Frame, Gateway, Lifecycle, RoutePlan, Value, content, protocol,
 };
 
 pub(super) struct SseOutput {
@@ -12,14 +12,9 @@ pub(super) struct SseOutput {
 }
 
 impl Gateway {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Source envelope, routing, output state and request lifecycle have separate owners"
-    )]
     pub(super) async fn content_stream_event(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         event: Value,
         frame: &Frame,
         output: &mut SseOutput,
@@ -29,8 +24,7 @@ impl Gateway {
         let mut budget = EventBudget::new();
         let events = self
             .event_hooks(
-                provider,
-                model,
+                route,
                 event,
                 EventConsumer::Upstream { frame: Some(frame) },
                 &mut budget,
@@ -40,8 +34,6 @@ impl Gateway {
         for event in events {
             let event = if let Some(pipeline) = &mut output.content {
                 self.content_payload(
-                    provider,
-                    model,
                     pipeline,
                     ContentInput::Chunk(event),
                     Some(frame),
@@ -59,8 +51,7 @@ impl Gateway {
                     .map_err(|source| protocol(source, "sse_to_json"))?;
             } else {
                 self.send_stream_event(
-                    provider,
-                    model,
+                    route,
                     event,
                     true,
                     Some(frame),

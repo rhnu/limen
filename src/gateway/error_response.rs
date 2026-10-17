@@ -24,19 +24,20 @@ impl Gateway {
         deadline: Instant,
     ) {
         let mut hooks = Vec::new();
-        if let Some(model) = lifecycle
+        let route = lifecycle
             .alias
-            .as_ref()
-            .and_then(|alias| self.business.models.get(alias))
-            && let Some(provider) = self.business.providers.get(&model.provider)
-        {
-            for step in provider.pipeline.iter().chain(&model.pipeline) {
-                if let Some(hook) = step.on_error_response {
-                    hooks.push((hook, Some(step.name.as_str())));
-                }
-            }
+            .as_deref()
+            .and_then(|alias| self.plans.route(&self.business, alias));
+        if let Some(route) = &route {
+            let (provider_steps, model_steps) = route.error_response();
+            hooks.extend(
+                provider_steps
+                    .iter()
+                    .chain(model_steps)
+                    .map(|step| (step.executor, Some(step.name.as_str()))),
+            );
         }
-        if let Some(hook) = self.business.on_error_response {
+        if let Some(hook) = self.plans.on_error_response {
             hooks.push((hook, None));
         }
         for (hook, step) in hooks {

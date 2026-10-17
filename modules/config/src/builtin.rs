@@ -93,11 +93,78 @@ fn default_parts() -> usize { 64 }
 
 fn default_tool_name() -> String { "limen_emit_text".to_owned() }
 
-impl BuiltinPolicy {
-    pub fn has_before_send(&self) -> bool { !matches!(self, Self::ReplaceText(_)) }
+/// A policy must explicitly declare every phase it participates in.
+pub struct BuiltinStages<'a> {
+    pub before_send: Option<BeforeSendPolicy<'a>>,
+    pub content: Option<ContentPolicy<'a>>,
+}
 
-    pub fn has_content(&self) -> bool {
-        matches!(self, Self::ReplaceText(_) | Self::SyntheticTextTool(_))
+#[derive(Clone, Copy)]
+pub enum BeforeSendPolicy<'a> {
+    CapCompletionTokens(&'a CapCompletionTokens),
+    DropRequestFields(&'a DropRequestFields),
+    ForwardClientHeader(&'a ForwardClientHeader),
+    SyntheticTextTool(&'a SyntheticTextTool),
+}
+
+#[derive(Clone, Copy)]
+pub enum ContentPolicy<'a> {
+    ReplaceText(&'a ReplaceText),
+    SyntheticTextTool(&'a SyntheticTextTool),
+}
+
+impl BeforeSendPolicy<'_> {
+    /// Bind configured observation names once, before accepting requests.
+    ///
+    /// # Errors
+    /// Rejects observation names absent from the approved registry.
+    pub fn observation_id(self, names: &[String]) -> Result<Option<u8>, ConfigError> {
+        let name = match self {
+            Self::CapCompletionTokens(options) => options.on_change.as_ref(),
+            Self::DropRequestFields(options) => options.on_change.as_ref(),
+            Self::ForwardClientHeader(_) | Self::SyntheticTextTool(_) => None,
+        };
+        name.map(|name| {
+            names
+                .iter()
+                .position(|candidate| candidate == name)
+                .and_then(|index| u8::try_from(index).ok())
+                .ok_or_else(|| {
+                    ConfigError::new(
+                        ConfigErrorKind::Reference,
+                        "pipeline.builtin.onChange",
+                        "observation name is not registered",
+                    )
+                })
+        })
+        .transpose()
+    }
+}
+
+impl BuiltinPolicy {
+    pub fn stages(&self) -> BuiltinStages<'_> {
+        match self {
+            Self::CapCompletionTokens(options) => BuiltinStages {
+                before_send: Some(BeforeSendPolicy::CapCompletionTokens(options)),
+                content: None,
+            },
+            Self::DropRequestFields(options) => BuiltinStages {
+                before_send: Some(BeforeSendPolicy::DropRequestFields(options)),
+                content: None,
+            },
+            Self::ForwardClientHeader(options) => BuiltinStages {
+                before_send: Some(BeforeSendPolicy::ForwardClientHeader(options)),
+                content: None,
+            },
+            Self::ReplaceText(options) => BuiltinStages {
+                before_send: None,
+                content: Some(ContentPolicy::ReplaceText(options)),
+            },
+            Self::SyntheticTextTool(options) => BuiltinStages {
+                before_send: Some(BeforeSendPolicy::SyntheticTextTool(options)),
+                content: Some(ContentPolicy::SyntheticTextTool(options)),
+            },
+        }
     }
 
     pub(crate) fn validate(&self, field: &str) -> Result<(), ConfigError> {
@@ -186,3 +253,6 @@ fn valid_business_header(name: &str) -> bool {
         )
     })
 }
+
+#[cfg(test)]
+mod tests;

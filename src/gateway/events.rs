@@ -1,4 +1,4 @@
-use limen_config::{Model, Provider, ResourceLimits};
+use limen_config::ResourceLimits;
 use limen_script::{EventInput, HookCandidate, HookInput, HookPhase, SseContext};
 use serde_json::Value;
 
@@ -8,6 +8,7 @@ use super::{
     json,
     lifecycle::Lifecycle,
     pipeline::{commit_effects, hook_invalid},
+    plan::RoutePlan,
 };
 
 /// Downstream batches must be fully encodable before their hook effects commit.
@@ -126,8 +127,7 @@ impl EventBudget {
 impl Gateway {
     pub(super) async fn event_hooks(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         event: Value,
         mut consumer: EventConsumer<'_>,
         budget: &mut EventBudget,
@@ -139,19 +139,16 @@ impl Gateway {
         // Only fresh hook outputs need validation and expansion accounting here;
         // counting normalized input JSON could reject an unchanged raw SSE frame.
         let mut events = vec![event];
-        let mut remaining = provider
-            .pipeline
-            .iter()
-            .chain(&model.pipeline)
-            .filter(|step| event_hook(step, phase).is_some())
-            .count();
+        let (provider_steps, model_steps) = match consumer {
+            EventConsumer::Upstream { .. } => route.upstream_event(),
+            EventConsumer::Stream { .. } => route.stream_event(),
+        };
+        let mut remaining = provider_steps.len() + model_steps.len();
         if remaining == 0 {
             consumer.consume(&events, budget, &self.server.limits)?;
         }
-        for step in provider.pipeline.iter().chain(&model.pipeline) {
-            let Some(hook) = event_hook(step, phase) else {
-                continue;
-            };
+        for step in provider_steps.iter().chain(model_steps) {
+            let hook = step.executor;
             remaining -= 1;
             let final_hook = remaining == 0;
             let mut next = Vec::new();
@@ -204,14 +201,6 @@ impl Gateway {
             events = next;
         }
         Ok(events)
-    }
-}
-
-fn event_hook(step: &limen_config::PipelineStep, phase: HookPhase) -> Option<limen_script::HookId> {
-    match phase {
-        HookPhase::OnUpstreamEvent => step.on_upstream_event,
-        HookPhase::OnStreamEvent => step.on_stream_event,
-        _ => None,
     }
 }
 

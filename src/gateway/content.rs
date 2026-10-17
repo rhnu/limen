@@ -1,12 +1,12 @@
 //! One semantic transformation stage before either aggregation or delivery.
 
-use std::{collections::BTreeMap, time::Instant};
+use std::time::Instant;
 
 use limen_chat::{
     ContentFrame, ContentProjector, Frame, NativeContentError, NativeContentLimits,
     NativeContentPolicy, validate_content_event,
 };
-use limen_config::{BusinessConfig, Model, Provider, ResourceLimits, validate_json};
+use limen_config::{ResourceLimits, validate_json};
 use limen_script::{EventInput, HookCandidate, HookInput};
 use serde_json::Value;
 
@@ -17,6 +17,7 @@ use super::{
     json,
     lifecycle::Lifecycle,
     pipeline::hook_invalid,
+    plan::{ContentExecutor, RoutePlan},
 };
 
 pub(super) struct ContentPipeline {
@@ -26,65 +27,15 @@ pub(super) struct ContentPipeline {
 
 #[derive(Clone)]
 struct ContentStage {
+    name: String,
     projector: ContentProjector,
-    native: Option<NativeContentPolicy>,
+    executor: ContentExecution,
 }
 
-/// Immutable policy templates are compiled once; aliases keep separate model occurrences.
-#[derive(Clone, Default)]
-pub(crate) struct NativeContentTemplates {
-    providers: BTreeMap<String, BTreeMap<String, NativeContentPolicy>>,
-    models: BTreeMap<String, BTreeMap<String, NativeContentPolicy>>,
-}
-
-impl NativeContentTemplates {
-    pub(crate) fn compile(
-        config: &BusinessConfig,
-        limits: &ResourceLimits,
-        deadline: Instant,
-    ) -> Result<Self, NativeContentError> {
-        let compile = |steps: &[limen_config::PipelineStep]| {
-            let mut policies = BTreeMap::new();
-            for step in steps {
-                if Instant::now() >= deadline {
-                    return Err(NativeContentError::Interrupted);
-                }
-                if let Some(policy) = &step.builtin {
-                    let limits = NativeContentLimits {
-                        max_output_events: limits.max_output_events,
-                        max_output_bytes: limits.max_output_bytes,
-                        max_retained_bytes: limits.max_output_bytes,
-                        max_retained_records: limits.max_json_nodes,
-                    };
-                    if let Some(policy) =
-                        NativeContentPolicy::compile(policy, &limits, &mut || {
-                            Instant::now() < deadline
-                        })?
-                    {
-                        policies.insert(step.name.clone(), policy);
-                    }
-                }
-            }
-            Ok(policies)
-        };
-        let templates = Self {
-            providers: config
-                .providers
-                .iter()
-                .map(|(name, provider)| Ok((name.clone(), compile(&provider.pipeline)?)))
-                .collect::<Result<_, NativeContentError>>()?,
-            models: config
-                .models
-                .iter()
-                .map(|(name, model)| Ok((name.clone(), compile(&model.pipeline)?)))
-                .collect::<Result<_, NativeContentError>>()?,
-        };
-        if Instant::now() >= deadline {
-            Err(NativeContentError::Interrupted)
-        } else {
-            Ok(templates)
-        }
-    }
+#[derive(Clone)]
+enum ContentExecution {
+    Script(limen_script::HookId),
+    Native(NativeContentPolicy),
 }
 
 impl ContentPipeline {
@@ -101,7 +52,7 @@ impl ContentPipeline {
                 .map_or(projector, |(_, value)| value);
             parts = parts.saturating_add(projector.projector.retained_parts());
             bytes = bytes.saturating_add(projector.projector.retained_bytes());
-            if let Some(native) = &projector.native {
+            if let ContentExecution::Native(native) = &projector.executor {
                 parts = parts.saturating_add(native.retained_parts());
                 bytes = bytes.saturating_add(native.retained_bytes());
             }
@@ -115,54 +66,27 @@ impl ContentPipeline {
 }
 
 impl Gateway {
-    pub(super) fn content_projector(
-        &self,
-        provider: &Provider,
-        model: &Model,
-        lifecycle: &Lifecycle,
-    ) -> Result<Option<ContentPipeline>, Failure> {
+    pub(super) fn content_projector(&self, route: &RoutePlan<'_>) -> Option<ContentPipeline> {
         let max_parts = self.server.limits.max_json_nodes;
-        let provider_templates = lifecycle
-            .provider
-            .as_ref()
-            .and_then(|name| self.native_content.providers.get(name));
-        let model_templates = lifecycle
-            .alias
-            .as_ref()
-            .and_then(|name| self.native_content.models.get(name));
-        let stages: Vec<_> = provider
-            .pipeline
+        let (provider_steps, model_steps) = route.content();
+        let stages: Vec<_> = provider_steps
             .iter()
-            .map(|step| (step, provider_templates))
-            .chain(model.pipeline.iter().map(|step| (step, model_templates)))
-            .filter(|(step, _)| {
-                step.on_content.is_some()
-                    || step
-                        .builtin
-                        .as_ref()
-                        .is_some_and(limen_config::BuiltinPolicy::has_content)
+            .chain(model_steps)
+            .map(|step| ContentStage {
+                name: step.name.clone(),
+                projector: ContentProjector::new(max_parts),
+                executor: match &step.executor {
+                    ContentExecutor::Script(hook) => ContentExecution::Script(*hook),
+                    ContentExecutor::Native(template) => {
+                        ContentExecution::Native(template.instantiate())
+                    },
+                },
             })
-            .map(|(step, templates)| {
-                let native = if step.builtin.is_some() {
-                    Some(
-                        templates
-                            .and_then(|templates| templates.get(&step.name))
-                            .cloned()
-                            .ok_or_else(|| Failure::new(ErrorCode::Internal, "onContent"))?,
-                    )
-                } else {
-                    None
-                };
-                Ok(ContentStage {
-                    projector: ContentProjector::new(max_parts),
-                    native,
-                })
-            })
-            .collect::<Result<_, Failure>>()?;
-        Ok((!stages.is_empty()).then(|| ContentPipeline {
+            .collect();
+        (!stages.is_empty()).then(|| ContentPipeline {
             source: ContentProjector::new(max_parts),
             stages,
-        }))
+        })
     }
 }
 
@@ -175,18 +99,15 @@ pub(super) enum ContentInput {
 impl Gateway {
     pub(super) async fn content_json(
         &self,
-        provider: &Provider,
-        model: &Model,
+        route: &RoutePlan<'_>,
         body: Value,
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
-        let Some(mut pipeline) = self.content_projector(provider, model, lifecycle)? else {
+        let Some(mut pipeline) = self.content_projector(route) else {
             return Ok(body);
         };
         let body = self
             .content_payload(
-                provider,
-                model,
                 &mut pipeline,
                 ContentInput::Json(body),
                 None,
@@ -195,22 +116,17 @@ impl Gateway {
             )
             .await?
             .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "onContent"))?;
-        self.content_end(provider, model, &mut pipeline, lifecycle)
-            .await?;
+        self.content_end(&mut pipeline, lifecycle).await?;
         Ok(body)
     }
 
     pub(super) async fn content_end(
         &self,
-        provider: &Provider,
-        model: &Model,
         pipeline: &mut ContentPipeline,
         lifecycle: &mut Lifecycle,
     ) -> Result<(), Failure> {
         let tail = self
             .content_payload(
-                provider,
-                model,
                 pipeline,
                 ContentInput::End,
                 None,
@@ -224,14 +140,8 @@ impl Gateway {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Content transformation shares routing, source envelope and request budgets"
-    )]
     pub(super) async fn content_payload(
         &self,
-        provider: &Provider,
-        model: &Model,
         projector: &mut ContentPipeline,
         input: ContentInput,
         envelope: Option<&Frame>,
@@ -249,35 +159,30 @@ impl Gateway {
         projector.capacity(None, &self.server.limits)?;
         let mut events = frame.events().to_vec();
         let mut rendered = None;
-        let mut cursor = 0;
-        for step in provider.pipeline.iter().chain(&model.pipeline) {
-            if step.on_content.is_none()
-                && !step
-                    .builtin
-                    .as_ref()
-                    .is_some_and(limen_config::BuiltinPolicy::has_content)
-            {
-                continue;
-            }
+        for cursor in 0..projector.stages.len() {
             // The complete source batch is one step transaction. Neither state nor
             // observations escape if a later event or its rendered payload is invalid.
             let mut effects = None;
             let mut next = Vec::new();
             let mut candidate = projector.stages[cursor].clone();
+            let step_name = candidate.name.clone();
             let native_deadline = self.hook_deadline(lifecycle);
             for event in events {
-                if let Some(native) = &mut candidate.native {
-                    let produced = self.native_content_event(
-                        native,
-                        event,
-                        lifecycle,
-                        native_deadline,
-                        &step.name,
-                    )?;
-                    charge(&produced, budget, &self.server.limits, &step.name)?;
-                    next.extend(produced);
-                    continue;
-                }
+                let hook = match &mut candidate.executor {
+                    ContentExecution::Native(native) => {
+                        let produced = self.native_content_event(
+                            native,
+                            event,
+                            lifecycle,
+                            native_deadline,
+                            &step_name,
+                        )?;
+                        charge(&produced, budget, &self.server.limits, &step_name)?;
+                        next.extend(produced);
+                        continue;
+                    },
+                    ContentExecution::Script(hook) => *hook,
+                };
                 let (state, observations) = effects.get_or_insert_with(|| {
                     (lifecycle.state.clone(), lifecycle.observations.clone())
                 });
@@ -289,20 +194,14 @@ impl Gateway {
                     std::mem::take(state),
                 );
                 let output = self
-                    .hook(
-                        step.on_content
-                            .ok_or_else(|| hook_invalid("onContent", &step.name))?,
-                        Some(&step.name),
-                        context,
-                        lifecycle,
-                    )
+                    .hook(hook, Some(&step_name), context, lifecycle)
                     .await?;
                 let HookCandidate::OnContent { events: produced } = output.candidate else {
-                    return Err(hook_invalid("onContent", &step.name));
+                    return Err(hook_invalid("onContent", &step_name));
                 };
-                charge(&produced, budget, &self.server.limits, &step.name)?;
+                charge(&produced, budget, &self.server.limits, &step_name)?;
                 *state = output.effects.state;
-                observations.commit(output.effects.observations, "onContent", Some(&step.name));
+                observations.commit(output.effects.observations, "onContent", Some(&step_name));
                 next.extend(produced);
             }
             // Every step validates against its own previous output. Later steps
@@ -310,9 +209,9 @@ impl Gateway {
             let value = render(&mut candidate.projector, frame.clone(), &next, ending)?;
             projector.capacity(Some((cursor, &candidate)), &self.server.limits)?;
             if let Some(value) = &value {
-                self.validate_content_render(value, complete, envelope, &step.name)?;
+                self.validate_content_render(value, complete, envelope, &step_name)?;
             }
-            if candidate.native.is_some() {
+            if matches!(candidate.executor, ContentExecution::Native(_)) {
                 self.native_active(lifecycle, native_deadline)?;
             } else {
                 self.request_active(lifecycle, &lifecycle.cancellation)?;
@@ -324,7 +223,6 @@ impl Gateway {
             events = next;
             rendered = value;
             projector.stages[cursor] = candidate;
-            cursor += 1;
         }
         Ok(rendered)
     }

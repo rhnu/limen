@@ -7,8 +7,8 @@ mod json;
 mod server;
 
 pub use builtin::{
-    BuiltinPolicy, CapCompletionTokens, CompletionTokenField, DropRequestFields,
-    ForwardClientHeader, ReplaceText, SyntheticTextTool,
+    BeforeSendPolicy, BuiltinPolicy, BuiltinStages, CapCompletionTokens, CompletionTokenField,
+    ContentPolicy, DropRequestFields, ForwardClientHeader, ReplaceText, SyntheticTextTool,
 };
 pub use business::{
     BusinessConfig, HookId, Model, PipelineStep, Provider, UpstreamAuth, validate_endpoint,

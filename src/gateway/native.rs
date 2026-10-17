@@ -1,6 +1,9 @@
 //! Rust policy execution uses the same owned drafts and gateway commit checks as JS.
 
-use limen_config::{BuiltinPolicy, SyntheticTextTool};
+use limen_config::{
+    BeforeSendPolicy, CapCompletionTokens, ConfigError, DropRequestFields, ForwardClientHeader,
+    SyntheticTextTool,
+};
 use limen_script::{ClientContext, HeaderField, ObservationBatch, RejectionStatus, RequestDraft};
 use serde_json::{Value, json};
 
@@ -9,11 +12,49 @@ use super::{
     pipeline::hook_invalid,
 };
 
+/// Startup-bound request executors contain only supported policies and approved IDs.
+pub(super) enum NativeBeforeSend {
+    CapCompletionTokens {
+        options: CapCompletionTokens,
+        observation: Option<u8>,
+    },
+    DropRequestFields {
+        options: DropRequestFields,
+        observation: Option<u8>,
+    },
+    ForwardClientHeader(ForwardClientHeader),
+    SyntheticTextTool(SyntheticTextTool),
+}
+
+impl NativeBeforeSend {
+    pub(super) fn compile(
+        policy: BeforeSendPolicy<'_>,
+        names: &[String],
+    ) -> Result<Self, ConfigError> {
+        let observation = policy.observation_id(names)?;
+        Ok(match policy {
+            BeforeSendPolicy::CapCompletionTokens(options) => Self::CapCompletionTokens {
+                options: options.clone(),
+                observation,
+            },
+            BeforeSendPolicy::DropRequestFields(options) => Self::DropRequestFields {
+                options: options.clone(),
+                observation,
+            },
+            BeforeSendPolicy::ForwardClientHeader(options) => {
+                Self::ForwardClientHeader(options.clone())
+            },
+            BeforeSendPolicy::SyntheticTextTool(options) => {
+                Self::SyntheticTextTool(options.clone())
+            },
+        })
+    }
+}
+
 pub(super) fn before_send(
-    policy: &BuiltinPolicy,
+    policy: &NativeBeforeSend,
     request: &mut RequestDraft,
     client: &ClientContext,
-    names: &[String],
     step: &str,
     check: &mut dyn FnMut() -> Result<(), Failure>,
 ) -> Result<(Option<RejectionStatus>, ObservationBatch), Failure> {
@@ -21,7 +62,10 @@ pub(super) fn before_send(
     let mut changed_event = None;
     let mut rejection = None;
     match policy {
-        BuiltinPolicy::CapCompletionTokens(options) => {
+        NativeBeforeSend::CapCompletionTokens {
+            options,
+            observation,
+        } => {
             let max = serde_json::Number::from(options.max)
                 .as_f64()
                 .ok_or_else(|| hook_invalid("beforeSend", step))?;
@@ -39,14 +83,17 @@ pub(super) fn before_send(
                     rejection = Some(RejectionStatus::UnprocessableEntity);
                 } else if value.as_f64().is_some_and(|value| value > max) {
                     body.insert(field.to_owned(), json!(options.max));
-                    changed_event = options.on_change.as_deref();
+                    changed_event = *observation;
                 }
             } else {
                 body.insert(field.to_owned(), json!(options.max));
-                changed_event = options.on_change.as_deref();
+                changed_event = *observation;
             }
         },
-        BuiltinPolicy::DropRequestFields(options) => {
+        NativeBeforeSend::DropRequestFields {
+            options,
+            observation,
+        } => {
             let body = request
                 .body
                 .as_object_mut()
@@ -57,10 +104,10 @@ pub(super) fn before_send(
                 changed |= body.remove(field).is_some();
             }
             if changed {
-                changed_event = options.on_change.as_deref();
+                changed_event = *observation;
             }
         },
-        BuiltinPolicy::ForwardClientHeader(options) => {
+        NativeBeforeSend::ForwardClientHeader(options) => {
             let mut values = client
                 .headers
                 .iter()
@@ -78,18 +125,12 @@ pub(super) fn before_send(
                 });
             }
         },
-        BuiltinPolicy::SyntheticTextTool(options) => {
+        NativeBeforeSend::SyntheticTextTool(options) => {
             rejection = synthetic_before_send(options, &mut request.body, check)?;
         },
-        BuiltinPolicy::ReplaceText(_) => return Err(hook_invalid("beforeSend", step)),
     }
     let mut observations = ObservationBatch::default();
-    if let Some(name) = changed_event {
-        let id = names
-            .iter()
-            .position(|candidate| candidate == name)
-            .and_then(|id| u8::try_from(id).ok())
-            .ok_or_else(|| hook_invalid("beforeSend", step))?;
+    if let Some(id) = changed_event {
         observations.events.push(id);
     }
     check()?;

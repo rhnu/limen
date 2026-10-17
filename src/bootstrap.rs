@@ -14,7 +14,7 @@ use tracing::Instrument;
 pub struct Bootstrap {
     pub server: ServerConfig,
     pub business: BusinessConfig,
-    pub(crate) native_content: Arc<crate::gateway::NativeContentTemplates>,
+    pub(crate) plans: Arc<crate::gateway::ExecutionPlans>,
     pub runtime: ScriptRuntime,
     pub run_id: String,
     pub started_at: String,
@@ -258,17 +258,23 @@ impl Bootstrap {
         };
         match result {
             Ok(business) => {
-                let native_content = match crate::gateway::NativeContentTemplates::compile(
+                let plans = crate::gateway::ExecutionPlans::compile(
                     &business,
                     &server.limits,
+                    &server.observability.events,
                     deadline,
-                ) {
-                    Ok(templates) => Ok(Arc::new(templates)),
-                    Err(limen_chat::NativeContentError::Interrupted) => Err(Error::StartupBudget),
-                    Err(source) => Err(Error::NativeContent(source)),
-                };
-                let native_content = match native_content {
-                    Ok(templates) => templates,
+                )
+                .map(Arc::new)
+                .map_err(|error| match error {
+                    crate::gateway::PlanError::Config(source) => Error::Config {
+                        file: "config.js",
+                        source: Box::new(source),
+                    },
+                    crate::gateway::PlanError::Content(source) => Error::NativeContent(source),
+                    crate::gateway::PlanError::Deadline => Error::StartupBudget,
+                });
+                let plans = match plans {
+                    Ok(plans) => plans,
                     Err(primary) => {
                         return Err(with_cleanup(
                             primary,
@@ -285,7 +291,7 @@ impl Bootstrap {
                 Ok(Self {
                     server,
                     business,
-                    native_content,
+                    plans,
                     runtime,
                     run_id,
                     started_at: chrono::Utc::now()

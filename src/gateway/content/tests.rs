@@ -7,6 +7,12 @@ use super::{super::observations::Observations, *};
 use crate::{bootstrap::Bootstrap, gateway::FixtureResponse};
 
 async fn configured() -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
+    configured_with(r"export default {
+        providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'replace',builtin:{kind:'replaceText',search:'ab',replacement:'ZZ',maxBufferedChars:1}}]}},
+        models:{chat:{provider:'p',upstream:'native'}}};").await
+}
+
+async fn configured_with(script: &str) -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("server.toml");
     fs::write(
@@ -14,9 +20,7 @@ async fn configured() -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
         "[auth]\napi_key='synthetic-client-secret-0123456789'\n",
     )
     .unwrap();
-    fs::write(directory.path().join("config.js"),r"export default {
-        providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'replace',builtin:{kind:'replaceText',search:'ab',replacement:'ZZ',maxBufferedChars:1}}]}},
-        models:{chat:{provider:'p',upstream:'native'}}};").unwrap();
+    fs::write(directory.path().join("config.js"), script).unwrap();
     let (path, settings) = limen_config::load_server(Some(&path)).unwrap();
     let loaded = Bootstrap::start(&path, settings).await.unwrap();
     let (gateway, _) = Gateway::offline(
@@ -39,30 +43,6 @@ fn lifecycle() -> Lifecycle {
 
 fn chunk(text: &str) -> Value { json!({"choices":[{"index":0,"delta":{"content":text}}]}) }
 
-#[test]
-fn template_compilation_obeys_startup_deadline_and_native_memory_budget() {
-    let config=BusinessConfig::from_value(json!({
-        "providers":{"p":{"endpoint":"https://synthetic.invalid/chat","pipeline":[{"name":"replace","builtin":{"kind":"replaceText","search":"abc","replacement":"x","maxBufferedChars":2}}]}},
-        "models":{"chat":{"provider":"p","upstream":"model"}}
-    }),&ResourceLimits::default()).unwrap();
-    assert!(matches!(
-        NativeContentTemplates::compile(&config, &ResourceLimits::default(), Instant::now()),
-        Err(NativeContentError::Interrupted)
-    ));
-    let limits = ResourceLimits {
-        max_output_bytes: 1,
-        ..ResourceLimits::default()
-    };
-    assert!(matches!(
-        NativeContentTemplates::compile(
-            &config,
-            &limits,
-            Instant::now() + std::time::Duration::from_secs(1)
-        ),
-        Err(NativeContentError::Limit)
-    ));
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn failed_native_render_discards_candidate_and_preserves_previous_prefix() {
     let (_directory, loaded, mut gateway) = configured().await;
@@ -71,8 +51,7 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         .server
         .limits
         .max_event_bytes = 256;
-    let provider = &gateway.business.providers["p"];
-    let model = &gateway.business.models["chat"];
+    let route = gateway.plans.route(&gateway.business, "chat").unwrap();
     let mut lifecycle = lifecycle();
     lifecycle.state = json!({"previous":{"text":"retained"}})
         .as_object()
@@ -89,14 +68,9 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
     );
     let names = vec!["accepted".to_owned()];
     let observations = lifecycle.observations.snapshot(&names);
-    let mut pipeline = gateway
-        .content_projector(provider, model, &lifecycle)
-        .unwrap()
-        .unwrap();
+    let mut pipeline = gateway.content_projector(&route).unwrap();
     let first = gateway
         .content_payload(
-            provider,
-            model,
             &mut pipeline,
             ContentInput::Chunk(chunk("a")),
             None,
@@ -115,8 +89,6 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         .unwrap();
     let failure = gateway
         .content_payload(
-            provider,
-            model,
             &mut pipeline,
             ContentInput::Chunk(chunk("b")),
             Some(&envelope),
@@ -128,8 +100,6 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
     assert_eq!(failure.code, ErrorCode::HookFailed);
     let retry = gateway
         .content_payload(
-            provider,
-            model,
             &mut pipeline,
             ContentInput::Chunk(chunk("b")),
             None,
@@ -151,22 +121,13 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
 #[tokio::test(flavor = "current_thread")]
 async fn native_occurrences_have_independent_state_and_share_retained_capacity() {
     let (_directory, loaded, gateway) = configured().await;
-    let provider = &gateway.business.providers["p"];
-    let model = &gateway.business.models["chat"];
+    let route = gateway.plans.route(&gateway.business, "chat").unwrap();
     let mut first_lifecycle = lifecycle();
     let mut second_lifecycle = lifecycle();
-    let mut first = gateway
-        .content_projector(provider, model, &first_lifecycle)
-        .unwrap()
-        .unwrap();
-    let mut second = gateway
-        .content_projector(provider, model, &second_lifecycle)
-        .unwrap()
-        .unwrap();
+    let mut first = gateway.content_projector(&route).unwrap();
+    let mut second = gateway.content_projector(&route).unwrap();
     gateway
         .content_payload(
-            provider,
-            model,
             &mut first,
             ContentInput::Chunk(chunk("a")),
             None,
@@ -177,8 +138,6 @@ async fn native_occurrences_have_independent_state_and_share_retained_capacity()
         .unwrap();
     let value = gateway
         .content_payload(
-            provider,
-            model,
             &mut second,
             ContentInput::Chunk(chunk("b")),
             None,
@@ -189,7 +148,9 @@ async fn native_occurrences_have_independent_state_and_share_retained_capacity()
         .unwrap()
         .unwrap();
     assert_eq!(value["choices"][0]["delta"]["content"], "b");
-    let native = first.stages[0].native.as_ref().unwrap();
+    let ContentExecution::Native(native) = &first.stages[0].executor else {
+        panic!("expected native");
+    };
     let native_bytes = native.retained_bytes();
     let mut limits = gateway.server.limits.clone();
     limits.max_output_bytes = native_bytes;
@@ -198,11 +159,11 @@ async fn native_occurrences_have_independent_state_and_share_retained_capacity()
         ErrorCode::HookFailed
     );
     let mut candidate = first.stages[0].clone();
-    let retained = candidate.native.as_ref().unwrap().retained_parts();
-    candidate
-        .native
-        .as_mut()
-        .unwrap()
+    let ContentExecution::Native(native) = &mut candidate.executor else {
+        panic!("expected native");
+    };
+    let retained = native.retained_parts();
+    native
         .apply(
             json!({"type":"part_start","choice":1,"part":"extra","kind":"text"}),
             &NativeContentLimits {
@@ -229,7 +190,8 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
         stages: vec![
             ContentStage {
                 projector: ContentProjector::new(100),
-                native: None
+                name: "script".into(),
+                executor: ContentExecution::Script(0)
             };
             2
         ],
@@ -260,4 +222,117 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
         pipeline.capacity(None, &limits).unwrap_err().code,
         ErrorCode::HookFailed
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separate() {
+    let (_directory, loaded, gateway) = configured_with(r"export default {
+        providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'ab',replacement:'bc',maxBufferedChars:1}}]}},
+        models:{chat:{provider:'p',upstream:'first',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'bc',replacement:'ZZ',maxBufferedChars:1}}]},
+        alias:{provider:'p',upstream:'second',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'bc',replacement:'ZZ',maxBufferedChars:1}}]}}};").await;
+    let first_route = gateway.plans.route(&gateway.business, "chat").unwrap();
+    let second_route = gateway.plans.route(&gateway.business, "alias").unwrap();
+    let mut first = gateway.content_projector(&first_route).unwrap();
+    let mut second = gateway.content_projector(&second_route).unwrap();
+    let mut first_lifecycle = lifecycle();
+    let mut second_lifecycle = lifecycle();
+    for (pipeline, lifecycle, input, expected) in [
+        (&mut first, &mut first_lifecycle, "a", ""),
+        (&mut second, &mut second_lifecycle, "b", ""),
+    ] {
+        let output = gateway
+            .content_payload(
+                pipeline,
+                ContentInput::Chunk(chunk(input)),
+                None,
+                &mut EventBudget::new(),
+                lifecycle,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(output["choices"][0]["delta"]["content"], expected);
+    }
+    let output = gateway
+        .content_payload(
+            &mut first,
+            ContentInput::Chunk(chunk("b")),
+            None,
+            &mut EventBudget::new(),
+            &mut first_lifecycle,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
+    let output = gateway
+        .content_payload(
+            &mut second,
+            ContentInput::Chunk(chunk("x")),
+            None,
+            &mut EventBudget::new(),
+            &mut second_lifecycle,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output["choices"][0]["delta"]["content"], "bx");
+    let mut fresh = gateway.content_projector(&first_route).unwrap();
+    let output = gateway
+        .content_payload(
+            &mut fresh,
+            ContentInput::Chunk(chunk("ab")),
+            None,
+            &mut EventBudget::new(),
+            &mut lifecycle(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
+    loaded.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_drops_native_candidate_and_preserves_committed_prefix() {
+    let (_directory, loaded, gateway) = configured().await;
+    let route = gateway.plans.route(&gateway.business, "chat").unwrap();
+    let mut pipeline = gateway.content_projector(&route).unwrap();
+    let mut lifecycle = lifecycle();
+    gateway
+        .content_payload(
+            &mut pipeline,
+            ContentInput::Chunk(chunk("a")),
+            None,
+            &mut EventBudget::new(),
+            &mut lifecycle,
+        )
+        .await
+        .unwrap();
+    lifecycle.cancellation.cancel();
+    let error = gateway
+        .content_payload(
+            &mut pipeline,
+            ContentInput::Chunk(chunk("b")),
+            None,
+            &mut EventBudget::new(),
+            &mut lifecycle,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Cancelled);
+    lifecycle.cancellation = Cancellation::new();
+    let output = gateway
+        .content_payload(
+            &mut pipeline,
+            ContentInput::Chunk(chunk("b")),
+            None,
+            &mut EventBudget::new(),
+            &mut lifecycle,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
+    loaded.shutdown().await.unwrap();
 }

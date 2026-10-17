@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use limen_config::{BuiltinPolicy, ReplaceText, SyntheticTextTool};
+use limen_config::{ContentPolicy, ReplaceText, SyntheticTextTool};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -65,22 +65,27 @@ pub struct NativeContentPolicy {
     policy: Policy,
 }
 
-impl NativeContentPolicy {
+/// A compiled, unexecuted policy. Requests can only obtain fresh owned state.
+#[derive(Clone)]
+pub struct NativeContentTemplate {
+    initial: NativeContentPolicy,
+}
+
+impl NativeContentTemplate {
     /// Compiles immutable matching tables once, under the startup budget.
-    /// Request-only built-ins return `None`.
     ///
     /// # Errors
     /// Rejects oversized policy state or an expired/cancelled startup budget.
     pub fn compile(
-        policy: &BuiltinPolicy,
+        policy: ContentPolicy<'_>,
         limits: &NativeContentLimits,
         check: &mut dyn FnMut() -> bool,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Self> {
         if !check() {
             return Err(NativeContentError::Interrupted);
         }
         let policy = match policy {
-            BuiltinPolicy::ReplaceText(options) => {
+            ContentPolicy::ReplaceText(options) => {
                 let search = options.search.as_bytes();
                 let bytes = 2048_usize
                     .saturating_add(search.len())
@@ -118,20 +123,26 @@ impl NativeContentPolicy {
                     parts: BTreeMap::new(),
                 }
             },
-            BuiltinPolicy::SyntheticTextTool(options) => {
+            ContentPolicy::SyntheticTextTool(options) => {
                 if 2048_usize.saturating_add(options.tool_name.len()) > limits.max_retained_bytes {
                     return Err(NativeContentError::Limit);
                 }
                 Policy::Synthetic(Synthetic::new(options.clone()))
             },
-            _ => return Ok(None),
         };
         if !check() {
             return Err(NativeContentError::Interrupted);
         }
-        Ok(Some(Self { policy }))
+        Ok(Self {
+            initial: NativeContentPolicy { policy },
+        })
     }
 
+    /// Every occurrence owns mutable maps; immutable matching tables remain shared.
+    pub fn instantiate(&self) -> NativeContentPolicy { self.initial.clone() }
+}
+
+impl NativeContentPolicy {
     pub fn retained_parts(&self) -> usize {
         match &self.policy {
             Policy::Replace { parts, .. } => parts.len(),

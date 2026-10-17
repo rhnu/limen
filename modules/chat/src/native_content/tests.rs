@@ -10,8 +10,8 @@ fn limits() -> NativeContentLimits {
 }
 
 fn replace_policy(search: &str, replacement: &str) -> NativeContentPolicy {
-    NativeContentPolicy::compile(
-        &BuiltinPolicy::ReplaceText(ReplaceText {
+    NativeContentTemplate::compile(
+        ContentPolicy::ReplaceText(&ReplaceText {
             search: search.into(),
             replacement: replacement.into(),
             max_buffered_chars: 1024,
@@ -21,7 +21,7 @@ fn replace_policy(search: &str, replacement: &str) -> NativeContentPolicy {
         &mut || true,
     )
     .unwrap()
-    .unwrap()
+    .instantiate()
 }
 
 fn synthetic_policy() -> NativeContentPolicy { synthetic_options(|_| {}) }
@@ -34,13 +34,13 @@ fn synthetic_options(change: impl FnOnce(&mut SyntheticTextTool)) -> NativeConte
         max_pending_events: 64,
     };
     change(&mut options);
-    NativeContentPolicy::compile(
-        &BuiltinPolicy::SyntheticTextTool(options),
+    NativeContentTemplate::compile(
+        ContentPolicy::SyntheticTextTool(&options),
         &limits(),
         &mut || true,
     )
     .unwrap()
-    .unwrap()
+    .instantiate()
 }
 
 fn start(part: &str, kind: &str) -> Value {
@@ -389,29 +389,32 @@ fn cancellation_and_failed_candidates_leave_committed_state_usable() {
 
 #[test]
 fn startup_compilation_checks_table_capacity_and_execution_budget() {
-    let policy = BuiltinPolicy::ReplaceText(ReplaceText {
+    let policy = ReplaceText {
         search: "a".repeat(100_000),
         replacement: "b".into(),
         max_buffered_chars: 100_000,
         max_parts: 64,
-    });
+    };
     let mut bound = limits();
     bound.max_retained_bytes = 1024;
     assert!(matches!(
-        NativeContentPolicy::compile(&policy, &bound, &mut || true),
+        NativeContentTemplate::compile(ContentPolicy::ReplaceText(&policy), &bound, &mut || true),
         Err(NativeContentError::Limit)
     ));
     let mut calls = 0;
     assert!(matches!(
-        NativeContentPolicy::compile(&policy, &limits(), &mut || {
+        NativeContentTemplate::compile(ContentPolicy::ReplaceText(&policy), &limits(), &mut || {
             calls += 1;
             calls < 3
         }),
         Err(NativeContentError::Interrupted)
     ));
-    let template = NativeContentPolicy::compile(&policy, &limits(), &mut || true)
+    let template =
+        NativeContentTemplate::compile(ContentPolicy::ReplaceText(&policy), &limits(), &mut || {
+            true
+        })
         .unwrap()
-        .unwrap();
+        .instantiate();
     assert!(template.retained_bytes() > 900_000);
     assert_eq!(template.retained_parts(), 0);
 }
@@ -452,4 +455,28 @@ fn encoded_output_limit_covers_escaped_characters_and_event_metadata() {
         policy.apply(delta("p", "hello"), &bound, &mut || true),
         Err(NativeContentError::Limit)
     );
+}
+
+#[test]
+fn compiled_template_always_instantiates_independent_mutable_state() {
+    let options = ReplaceText {
+        search: "ab".into(),
+        replacement: "X".into(),
+        max_buffered_chars: 1,
+        max_parts: 2,
+    };
+    let template = NativeContentTemplate::compile(
+        ContentPolicy::ReplaceText(&options),
+        &limits(),
+        &mut || true,
+    )
+    .unwrap();
+    let mut first = template.instantiate();
+    apply(&mut first, start("p", "text"));
+    assert_eq!(apply(&mut first, delta("p", "a")), [] as [Value; 0]);
+    let mut second = template.instantiate();
+    apply(&mut second, start("p", "text"));
+    assert_eq!(text(&apply(&mut second, delta("p", "b"))), "b");
+    assert_eq!(text(&apply(&mut first, delta("p", "b"))), "X");
+    assert_eq!(template.instantiate().retained_parts(), 0);
 }

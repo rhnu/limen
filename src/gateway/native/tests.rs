@@ -9,13 +9,15 @@ fn request(body: Value) -> RequestDraft {
 }
 
 fn apply(policy: Value, body: Value) -> (RequestDraft, Option<RejectionStatus>, ObservationBatch) {
-    let policy = serde_json::from_value(policy).unwrap();
+    let policy: limen_config::BuiltinPolicy = serde_json::from_value(policy).unwrap();
+    let policy =
+        NativeBeforeSend::compile(policy.stages().before_send.unwrap(), &["changed".into()])
+            .unwrap();
     let mut request = request(body);
     let (rejection, observations) = before_send(
         &policy,
         &mut request,
         &ClientContext::default(),
-        &["changed".to_owned()],
         "policy",
         &mut || Ok(()),
     )
@@ -71,10 +73,11 @@ fn field_removal_records_once_only_when_present() {
 
 #[test]
 fn forwarding_uses_exposed_headers_and_rejects_multiple_values() {
-    let policy = serde_json::from_value(
+    let options: limen_config::BuiltinPolicy = serde_json::from_value(
         json!({"kind":"forwardClientHeader","from":"X-Tenant","to":"X-Upstream"}),
     )
     .unwrap();
+    let policy = NativeBeforeSend::compile(options.stages().before_send.unwrap(), &[]).unwrap();
     let mut client = ClientContext {
         headers: vec![HeaderField {
             name: "x-tenant".into(),
@@ -92,15 +95,8 @@ fn forwarding_uses_exposed_headers_and_rejects_multiple_values() {
             value: "b".into(),
         },
     ];
-    let (rejection, _) = before_send(
-        &policy,
-        &mut request,
-        &client,
-        &[],
-        "policy",
-        &mut || Ok(()),
-    )
-    .unwrap();
+    let (rejection, _) =
+        before_send(&policy, &mut request, &client, "policy", &mut || Ok(())).unwrap();
     assert_eq!(rejection, None);
     assert_eq!(
         request.headers,
@@ -120,15 +116,8 @@ fn forwarding_uses_exposed_headers_and_rejects_multiple_values() {
         value: "duplicate".into(),
     });
     let previous = request.headers.clone();
-    let (rejection, _) = before_send(
-        &policy,
-        &mut request,
-        &client,
-        &[],
-        "policy",
-        &mut || Ok(()),
-    )
-    .unwrap();
+    let (rejection, _) =
+        before_send(&policy, &mut request, &client, "policy", &mut || Ok(())).unwrap();
     assert_eq!(request.headers, previous);
     assert_eq!(rejection, Some(RejectionStatus::UnprocessableEntity));
 }
@@ -171,28 +160,18 @@ fn synthetic_tool_appends_instruction_and_preserves_original_history() {
 }
 
 #[test]
-fn cancellation_and_unregistered_observation_do_not_publish_a_draft() {
-    let policy = serde_json::from_value(
-        json!({"kind":"dropRequestFields","fields":["x"],"onChange":"unregistered"}),
-    )
-    .unwrap();
+fn cancellation_does_not_publish_a_draft() {
+    let options: limen_config::BuiltinPolicy =
+        serde_json::from_value(json!({"kind":"dropRequestFields","fields":["x"]})).unwrap();
+    let policy = NativeBeforeSend::compile(options.stages().before_send.unwrap(), &[]).unwrap();
     let mut context = request(json!({"x":1}));
     let result = before_send(
         &policy,
         &mut context,
         &ClientContext::default(),
-        &[],
-        "policy",
-        &mut || Ok(()),
-    );
-    assert_eq!(result.unwrap_err().code, ErrorCode::HookFailed);
-    let result = before_send(
-        &policy,
-        &mut context,
-        &ClientContext::default(),
-        &[],
         "policy",
         &mut || Err(Failure::new(ErrorCode::Cancelled, "beforeSend")),
     );
     assert_eq!(result.unwrap_err().code, ErrorCode::Cancelled);
+    assert_eq!(context.body, json!({"x":1}));
 }
