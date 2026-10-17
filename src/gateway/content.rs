@@ -7,7 +7,8 @@ use limen_chat::{
     NativeContentPolicy, validate_content_event,
 };
 use limen_config::{BusinessConfig, Model, Provider, ResourceLimits, validate_json};
-use serde_json::{Value, json};
+use limen_script::{EventInput, HookCandidate, HookInput};
+use serde_json::Value;
 
 use super::{
     Gateway,
@@ -280,38 +281,28 @@ impl Gateway {
                 let (state, observations) = effects.get_or_insert_with(|| {
                     (lifecycle.state.clone(), lifecycle.observations.clone())
                 });
-                let mut context = lifecycle.context_with_state("onContent", state.take());
-                context["event"] = event;
-                context["sse"] = envelope.map_or(
-                    Value::Null,
-                    |frame| json!({"event":frame.event,"id":frame.id,"retry":frame.retry}),
+                let context = lifecycle.context_with_state(
+                    HookInput::OnContent(EventInput {
+                        event,
+                        sse: super::events::sse_context(envelope),
+                    }),
+                    std::mem::take(state),
                 );
-                let mut output = self
+                let output = self
                     .hook(
                         step.on_content
                             .ok_or_else(|| hook_invalid("onContent", &step.name))?,
-                        "onContent",
                         Some(&step.name),
                         context,
                         lifecycle,
                     )
                     .await?;
-                let produced = output
-                    .context
-                    .get("events")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| hook_invalid("onContent", &step.name))?;
-                charge(produced, budget, &self.server.limits, &step.name)?;
-                *state = output
-                    .context
-                    .get_mut("state")
-                    .filter(|value| value.is_object())
-                    .ok_or_else(|| hook_invalid("onContent", &step.name))?
-                    .take();
-                observations.commit(output.observations, "onContent", Some(&step.name));
-                let Value::Array(produced) = output.context["events"].take() else {
+                let HookCandidate::OnContent { events: produced } = output.candidate else {
                     return Err(hook_invalid("onContent", &step.name));
                 };
+                charge(&produced, budget, &self.server.limits, &step.name)?;
+                *state = output.effects.state;
+                observations.commit(output.effects.observations, "onContent", Some(&step.name));
                 next.extend(produced);
             }
             // Every step validates against its own previous output. Later steps

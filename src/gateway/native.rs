@@ -1,7 +1,7 @@
 //! Rust policy execution uses the same owned drafts and gateway commit checks as JS.
 
 use limen_config::{BuiltinPolicy, SyntheticTextTool};
-use limen_script::ObservationBatch;
+use limen_script::{ClientContext, HeaderField, ObservationBatch, RejectionStatus, RequestDraft};
 use serde_json::{Value, json};
 
 use super::{
@@ -11,29 +11,32 @@ use super::{
 
 pub(super) fn before_send(
     policy: &BuiltinPolicy,
-    context: &mut Value,
+    request: &mut RequestDraft,
+    client: &ClientContext,
     names: &[String],
     step: &str,
     check: &mut dyn FnMut() -> Result<(), Failure>,
-) -> Result<ObservationBatch, Failure> {
+) -> Result<(Option<RejectionStatus>, ObservationBatch), Failure> {
     check()?;
     let mut changed_event = None;
+    let mut rejection = None;
     match policy {
         BuiltinPolicy::CapCompletionTokens(options) => {
             let max = serde_json::Number::from(options.max)
                 .as_f64()
                 .ok_or_else(|| hook_invalid("beforeSend", step))?;
-            let body = context["body"]
+            let body = request
+                .body
                 .as_object_mut()
                 .ok_or_else(|| hook_invalid("beforeSend", step))?;
             let field = options.field.name();
             if body.contains_key(options.field.other()) {
-                reject(context);
+                rejection = Some(RejectionStatus::UnprocessableEntity);
             } else if let Some(value) = body.get(field) {
                 if !value.as_f64().is_some_and(|value| {
                     (1.0..=9_007_199_254_740_991.0).contains(&value) && value.fract() == 0.0
                 }) {
-                    reject(context);
+                    rejection = Some(RejectionStatus::UnprocessableEntity);
                 } else if value.as_f64().is_some_and(|value| value > max) {
                     body.insert(field.to_owned(), json!(options.max));
                     changed_event = options.on_change.as_deref();
@@ -44,7 +47,8 @@ pub(super) fn before_send(
             }
         },
         BuiltinPolicy::DropRequestFields(options) => {
-            let body = context["body"]
+            let body = request
+                .body
                 .as_object_mut()
                 .ok_or_else(|| hook_invalid("beforeSend", step))?;
             let mut changed = false;
@@ -57,31 +61,25 @@ pub(super) fn before_send(
             }
         },
         BuiltinPolicy::ForwardClientHeader(options) => {
-            let fields = context["client"]["headers"]
-                .as_array()
-                .ok_or_else(|| hook_invalid("beforeSend", step))?;
-            let mut values = fields.iter().filter(|entry| {
-                entry["name"]
-                    .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(&options.from))
-            });
-            let value = values.next().map(|entry| entry["value"].clone());
+            let mut values = client
+                .headers
+                .iter()
+                .filter(|entry| entry.name.eq_ignore_ascii_case(&options.from));
+            let value = values.next().map(|entry| entry.value.clone());
             if values.next().is_some() {
-                reject(context);
+                rejection = Some(RejectionStatus::UnprocessableEntity);
             } else if let Some(value) = value {
-                let fields = context["headers"]
-                    .as_array_mut()
-                    .ok_or_else(|| hook_invalid("beforeSend", step))?;
-                fields.retain(|entry| {
-                    !entry["name"]
-                        .as_str()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(&options.to))
+                request
+                    .headers
+                    .retain(|entry| !entry.name.eq_ignore_ascii_case(&options.to));
+                request.headers.push(HeaderField {
+                    name: options.to.to_ascii_lowercase(),
+                    value,
                 });
-                fields.push(json!({"name":options.to.to_ascii_lowercase(),"value":value}));
             }
         },
         BuiltinPolicy::SyntheticTextTool(options) => {
-            synthetic_before_send(options, context, check)?;
+            rejection = synthetic_before_send(options, &mut request.body, check)?;
         },
         BuiltinPolicy::ReplaceText(_) => return Err(hook_invalid("beforeSend", step)),
     }
@@ -95,17 +93,14 @@ pub(super) fn before_send(
         observations.events.push(id);
     }
     check()?;
-    Ok(observations)
+    Ok((rejection, observations))
 }
-
-fn reject(context: &mut Value) { context["rejection"] = json!({"status":422}); }
 
 fn synthetic_before_send(
     options: &SyntheticTextTool,
-    context: &mut Value,
+    body: &mut Value,
     check: &mut dyn FnMut() -> Result<(), Failure>,
-) -> Result<(), Failure> {
-    let body = &mut context["body"];
+) -> Result<Option<RejectionStatus>, Failure> {
     if ["functions", "function_call", "response_format"]
         .iter()
         .any(|field| body.get(*field).is_some())
@@ -117,13 +112,11 @@ fn synthetic_before_send(
             .is_some_and(|value| value == true)
         || body.get("tool_choice").is_some_and(|value| value != "auto")
     {
-        reject(context);
-        return Ok(());
+        return Ok(Some(RejectionStatus::UnprocessableEntity));
     }
     if let Some(tools) = body.get("tools") {
         let Some(tools) = tools.as_array() else {
-            reject(context);
-            return Ok(());
+            return Ok(Some(RejectionStatus::UnprocessableEntity));
         };
         for tool in tools {
             check()?;
@@ -135,8 +128,7 @@ fn synthetic_before_send(
                     .as_str()
                     .is_none_or(|name| name == options.tool_name)
             {
-                reject(context);
-                return Ok(());
+                return Ok(Some(RejectionStatus::UnprocessableEntity));
             }
         }
     }
@@ -155,7 +147,7 @@ fn synthetic_before_send(
         "parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}}));
     body["tool_choice"] = json!("required");
     body["parallel_tool_calls"] = json!(false);
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]

@@ -121,7 +121,7 @@ impl Transport {
     ) {
         if let Self::Fixture { trace, .. } = self {
             let mut trace = trace.lock().await;
-            trace.state = lifecycle.state.clone();
+            trace.state = serde_json::Value::Object(lifecycle.state.clone());
             trace.error = failure.map(|failure| {
                 json!({"code":failure.code.as_str(), "status":failure.http_status(), "phase":failure.phase})
             });

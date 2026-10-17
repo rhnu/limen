@@ -3,8 +3,7 @@
 use std::time::{Duration, Instant};
 
 use http::HeaderValue;
-use limen_script::{Cancellation, HookCall, HookId};
-use serde_json::{Value, json};
+use limen_script::{Cancellation, ErrorResponseInput, HookCall, HookCandidate, HookId, HookInput};
 
 use super::{
     Gateway,
@@ -87,16 +86,19 @@ impl Gateway {
                 .into_bytes();
             (&default_body, Some(&default_content_type), false)
         };
-        let mut context = lifecycle.context("onErrorResponse");
-        context["error"] = failure.observer_error(&lifecycle.request_id);
-        context["status"] = json!(failure.http_status());
-        context["headers"] = logic::headers_to_json(&lifecycle.response_headers)?;
-        context["body"] = if encoded {
-            Value::Null
-        } else {
-            json!(std::str::from_utf8(body).ok())
-        };
-        context["contentType"] = json!(content_type.and_then(|value| value.to_str().ok()));
+        let context = lifecycle.context(HookInput::OnErrorResponse(ErrorResponseInput {
+            error: failure.observer_error(&lifecycle.request_id),
+            status: failure.http_status(),
+            headers: logic::header_fields(&lifecycle.response_headers)?,
+            body: if encoded {
+                None
+            } else {
+                std::str::from_utf8(body).ok().map(str::to_owned)
+            },
+            content_type: content_type
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        }));
         let timings = Timings::default();
         let measurement = timings.hook("onErrorResponse");
         let report = self
@@ -112,52 +114,46 @@ impl Gateway {
             .await;
         measurement.finish(&report);
         super::stats::record_cleanup(&lifecycle.request_id, &timings.snapshot());
-        let mut output = report
+        let output = report
             .outcome
             .map_err(|source| Failure::script(source, "onErrorResponse", step))?;
         let invalid = || hook_invalid("onErrorResponse", step.unwrap_or("global"));
-        let status = output.context["status"]
-            .as_u64()
-            .and_then(|status| u16::try_from(status).ok())
-            .ok_or_else(invalid)?;
+        let HookCandidate::OnErrorResponse(draft) = output.candidate else {
+            return Err(invalid());
+        };
+        let status = draft.status;
         let upstream_failure =
             failure.code == ErrorCode::UpstreamFailed && failure.phase == "upstream_status";
         if !((400..600).contains(&status) || upstream_failure && (300..400).contains(&status)) {
             return Err(invalid());
         }
-        let headers = logic::headers_from_json(&output.context["headers"])
+        let headers = logic::headers_from_fields(&draft.headers)
             .map_err(|source| invalid().with_source(source))?;
-        let content_type = match &output.context["contentType"] {
-            Value::Null => None,
-            Value::String(value) => {
-                Some(HeaderValue::from_str(value).map_err(|source| invalid().with_source(source))?)
+        let content_type = draft
+            .content_type
+            .as_deref()
+            .map(HeaderValue::from_str)
+            .transpose()
+            .map_err(|source| invalid().with_source(source))?;
+        let (body, content_encoding) = match draft.body {
+            Some(value) if value.len() <= self.server.limits.max_output_bytes => {
+                (value.into_bytes(), Vec::new())
             },
-            _ => return Err(invalid()),
-        };
-        let (body, content_encoding) = match &output.context["body"] {
-            Value::String(value) if value.len() <= self.server.limits.max_output_bytes => {
-                (value.as_bytes().to_vec(), Vec::new())
-            },
-            Value::Null => (
+            None => (
                 body.clone(),
                 failure
                     .response
                     .as_ref()
                     .map_or_else(Vec::new, |response| response.content_encoding.clone()),
             ),
-            _ => return Err(invalid()),
+            Some(_) => return Err(invalid()),
         };
-        let state = output
-            .context
-            .get_mut("state")
-            .filter(|state| state.is_object())
-            .ok_or_else(invalid)?;
         // All response checks precede this atomic commit, including state and events.
-        lifecycle.state = state.take();
+        lifecycle.state = output.effects.state;
         lifecycle.response_headers = headers;
         lifecycle
             .observations
-            .commit(output.observations, "onErrorResponse", step);
+            .commit(output.effects.observations, "onErrorResponse", step);
         failure.status = Some(status);
         failure.response = Some(Box::new(FailureResponse {
             body,

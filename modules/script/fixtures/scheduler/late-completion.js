@@ -4,11 +4,11 @@ let started = 0;
 export default {
   async onRequest(ctx) {
     started++;
-    ctx.draft = 'uncommitted';
+    ctx.state.draft = 'uncommitted';
     await new Promise(resolve => { release = resolve; });
     changes++;
-    ctx.draft = 'late';
+    ctx.state.draft = 'late';
   },
   onFinish() { release(); },
-  onError(ctx) { ctx.changes = changes; ctx.started = started; }
+  onError(ctx) { ctx.state.changes = changes; ctx.state.started = started; }
 };

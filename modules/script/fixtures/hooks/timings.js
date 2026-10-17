@@ -1,15 +1,15 @@
 export default {
     onRequest(ctx) {
-        if (ctx.mode === "throw") throw new Error("synthetic");
-        if (ctx.mode === "invalid") ctx.value = undefined;
-        if (ctx.mode === "contract") return 1;
-        ctx.done = true;
+        if (ctx.state.mode === "throw") throw new Error("synthetic");
+        if (ctx.state.mode === "invalid") ctx.state.value = undefined;
+        if (ctx.state.mode === "contract") return 1;
+        ctx.state.done = true;
     },
     async onFinish(ctx) {
         await Promise.resolve();
-        if (ctx.mode === "throw") throw new Error("synthetic");
-        if (ctx.mode === "invalid") ctx.value = undefined;
-        if (ctx.mode === "contract") return 1;
-        ctx.done = true;
+        if (ctx.state.mode === "throw") throw new Error("synthetic");
+        if (ctx.state.mode === "invalid") ctx.state.value = undefined;
+        if (ctx.state.mode === "contract") return 1;
+        ctx.state.done = true;
     },
 };

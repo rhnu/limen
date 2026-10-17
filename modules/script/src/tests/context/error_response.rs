@@ -19,12 +19,18 @@ async fn registered_global_and_pipeline_error_response_hooks_commit_owned_drafts
         let id = config[layer][name]["pipeline"][0]["onErrorResponse"]
             .as_u64()
             .ok_or("pipeline error response hook missing")?;
-        input = runtime.invoke(call(id, 1, input)).await.into_context()?;
+        let output = runtime
+            .invoke_fixture(call(id, 1, input.clone()))
+            .await
+            .into_context()?;
+        for key in ["state", "status", "headers", "body", "contentType"] {
+            input[key] = output[key].clone();
+        }
     }
     input["meta"]["operation"] = json!("edit");
     let original = input.clone();
     let output = runtime
-        .invoke(call(hook(&config, "onErrorResponse")?, 2, input))
+        .invoke_fixture(call(hook(&config, "onErrorResponse")?, 2, input))
         .await
         .into_context()?;
     ensure(
@@ -39,8 +45,8 @@ async fn registered_global_and_pipeline_error_response_hooks_commit_owned_drafts
         serde_json::from_str(output["body"].as_str().ok_or("edited body was not text")?)?;
     ensure(
         body == json!({"message": "translated", "original": "synthetic upstream error"})
-            && output["meta"] == original["meta"]
-            && output["error"] == original["error"],
+            && output["state"]["facts"]["meta"] == original["meta"]
+            && output["state"]["facts"]["error"] == original["error"],
         "text body editing changed original error facts",
     )?;
     for (operation, body, content_type) in [
@@ -54,7 +60,7 @@ async fn registered_global_and_pipeline_error_response_hooks_commit_owned_drafts
         let mut input = draft("onErrorResponse");
         input["meta"]["operation"] = json!(operation);
         let output = runtime
-            .invoke(call(hook(&config, "onErrorResponse")?, 3, input))
+            .invoke_fixture(call(hook(&config, "onErrorResponse")?, 3, input))
             .await
             .into_context()?;
         ensure(
@@ -92,7 +98,7 @@ async fn error_response_readonly_fields_transport_headers_and_completion_values_
         };
         ensure(
             runtime
-                .invoke(call(id, 1, input))
+                .invoke_fixture(call(id, 1, input))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == expected),
@@ -110,7 +116,7 @@ async fn error_response_readonly_fields_transport_headers_and_completion_values_
         input["meta"]["header"] = json!(header);
         ensure(
             runtime
-                .invoke(call(id, 2, input))
+                .invoke_fixture(call(id, 2, input))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),

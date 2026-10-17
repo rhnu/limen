@@ -5,9 +5,12 @@ use axum::{
     http::{Request, header},
     response::Response,
 };
-use limen_config::{Model, Provider, validate_json};
-use limen_script::{HookCall, HookId, HookOutput};
-use serde_json::{Value, json};
+use limen_config::{Model, Provider};
+use limen_script::{
+    HookCall, HookCandidate, HookContext, HookEffects, HookId, HookInput, HookOutput,
+    RejectionStatus, RequestDraft,
+};
+use serde_json::Value;
 
 use super::{
     Gateway,
@@ -59,16 +62,20 @@ impl Gateway {
         delivery: &mut Delivery,
     ) -> Result<Option<Response>, Failure> {
         if let Some(hook) = self.business.on_request {
-            let mut context = lifecycle.context("onRequest");
-            context["body"] = body;
-            let mut output = self
-                .hook(hook, "onRequest", None, context, lifecycle)
-                .await?;
-            logic::validate_body_shape(require_body(&output.context)?).map_err(|source| {
+            let context = lifecycle.context(HookInput::OnRequest { body });
+            let output = self.hook(hook, None, context, lifecycle).await?;
+            let HookCandidate::OnRequest {
+                body: next_body,
+                rejection,
+            } = output.candidate
+            else {
+                return Err(hook_invalid("onRequest", "global"));
+            };
+            logic::validate_body_shape(&next_body).map_err(|source| {
                 Failure::new(ErrorCode::HookFailed, "onRequest").with_source(source)
             })?;
-            commit_request(lifecycle, &mut output)?;
-            body = output.context["body"].take();
+            commit_request(lifecycle, output.effects, rejection)?;
+            body = next_body;
         }
         lifecycle.phase = "routing";
         let alias = body
@@ -120,29 +127,41 @@ impl Gateway {
                     .as_ref()
                     .is_some_and(limen_config::BuiltinPolicy::has_before_send)
             {
-                let mut context = lifecycle.context("beforeSend");
-                context["body"] = body;
-                context["url"] = json!(url);
-                context["headers"] = logic::headers_to_json(&headers)?;
+                let request = RequestDraft {
+                    body,
+                    url,
+                    headers: logic::header_fields(&headers)?,
+                };
                 let deadline = self.hook_deadline(lifecycle);
-                let mut output = if let Some(policy) = &step.builtin {
+                let output = if let Some(policy) = &step.builtin {
                     lifecycle.phase = "beforeSend";
                     lifecycle.step = Some(step.name.clone());
                     let measurement = lifecycle.statistics.timings.native("beforeSend");
                     let result = (|| {
+                        let mut context = lifecycle.context(HookInput::BeforeSend(request));
                         self.validate_native_draft(&context, "beforeSend", &step.name)?;
-                        let observations = native::before_send(
+                        let HookInput::BeforeSend(request) = &mut context.input else {
+                            return Err(hook_invalid("beforeSend", &step.name));
+                        };
+                        let (rejection, observations) = native::before_send(
                             policy,
-                            &mut context,
+                            request,
+                            &context.client,
                             &self.server.observability.events,
                             &step.name,
                             &mut || self.native_active(lifecycle, deadline),
                         )?;
                         self.validate_native_draft(&context, "beforeSend", &step.name)?;
                         self.native_active(lifecycle, deadline)?;
+                        let HookInput::BeforeSend(request) = context.input else {
+                            return Err(hook_invalid("beforeSend", &step.name));
+                        };
                         Ok(HookOutput {
-                            context,
-                            observations,
+                            effects: HookEffects {
+                                state: context.state,
+                                observations,
+                            },
+                            candidate: HookCandidate::BeforeSend { request, rejection },
                         })
                     })();
                     measurement.finish(&result);
@@ -151,35 +170,29 @@ impl Gateway {
                     self.hook(
                         step.before_send
                             .ok_or_else(|| hook_invalid("beforeSend", &step.name))?,
-                        "beforeSend",
                         Some(&step.name),
-                        context,
+                        lifecycle.context(HookInput::BeforeSend(request)),
                         lifecycle,
                     )
                     .await?
                 };
-                logic::validate_body_shape(require_body(&output.context)?)
+                let HookCandidate::BeforeSend { request, rejection } = output.candidate else {
+                    return Err(hook_invalid("beforeSend", &step.name));
+                };
+                logic::validate_body_shape(&request.body)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                let next_url = output
-                    .context
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| hook_invalid("beforeSend", &step.name))?;
-                logic::validate_url(next_url)
+                logic::validate_url(&request.url)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
-                let next_headers = logic::headers_from_json(&output.context["headers"])
+                let next_headers = logic::headers_from_fields(&request.headers)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 if step.builtin.is_some() {
                     self.native_active(lifecycle, deadline)?;
                 } else {
                     self.request_active(lifecycle, &lifecycle.cancellation)?;
                 }
-                commit_request(lifecycle, &mut output)?;
-                body = output.context["body"].take();
-                let Value::String(next_url) = output.context["url"].take() else {
-                    return Err(hook_invalid("beforeSend", &step.name));
-                };
-                url = next_url;
+                commit_request(lifecycle, output.effects, rejection)?;
+                body = request.body;
+                url = request.url;
                 headers = next_headers;
             }
         }
@@ -188,22 +201,17 @@ impl Gateway {
 
     pub(super) fn validate_native_draft(
         &self,
-        value: &Value,
+        value: &HookContext,
         phase: &'static str,
         step: &str,
     ) -> Result<(), Failure> {
-        validate_json(
-            value,
-            self.server.limits.max_json_depth,
-            self.server.limits.max_json_nodes,
-        )
-        .map_err(|source| hook_invalid(phase, step).with_source(source))?;
-        super::json::size(
-            value,
-            self.server.limits.max_output_bytes,
-            ErrorCode::HookFailed,
-            phase,
-        )?;
+        value
+            .validate(limen_script::JsonLimits {
+                max_depth: self.server.limits.max_json_depth,
+                max_nodes: self.server.limits.max_json_nodes,
+                max_bytes: self.server.limits.max_output_bytes,
+            })
+            .map_err(|source| hook_invalid(phase, step).with_source(source))?;
         Ok(())
     }
 
@@ -229,11 +237,11 @@ impl Gateway {
     pub(super) async fn hook(
         &self,
         hook_id: HookId,
-        phase: &'static str,
         step: Option<&str>,
-        context: Value,
+        context: HookContext,
         lifecycle: &mut Lifecycle,
     ) -> Result<HookOutput, Failure> {
+        let phase = context.input.phase().as_str();
         lifecycle.phase = phase;
         lifecycle.step = step.map(str::to_owned);
         let measurement = lifecycle.statistics.timings.hook(phase);
@@ -254,61 +262,33 @@ impl Gateway {
     }
 }
 
-/// Reject only after the ordinary draft checks and successful state commit.
-fn commit_request(lifecycle: &mut Lifecycle, output: &mut HookOutput) -> Result<(), Failure> {
-    let rejection = output
-        .context
-        .get("rejection")
-        .map(|value| {
-            value
-                .get("status")
-                .and_then(Value::as_u64)
-                .filter(|status| matches!(status, 400 | 403 | 422))
-                .and_then(|status| u16::try_from(status).ok())
-                .ok_or_else(|| Failure::new(ErrorCode::HookFailed, lifecycle.phase))
-        })
-        .transpose()?;
-    commit_effects(lifecycle, output)?;
+/// Reject only after the ordinary draft checks and successful effects commit.
+fn commit_request(
+    lifecycle: &mut Lifecycle,
+    effects: HookEffects,
+    rejection: Option<RejectionStatus>,
+) -> Result<(), Failure> {
+    commit_effects(lifecycle, effects);
     if let Some(status) = rejection {
         let mut failure = Failure::new(ErrorCode::RequestRejected, lifecycle.phase);
-        failure.status = Some(status);
+        failure.status = Some(status.as_u16());
         failure.step.clone_from(&lifecycle.step);
         return Err(failure);
     }
     Ok(())
 }
 
-pub(super) fn commit_effects(
-    lifecycle: &mut Lifecycle,
-    output: &mut HookOutput,
-) -> Result<(), Failure> {
-    commit_state(lifecycle, &mut output.context)?;
+pub(super) fn commit_effects(lifecycle: &mut Lifecycle, effects: HookEffects) {
+    lifecycle.state = effects.state;
     lifecycle.observations.commit(
-        std::mem::take(&mut output.observations),
+        effects.observations,
         lifecycle.phase,
         lifecycle.step.as_deref(),
     );
-    Ok(())
-}
-
-pub(super) fn commit_state(lifecycle: &mut Lifecycle, output: &mut Value) -> Result<(), Failure> {
-    let state = output
-        .get_mut("state")
-        .filter(|v| v.is_object())
-        .ok_or_else(|| Failure::new(ErrorCode::HookFailed, lifecycle.phase))?;
-    lifecycle.state = state.take();
-    Ok(())
 }
 
 pub(super) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-pub(super) fn require_body(output: &Value) -> Result<&Value, Failure> {
-    output
-        .get("body")
-        .filter(|v| v.is_object())
-        .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "hook_output"))
 }
 
 pub(super) fn hook_invalid(phase: &'static str, step: &str) -> Failure {

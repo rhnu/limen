@@ -11,7 +11,7 @@ use axum::{
 };
 use hyper::body::Frame;
 use limen_config::{Model, Provider};
-use limen_script::Cancellation;
+use limen_script::{Cancellation, HookCandidate, HookInput};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -19,7 +19,7 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    pipeline::{commit_effects, require_body},
+    pipeline::{commit_effects, hook_invalid},
     stats::{Timings, WaitKind},
 };
 
@@ -227,14 +227,15 @@ impl Gateway {
         apply_alias(&mut body, lifecycle);
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             if let Some(hook) = step.on_response {
-                let mut context = lifecycle.context("onResponse");
-                context["body"] = body;
-                let mut output = self
-                    .hook(hook, "onResponse", Some(&step.name), context, lifecycle)
+                let context = lifecycle.context(HookInput::OnResponse { body });
+                let output = self
+                    .hook(hook, Some(&step.name), context, lifecycle)
                     .await?;
-                require_body(&output.context)?;
-                commit_effects(lifecycle, &mut output)?;
-                body = output.context["body"].take();
+                let HookCandidate::OnResponse { body: next_body } = output.candidate else {
+                    return Err(hook_invalid("onResponse", &step.name));
+                };
+                commit_effects(lifecycle, output.effects);
+                body = next_body;
             }
         }
         Ok(body)

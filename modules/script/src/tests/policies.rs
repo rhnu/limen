@@ -188,7 +188,7 @@ async fn complete_part_callback_runs_in_quickjs_with_bounded_serialized_state() 
     );
     let (runtime, config) = fixture.start(&source).await?;
     let result = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             hook(&config, "onRequest")?,
             1,
             json!({"meta":{"phase":"onRequest"},"state":{},"body":{}}),

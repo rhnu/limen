@@ -12,12 +12,13 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
 use crate::{
-    Cancellation, Command, HookId, HookOutput, HookReport, HookTimings, ObservationBatch,
-    RuntimeOptions, ScriptError, ScriptErrorKind, bridge::Bridge,
+    Cancellation, Command, HookId, HookOutput, HookPhase, HookReport, HookTimings,
+    ObservationBatch, RuntimeOptions, ScriptError, ScriptErrorKind, bridge::Bridge,
 };
 
 /// Only settlement authority survives after the input becomes a private VM draft.
 struct Completion {
+    phase: HookPhase,
     cancellation: Cancellation,
     deadline: Instant,
     response: oneshot::Sender<HookReport>,
@@ -222,6 +223,7 @@ async fn begin(
 ) -> Result<Option<Pending>, ScriptError> {
     let Command {
         hook_id,
+        phase,
         context: input,
         deadline,
         cancellation,
@@ -229,6 +231,7 @@ async fn begin(
         response,
     } = command;
     let mut completion = Completion {
+        phase,
         cancellation,
         deadline,
         response,
@@ -261,7 +264,7 @@ async fn begin(
                     .restore(&ctx)
                     .map_err(|e| bridge.failure(&ctx, e))?;
                 prepare
-                    .call::<_, Value>((draft,))
+                    .call::<_, Value>((draft, phase.as_str()))
                     .map_err(|e| bridge.failure(&ctx, e))
             })();
             completion.timings.input_bridge = input_started.elapsed();
@@ -273,7 +276,14 @@ async fn begin(
             let returned_at = Instant::now();
             let result = result.map_err(|e| bridge.failure(&ctx, e))?;
             if result.is_undefined() {
-                let json = timed_output(&ctx, bridge, draft, options, &mut completion.timings)?;
+                let json = timed_output(
+                    &ctx,
+                    bridge,
+                    draft,
+                    completion.phase,
+                    options,
+                    &mut completion.timings,
+                )?;
                 Ok(Ok(json))
             } else if let Some(promise) = result.into_promise() {
                 completion.pending_since = Some(returned_at);
@@ -314,11 +324,12 @@ fn timed_output<'js>(
     ctx: &Ctx<'js>,
     bridge: &Bridge,
     draft: Value<'js>,
+    phase: HookPhase,
     options: &RuntimeOptions,
     timings: &mut HookTimings,
 ) -> Result<HookOutput, ScriptError> {
     let started = Instant::now();
-    let result = output(ctx, bridge, draft, options);
+    let result = output(ctx, bridge, draft, phase, options);
     timings.output_bridge = Some(started.elapsed());
     result
 }
@@ -327,6 +338,7 @@ fn output<'js>(
     ctx: &Ctx<'js>,
     bridge: &Bridge,
     draft: Value<'js>,
+    phase: HookPhase,
     options: &RuntimeOptions,
 ) -> Result<HookOutput, ScriptError> {
     let project = bridge
@@ -348,11 +360,15 @@ fn output<'js>(
     }
     let envelope = limen_config::parse_json_str(&text, options.json_limits.max_depth)
         .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
-    decode_output(envelope, options)
+    decode_output(envelope, phase, options)
 }
 
 /// The private envelope shares the draft's JSON budget and is checked before release.
-fn decode_output(envelope: Json, options: &RuntimeOptions) -> Result<HookOutput, ScriptError> {
+fn decode_output(
+    envelope: Json,
+    phase: HookPhase,
+    options: &RuntimeOptions,
+) -> Result<HookOutput, ScriptError> {
     let invalid = || ScriptError::new(ScriptErrorKind::Contract);
     let Json::Object(mut envelope) = envelope else {
         return Err(invalid());
@@ -388,13 +404,14 @@ fn decode_output(envelope: Json, options: &RuntimeOptions) -> Result<HookOutput,
         }
         accepted.push(id);
     }
-    Ok(HookOutput {
+    crate::contract::decode_candidate(
         context,
-        observations: ObservationBatch {
+        phase,
+        ObservationBatch {
             events: accepted,
             dropped,
         },
-    })
+    )
 }
 
 async fn poll_pending(
@@ -437,6 +454,7 @@ async fn poll_pending(
                     &ctx,
                     bridge,
                     draft,
+                    waiting.completion.phase,
                     options,
                     &mut waiting.completion.timings,
                 )

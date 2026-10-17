@@ -73,8 +73,11 @@ fn returned_reports_include_errors_and_only_available_measurements() {
     let timings = Timings::default();
     for outcome in [
         Ok(HookOutput {
-            context: json!({}),
-            observations: ObservationBatch::default(),
+            candidate: limen_script::HookCandidate::OnFinish,
+            effects: limen_script::HookEffects {
+                state: limen_script::ScriptState::new(),
+                observations: ObservationBatch::default(),
+            },
         }),
         Err(ScriptError::new(ScriptErrorKind::Deadline)),
     ] {

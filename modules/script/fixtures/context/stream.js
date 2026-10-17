@@ -27,5 +27,5 @@ export default {
     ctx.state.visited = true;
   },
   onFinish() { release(); },
-  onError(ctx) { ctx.started = started; }
+  onError(ctx) { ctx.state.started = started; }
 };

@@ -8,7 +8,7 @@ mod content;
 mod error_response;
 mod rejection;
 
-fn draft(phase: &str) -> Value {
+pub(super) fn draft(phase: &str) -> Value {
     let mut value = json!({
         "meta": {"phase": phase, "requestId": "synthetic", "clientStream": false},
         "state": {"nested": {"value": 1}}
@@ -58,7 +58,10 @@ async fn headers() -> TestResult {
     let id = hook(&config, "onRequest")?;
     let mut input = draft("beforeSend");
     input["meta"]["mode"] = json!("valid");
-    let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
+    let output = runtime
+        .invoke_fixture(call(id, 1, input))
+        .await
+        .into_context()?;
     ensure(
         output["headers"]
             == json!([
@@ -88,7 +91,10 @@ async fn headers() -> TestResult {
             input["meta"]["operation"] = json!(operation);
             input["meta"]["name"] = json!(name);
             input["meta"]["value"] = json!("synthetic");
-            let output = runtime.invoke(call(id, 2, input)).await.into_context();
+            let output = runtime
+                .invoke_fixture(call(id, 2, input))
+                .await
+                .into_context();
             ensure(
                 output.is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
                 "invalid or transport header mutation was accepted",
@@ -100,7 +106,7 @@ async fn headers() -> TestResult {
         input["meta"] = json!({"phase": "beforeSend", "mode": "invalid", "operation": "append", "name": "x-example", "value": value});
         ensure(
             runtime
-                .invoke(call(id, 3, input))
+                .invoke_fixture(call(id, 3, input))
                 .await
                 .into_context()
                 .is_err(),
@@ -110,7 +116,10 @@ async fn headers() -> TestResult {
     let mut input = draft("afterReceive");
     input["meta"]["mode"] = json!("get");
     input["headers"] = json!([{"name": "Host", "value": "fictional.invalid"}]);
-    let output = runtime.invoke(call(id, 4, input)).await.into_context()?;
+    let output = runtime
+        .invoke_fixture(call(id, 4, input))
+        .await
+        .into_context()?;
     ensure(
         output["headers"] == json!([{"name": "host", "value": "fictional.invalid"}]),
         "read access to transport header failed",
@@ -161,13 +170,12 @@ async fn readonly() -> TestResult {
                 || (operation == "status" && phase == "afterReceive")
                 || (operation == "headers" && matches!(phase, "beforeSend" | "afterReceive"));
             let original = input.clone();
-            let result = runtime.invoke(call(id, 1, input)).await.into_context();
+            let result = runtime
+                .invoke_fixture(call(id, 1, input))
+                .await
+                .into_context();
             if allowed {
                 let output = result?;
-                ensure(
-                    output["meta"] == original["meta"],
-                    "readonly metadata changed",
-                )?;
                 let changed = match operation {
                     "state" => output["state"]["nested"]["value"] == 2,
                     "body" => output["body"]["nested"]["value"] == 2,
@@ -213,7 +221,8 @@ async fn isolation() -> TestResult {
     let pending = call(id, 1, input.clone());
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
+    let waiting =
+        tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -222,7 +231,10 @@ async fn isolation() -> TestResult {
     .await?;
     let mut second = draft("onRequest");
     second["meta"]["requestId"] = json!("independent");
-    let mut output = runtime.invoke(call(id, 2, second)).await.into_context()?;
+    let mut output = runtime
+        .invoke_fixture(call(id, 2, second))
+        .await
+        .into_context()?;
     ensure(
         output["state"]["order"] == json!(["request", "completed"])
             && output["body"]["private"] == "independent",
@@ -236,7 +248,7 @@ async fn isolation() -> TestResult {
         "cancelled context draft committed",
     )?;
     runtime
-        .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 3, json!({})))
         .await
         .into_context()?;
     let mut next = draft("beforeSend");
@@ -250,11 +262,15 @@ async fn isolation() -> TestResult {
         .as_u64()
         .ok_or("missing model hook")?;
     let output = runtime
-        .invoke(call(provider, 4, output))
+        .invoke_fixture(call(provider, 4, output))
         .await
         .into_context()?;
+    let mut next = draft("beforeSend");
+    for key in ["state", "body", "url", "headers"] {
+        next[key] = output[key].clone();
+    }
     let output = runtime
-        .invoke(call(model, 5, output))
+        .invoke_fixture(call(model, 5, next))
         .await
         .into_context()?;
     ensure(
@@ -275,14 +291,17 @@ async fn isolation() -> TestResult {
     ] {
         let mut input = draft("onRequest");
         input["meta"]["failure"] = json!(failure);
-        let output = runtime.invoke(call(id, 6, input)).await.into_context();
+        let output = runtime
+            .invoke_fixture(call(id, 6, input))
+            .await
+            .into_context();
         ensure(
             output.is_err_and(|error| error.kind() == expected),
             "failed async hook exposed partial state",
         )?;
     }
     let output = runtime
-        .invoke(call(id, 7, draft("onRequest")))
+        .invoke_fixture(call(id, 7, draft("onRequest")))
         .await
         .into_context()?;
     ensure(
@@ -307,7 +326,10 @@ async fn stream() -> TestResult {
             ("split", json!([{"text":"a"}, {"text":"b"}])),
         ] {
             let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{"text":"initial"}});
-            let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
+            let output = runtime
+                .invoke_fixture(call(id, 1, input))
+                .await
+                .into_context()?;
             ensure(
                 output["events"] == expected && output.get("event").is_none(),
                 "stream projection lost edits, drop or output order",
@@ -330,7 +352,7 @@ async fn stream() -> TestResult {
             let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{}});
             ensure(
                 runtime
-                    .invoke(call(id, 2, input))
+                    .invoke_fixture(call(id, 2, input))
                     .await
                     .into_context()
                     .is_err(),
@@ -339,7 +361,7 @@ async fn stream() -> TestResult {
         }
     }
     let output = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             id,
             3,
             json!({"meta":{"phase":"onRequest","operation":"missing"},"state":{},"body":{}}),
@@ -357,7 +379,8 @@ async fn stream() -> TestResult {
     );
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
+    let waiting =
+        tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -372,11 +395,11 @@ async fn stream() -> TestResult {
         "cancelled replacement escaped its draft",
     )?;
     runtime
-        .invoke(call(hook(&config, "onFinish")?, 5, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 5, json!({})))
         .await
         .into_context()?;
     let output = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             id,
             6,
             json!({"meta":{"phase":"onStreamEvent","operation":"drop"},"state":{},"event":{}}),
@@ -409,9 +432,12 @@ async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -
     for phase in ["onContent", "onUpstreamEvent", "onStreamEvent"] {
         let input =
             json!({"meta":{"phase":phase,"operation":"read"},"state":{},"event":{},"sse":envelope});
-        let output = runtime.invoke(call(id, 1, input)).await.into_context()?;
+        let output = runtime
+            .invoke_fixture(call(id, 1, input))
+            .await
+            .into_context()?;
         ensure(
-            output["sse"] == envelope && output["state"]["envelope"] == envelope,
+            output["state"]["envelope"] == envelope,
             "stream envelope was not preserved",
         )?;
         ensure(
@@ -422,7 +448,7 @@ async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -
             let input = json!({"meta":{"phase":phase,"operation":operation},"state":{},"event":{},"sse":envelope});
             ensure(
                 runtime
-                    .invoke(call(id, 2, input))
+                    .invoke_fixture(call(id, 2, input))
                     .await
                     .into_context()
                     .is_err(),
@@ -448,14 +474,13 @@ async fn captured_intrinsics_survive_config_extraction_and_capability_projection
     let id = hook(&config, "onRequest")?;
     for phase in ["beforeSend", "onContent", "onFinish"] {
         let input = draft(phase);
-        let output = runtime.invoke(call(id, 1, input.clone())).await.outcome?;
+        let output = runtime
+            .invoke_fixture(call(id, 1, input.clone()))
+            .await
+            .outcome?;
         ensure(
             output.observations.events == [0],
             "captured observation operations failed",
-        )?;
-        ensure(
-            output.context["meta"] == input["meta"],
-            "readonly facts changed",
         )?;
         match phase {
             "beforeSend" => {
@@ -484,11 +509,72 @@ async fn captured_intrinsics_survive_config_extraction_and_capability_projection
                 )?;
             },
             "onFinish" => ensure(
-                output.context == input,
+                output.context["state"] == input["state"],
                 "observer capability changed final facts",
             )?,
             _ => unreachable!(),
         }
     }
     stop(&runtime).await
+}
+
+#[test]
+fn private_projection_preserves_readonly_facts_for_every_stage() -> TestResult {
+    use rquickjs::{Context, Function, Object, Runtime};
+    let runtime = Runtime::new()?;
+    let context = Context::full(&runtime)?;
+    context.with(|ctx| -> TestResult {
+        let options = crate::RuntimeOptions::default();
+        crate::host::install(&ctx, options.json_limits.max_bytes)?;
+        let bridge = crate::bridge::install(&ctx, &options)?;
+        for phase in ["onRequest", "beforeSend", "afterReceive", "onResponse", "onContent", "onUpstreamEvent", "onStreamEvent", "onErrorResponse", "onError", "onFinish"] {
+            let mut input = draft(phase);
+            input["client"] = json!({"headers":[{"name":"X-Original","value":"first"},{"name":"x-original","value":"second"}]});
+            let original = input.clone();
+            let input = ctx.json_parse(input.to_string())?;
+            let prepare = bridge.prepare.clone().restore(&ctx)?;
+            let draft: rquickjs::Value = prepare.call((input, phase))?;
+            let inspect: Function = ctx.eval("(ctx => { if (!Object.isFrozen(ctx.meta) || !Object.isFrozen(ctx.client) || !Object.isFrozen(ctx.client.headers)) throw Error(); const values=ctx.client.headers.getAll('x-original'); values[0]='changed'; if(ctx.client.headers.getAll('X-Original')[0]!=='first') throw Error(); })")?;
+            inspect.call::<_, ()>((draft.clone(),))?;
+            let project = bridge.project.clone().restore(&ctx)?;
+            let envelope: Object = project.call((draft,))?;
+            let encode = bridge.encode.clone().restore(&ctx)?;
+            let encoded: String = encode.call((envelope,))?;
+            let projected: Value = serde_json::from_str(&encoded)?;
+            for key in ["meta", "client", "sse", "error", "stats", "outcome"] {
+                ensure(projected["context"][key] == original[key], "private projection changed readonly facts")?;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn private_context_rejects_unprepared_roots_missing_meta_and_forged_phase() -> TestResult {
+    use rquickjs::{Context, Runtime};
+    let runtime = Runtime::new()?;
+    let context = Context::full(&runtime)?;
+    context.with(|ctx| -> TestResult {
+        let options = crate::RuntimeOptions::default();
+        crate::host::install(&ctx, options.json_limits.max_bytes)?;
+        let bridge = crate::bridge::install(&ctx, &options)?;
+        for input in [json!({}), json!({"state":{},"body":{}}), draft("onFinish")] {
+            let prepare = bridge.prepare.clone().restore(&ctx)?;
+            let input = ctx.json_parse(input.to_string())?;
+            let error = prepare
+                .call::<_, rquickjs::Value>((input, "onRequest"))
+                .unwrap_err();
+            ensure(
+                bridge.failure(&ctx, error).kind() == ScriptErrorKind::JavaScript,
+                "missing metadata or forged phase entered the VM",
+            )?;
+        }
+        let project = bridge.project.clone().restore(&ctx)?;
+        let input = ctx.json_parse("{\"state\":{},\"body\":{}}")?;
+        let error = project.call::<_, rquickjs::Value>((input,)).unwrap_err();
+        ensure(
+            bridge.failure(&ctx, error).kind() == ScriptErrorKind::JavaScript,
+            "unprepared draft was projected",
+        )
+    })
 }

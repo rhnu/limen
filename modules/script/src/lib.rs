@@ -3,6 +3,7 @@
 mod bridge;
 mod builtins;
 mod context;
+mod contract;
 mod engine;
 mod error;
 mod host;
@@ -23,6 +24,7 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tracing::Instrument;
 
 pub type HookId = u64;
+pub use contract::*;
 
 // QuickJS checks native stack consumption below each rquickjs entry, not the
 // owning thread's OS stack limit. Leave the host its own Rust/Tokio/JSON reserve
@@ -137,16 +139,9 @@ impl Cancellation {
 pub struct HookCall {
     pub call_id: u64,
     pub hook_id: HookId,
-    pub context: Value,
+    pub context: HookContext,
     pub deadline: Instant,
     pub cancellation: Cancellation,
-}
-
-/// Owned draft released only after the hook's completion checks succeed.
-#[derive(Debug)]
-pub struct HookOutput {
-    pub context: Value,
-    pub observations: ObservationBatch,
 }
 
 /// Registered event IDs collected privately by one successful hook.
@@ -191,6 +186,7 @@ impl HookReport {
 pub(crate) struct Command {
     hook_id: HookId,
     context: Vec<u8>,
+    phase: HookPhase,
     deadline: Instant,
     cancellation: Cancellation,
     enqueued_at: Instant,
@@ -325,12 +321,14 @@ impl ScriptRuntime {
             ..
         } = call;
         let input_started = Instant::now();
-        let bytes = json::encode_owned(&context, self.limits);
+        let phase = context.input.phase();
+        let bytes = context
+            .validate_shape()
+            .and_then(|()| json::encode_owned(&context.into_json(), self.limits));
         let caller_input = input_started.elapsed();
-        drop(context);
         let mut report = match bytes {
             Ok(bytes) => {
-                self.invoke_encoded(hook_id, bytes, deadline, cancellation)
+                self.invoke_encoded(hook_id, phase, bytes, deadline, cancellation)
                     .instrument(span)
                     .await
             },
@@ -344,6 +342,7 @@ impl ScriptRuntime {
     async fn invoke_encoded(
         &self,
         hook_id: HookId,
+        phase: HookPhase,
         bytes: Vec<u8>,
         deadline: Instant,
         cancellation: Cancellation,
@@ -360,6 +359,7 @@ impl ScriptRuntime {
             .commands
             .try_send(Command {
                 hook_id,
+                phase,
                 context: bytes,
                 deadline,
                 cancellation: cancellation.clone(),

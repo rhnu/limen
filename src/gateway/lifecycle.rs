@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use limen_script::Cancellation;
+use limen_script::{Cancellation, ClientContext, HookContext, HookInput, HookMeta, ScriptState};
 use serde_json::{Value, json};
 
 use super::{
@@ -19,8 +19,8 @@ pub(super) struct Lifecycle {
     pub started: Instant,
     pub started_at_ms: i64,
     pub recorded: bool,
-    pub state: Value,
-    pub client: Value,
+    pub state: ScriptState,
+    pub client: ClientContext,
     pub client_stream: Option<bool>,
     pub alias: Option<String>,
     pub provider: Option<String>,
@@ -51,8 +51,8 @@ impl Lifecycle {
             started,
             started_at_ms: chrono::Utc::now().timestamp_millis(),
             recorded: false,
-            state: json!({}),
-            client: json!({"headers": []}),
+            state: ScriptState::new(),
+            client: ClientContext::default(),
             client_stream: None,
             alias: None,
             provider: None,
@@ -72,18 +72,25 @@ impl Lifecycle {
         }
     }
 
-    pub fn meta(&self, phase: &'static str) -> Value {
-        json!({"requestId":self.request_id,"phase":phase,"model":self.alias,"provider":self.provider,"configuredUpstreamModel":self.configured_model,"clientStream":self.client_stream,"upstreamStatus":self.upstream_status,"upstreamContentType":self.upstream_media})
+    pub fn context(&self, input: HookInput) -> HookContext {
+        self.context_with_state(input, self.state.clone())
     }
 
-    pub fn context(&self, phase: &'static str) -> Value {
-        self.context_with_state(phase, self.state.clone())
-    }
-
-    pub fn context_with_state(&self, phase: &'static str, state: Value) -> Value {
-        let mut context = json!({"meta":self.meta(phase),"client":self.client});
-        context["state"] = state;
-        context
+    pub fn context_with_state(&self, input: HookInput, state: ScriptState) -> HookContext {
+        HookContext {
+            meta: HookMeta {
+                request_id: self.request_id.clone(),
+                model: self.alias.clone(),
+                provider: self.provider.clone(),
+                configured_upstream_model: self.configured_model.clone(),
+                client_stream: self.client_stream,
+                upstream_status: self.upstream_status,
+                upstream_content_type: self.upstream_media.clone(),
+            },
+            client: self.client.clone(),
+            state,
+            input,
+        }
     }
 
     pub fn stats(&self) -> Value {

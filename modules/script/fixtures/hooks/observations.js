@@ -50,11 +50,11 @@ export default {
     }
   },
   onError(ctx) {
-    ctx.started = started;
-    ctx.finished = finished;
+    ctx.state.started = started;
+    ctx.state.finished = finished;
   },
   onFinish(ctx) {
-    if (ctx.forge) { ctx.observations = { events: [0], dropped: 0 }; return; }
+    if (ctx.state.forge) { ctx.observations = { events: [0], dropped: 0 }; return; }
     while (releases.length) releases.shift()();
   },
 };

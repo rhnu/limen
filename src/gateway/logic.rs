@@ -1,5 +1,6 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
 use limen_config::{BusinessConfig, Model, Provider, ResourceLimits};
+use limen_script::{ClientContext, HeaderField};
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
@@ -27,7 +28,7 @@ pub fn authorize(expected: &str, headers: &HeaderMap) -> Result<(), Failure> {
 
 /// Capture only configured fields, excluding connection-nominated hop-by-hop data.
 /// Header bytes remain private request data and are never added to diagnostics.
-pub fn client_context(headers: &HeaderMap, allowed: &[String]) -> Result<Value, Failure> {
+pub fn client_context(headers: &HeaderMap, allowed: &[String]) -> Result<ClientContext, Failure> {
     let mut fields = Vec::new();
     let mut bytes = 0_usize;
     for name in allowed {
@@ -53,10 +54,13 @@ pub fn client_context(headers: &HeaderMap, allowed: &[String]) -> Result<Value, 
             let value = std::str::from_utf8(value.as_bytes()).map_err(|source| {
                 Failure::new(ErrorCode::InvalidRequest, "client_context").with_source(source)
             })?;
-            fields.push(json!({"name": name, "value": value}));
+            fields.push(HeaderField {
+                name: name.clone(),
+                value: value.to_owned(),
+            });
         }
     }
-    Ok(json!({"headers":fields}))
+    Ok(ClientContext { headers: fields })
 }
 
 pub fn parse_request(bytes: &[u8], limits: &ResourceLimits) -> Result<(Value, bool), Failure> {
@@ -173,42 +177,32 @@ pub fn connection_nominated(headers: &HeaderMap, name: &str) -> bool {
     })
 }
 
-pub fn headers_to_json(headers: &HeaderMap) -> Result<Value, Failure> {
-    let entries = headers
+pub fn header_fields(headers: &HeaderMap) -> Result<Vec<HeaderField>, Failure> {
+    headers
         .iter()
         .map(|(name, value)| {
             let value = std::str::from_utf8(value.as_bytes()).map_err(|source| {
                 Failure::new(ErrorCode::UpstreamProtocol, "headers").with_source(source)
             })?;
-            Ok(json!({"name": name.as_str(), "value": value}))
+            Ok(HeaderField {
+                name: name.as_str().to_owned(),
+                value: value.to_owned(),
+            })
         })
-        .collect::<Result<Vec<_>, Failure>>()?;
-    Ok(Value::Array(entries))
+        .collect()
 }
 
-pub fn headers_from_json(value: &Value) -> Result<HeaderMap, Failure> {
+pub fn headers_from_fields(fields: &[HeaderField]) -> Result<HeaderMap, Failure> {
     let invalid = || Failure::new(ErrorCode::HookFailed, "headers");
-    let entries = value.as_array().ok_or_else(invalid)?;
     let mut headers = HeaderMap::new();
-    for entry in entries {
-        let object = entry.as_object().ok_or_else(invalid)?;
-        if object.len() != 2 {
-            return Err(invalid());
-        }
-        let name = object
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(invalid)?;
-        let value = object
-            .get("value")
-            .and_then(Value::as_str)
-            .ok_or_else(invalid)?;
-        let name = HeaderName::from_bytes(name.as_bytes())
+    for field in fields {
+        let name = HeaderName::from_bytes(field.name.as_bytes())
             .map_err(|source| invalid().with_source(source))?;
         if reserved_header(name.as_str()) {
             return Err(invalid());
         }
-        let value = HeaderValue::from_str(value).map_err(|source| invalid().with_source(source))?;
+        let value =
+            HeaderValue::from_str(&field.value).map_err(|source| invalid().with_source(source))?;
         headers.append(name, value);
     }
     Ok(headers)

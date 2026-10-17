@@ -123,7 +123,7 @@ async fn rejection() -> TestResult {
     .enumerate()
     {
         let error = runtime
-            .invoke(call(id, index as u64, json!({"mode": mode})))
+            .invoke_fixture(call(id, index as u64, json!({"mode": mode})))
             .await
             .into_context()
             .err()
@@ -144,7 +144,7 @@ async fn rejection() -> TestResult {
         }
     }
     let output = runtime
-        .invoke(call(hook(&config, "onFinish")?, 100, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 100, json!({})))
         .await
         .into_context()?;
     ensure(

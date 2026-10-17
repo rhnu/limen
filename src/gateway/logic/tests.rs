@@ -19,12 +19,21 @@ fn client_context_selects_multivalue_headers_and_ignores_connection_fields() {
     )
     .unwrap();
     assert_eq!(
-        client,
-        json!({"headers":[{"name":"x-profile","value":"one"},{"name":"x-profile","value":"two"}]})
+        client.headers,
+        vec![
+            HeaderField {
+                name: "x-profile".into(),
+                value: "one".into()
+            },
+            HeaderField {
+                name: "x-profile".into(),
+                value: "two".into()
+            },
+        ]
     );
     assert_eq!(
-        client_context(&headers, &[]).unwrap(),
-        json!({"headers":[]})
+        client_context(&headers, &[]).unwrap().headers,
+        [] as [HeaderField; 0]
     );
 }
 
@@ -253,13 +262,17 @@ fn request_rejects_invalid_shape_numbers_depth_and_size() {
 
 #[test]
 fn header_draft_preserves_case_insensitive_multiple_values() {
-    let draft = json!([{"name":"X-Item","value":"first"},{"name":"x-item","value":"second"},{"name":"Authorization","value":"Bearer changed"}]);
-    let headers = headers_from_json(&draft).unwrap();
+    let draft = vec![
+        field("X-Item", "first"),
+        field("x-item", "second"),
+        field("Authorization", "Bearer changed"),
+    ];
+    let headers = headers_from_fields(&draft).unwrap();
     assert_eq!(
         headers.get_all("X-ITEM").iter().collect::<Vec<_>>(),
         vec!["first", "second"]
     );
-    let round_trip = headers_from_json(&headers_to_json(&headers).unwrap()).unwrap();
+    let round_trip = headers_from_fields(&header_fields(&headers).unwrap()).unwrap();
     assert_eq!(round_trip, headers);
     for name in [
         "Host",
@@ -272,10 +285,10 @@ fn header_draft_preserves_case_insensitive_multiple_values() {
         "Trailer",
         "TE",
     ] {
-        assert!(headers_from_json(&json!([{"name":name,"value":"value"}])).is_err());
+        assert!(headers_from_fields(&[field(name, "value")]).is_err());
     }
-    assert!(headers_from_json(&json!([{"name":"bad header","value":"x"}])).is_err());
-    assert!(headers_from_json(&json!([{"name":"x-item","value":"x\r\ny"}])).is_err());
+    assert!(headers_from_fields(&[field("bad header", "x")]).is_err());
+    assert!(headers_from_fields(&[field("x-item", "x\r\ny")]).is_err());
 }
 
 #[test]
@@ -315,7 +328,7 @@ fn non_utf8_response_metadata_fails_instead_of_changing_header_bytes() {
     let mut upstream = HeaderMap::new();
     upstream.insert("x-request-id", HeaderValue::from_bytes(&[0xFF]).unwrap());
     let retained = response_headers(&upstream);
-    let failure = headers_to_json(&retained).unwrap_err();
+    let failure = header_fields(&retained).unwrap_err();
     assert_eq!(failure.code, ErrorCode::UpstreamProtocol);
     assert!(
         std::error::Error::source(&failure)
@@ -372,4 +385,11 @@ fn model_list_contains_only_explicit_aliases() {
     assert_eq!(output["data"][1]["id"], "chat:vertex:flex");
     assert!(!output.to_string().contains("real-model"));
     assert!(!output.to_string().contains("fictional.invalid"));
+}
+
+fn field(name: &str, value: &str) -> HeaderField {
+    HeaderField {
+        name: name.into(),
+        value: value.into(),
+    }
 }

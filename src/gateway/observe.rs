@@ -1,6 +1,8 @@
 use std::time::Instant;
 
-use limen_script::{Cancellation, HookCall, RuntimeStatus};
+use limen_script::{
+    Cancellation, HookCall, HookInput, HookOutcome, HookPhase, ObserverInput, RuntimeStatus,
+};
 use serde_json::json;
 
 use super::{
@@ -18,14 +20,15 @@ impl Gateway {
         deadline: Instant,
     ) {
         let outcome = match failure {
-            None => "success",
-            Some(e) if e.code == ErrorCode::Cancelled => "cancelled",
-            Some(_) => "failed",
+            None => HookOutcome::Success,
+            Some(e) if e.code == ErrorCode::Cancelled => HookOutcome::Cancelled,
+            Some(_) => HookOutcome::Failed,
         };
         for (phase, hook) in [
-            ("onError", failure.and(self.business.on_error)),
-            ("onFinish", self.business.on_finish),
+            (HookPhase::OnError, failure.and(self.business.on_error)),
+            (HookPhase::OnFinish, self.business.on_finish),
         ] {
+            let phase_name = phase.as_str();
             let Some(hook_id) = hook else {
                 continue;
             };
@@ -33,7 +36,7 @@ impl Gateway {
                 self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
-                    phase,
+                    phase = phase_name,
                     reason = "runtime_unavailable",
                     "observation not executed"
                 );
@@ -43,22 +46,30 @@ impl Gateway {
                 self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
-                    phase,
+                    phase = phase_name,
                     reason = "cleanup_budget",
                     "observation not executed"
                 );
                 continue;
             }
-            let mut context = lifecycle.context(phase);
-            context["outcome"] = json!(outcome);
-            context["stats"] = lifecycle.stats();
-            if let Some(failure) = failure {
-                context["error"] = failure.observer_error(&lifecycle.request_id);
-                context["error"]["step"] =
-                    json!(failure.step.as_deref().or(lifecycle.step.as_deref()));
-            }
+            let error = failure.map(|failure| {
+                let mut error = failure.observer_error(&lifecycle.request_id);
+                error["step"] = json!(failure.step.as_deref().or(lifecycle.step.as_deref()));
+                error
+            });
+            let input = ObserverInput {
+                outcome,
+                error,
+                stats: lifecycle.stats(),
+            };
+            let input = if phase == HookPhase::OnError {
+                HookInput::OnError(input)
+            } else {
+                HookInput::OnFinish(input)
+            };
+            let context = lifecycle.context(input);
             let timings = Timings::default();
-            let measurement = timings.hook(phase);
+            let measurement = timings.hook(phase_name);
             let report = self
                 .runtime
                 .invoke(HookCall {
@@ -75,17 +86,17 @@ impl Gateway {
                 Ok(output) => {
                     lifecycle
                         .observations
-                        .commit(output.observations, phase, None);
+                        .commit(output.effects.observations, phase_name, None);
                     tracing::debug!(
                         request_id = lifecycle.request_id,
-                        phase,
+                        phase = phase_name,
                         observation = "completed",
                         "observation completed"
                     );
                 },
                 Err(source) => {
                     self.transport.observation_failed().await;
-                    tracing::warn!(request_id = lifecycle.request_id, phase, error_kind = ?source.kind(), error = %source.diagnostic(), "observation failed; terminal outcome retained");
+                    tracing::warn!(request_id = lifecycle.request_id, phase = phase_name, error_kind = ?source.kind(), error = %source.diagnostic(), "observation failed; terminal outcome retained");
                 },
             }
         }

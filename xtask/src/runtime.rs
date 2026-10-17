@@ -6,7 +6,8 @@ use std::{
 };
 
 use limen_script::{
-    Cancellation, HookCall, RuntimeOptions, RuntimeStatus, ScriptErrorKind, ScriptRuntime,
+    Cancellation, ClientContext, HookCall, HookContext, HookInput, HookMeta, RuntimeOptions,
+    RuntimeStatus, ScriptErrorKind, ScriptRuntime,
 };
 use serde_json::{Value, json};
 
@@ -68,7 +69,7 @@ fn hook(config: &Value, name: &str) -> Result<u64, Box<dyn Error + Send + Sync>>
         .ok_or_else(|| format!("missing registered {name}").into())
 }
 
-fn call(hook_id: u64, call_id: u64, context: Value) -> HookCall {
+fn call(hook_id: u64, call_id: u64, context: HookContext) -> HookCall {
     HookCall {
         call_id,
         hook_id,
@@ -77,6 +78,23 @@ fn call(hook_id: u64, call_id: u64, context: Value) -> HookCall {
         cancellation: Cancellation::new(),
     }
 }
+
+fn context(input: HookInput, state: Value) -> HookContext {
+    let Value::Object(state) = state else {
+        panic!("probe state fixtures are objects");
+    };
+    HookContext {
+        meta: HookMeta {
+            request_id: "isolated-probe".into(),
+            ..HookMeta::default()
+        },
+        client: ClientContext::default(),
+        state,
+        input,
+    }
+}
+
+fn request(state: Value) -> HookContext { context(HookInput::OnRequest { body: json!({}) }, state) }
 
 fn ensure(condition: bool, message: &str) -> TestResult {
     if condition {
@@ -131,7 +149,7 @@ async fn retirement(fixture: &Fixture, case: &str) -> TestResult {
         let mut changes = runtime.status_changes();
         changes.borrow_and_update();
         let result = runtime
-            .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
+            .invoke(call(hook(&config, "onRequest")?, 1, request(json!({}))))
             .await;
         ensure(
             result.outcome.is_err_and(|error| error.kind() == expected),
@@ -147,7 +165,7 @@ async fn retirement(fixture: &Fixture, case: &str) -> TestResult {
             "resource failure did not retire the VM",
         )?;
         let later = runtime
-            .invoke(call(hook(&config, "onRequest")?, 2, json!({})))
+            .invoke(call(hook(&config, "onRequest")?, 2, request(json!({}))))
             .await;
         ensure(later.outcome.is_err(), "retired VM accepted a new call")?;
     }

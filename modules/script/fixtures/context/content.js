@@ -33,7 +33,7 @@ async function content(ctx) {
       ctx.state.late = true;
       finished = true;
       break;
-    default: break;
+    default: ctx.state.source = ctx.sse; break;
   }
 }
 export default {
@@ -46,6 +46,6 @@ export default {
   models: { m: { provider: 'p', upstream: 'synthetic', pipeline: [{
     name: 'model', onContent(ctx) { ctx.state.visits++; ctx.event.model = true; },
   }] } },
-  onError(ctx) { ctx.started = started; ctx.finished = finished; },
+  onError(ctx) { ctx.state.started = started; ctx.state.finished = finished; },
   onFinish() { release(); },
 };

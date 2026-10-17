@@ -3,7 +3,8 @@ use std::time::Instant;
 use axum::{http::header, response::Response};
 use limen_chat::{Aggregator, ChunkTracker, Event, Frame, FrameDecoder, JsonChunks};
 use limen_config::{Model, Provider, ResourceLimits, validate_json};
-use serde_json::{Value, json};
+use limen_script::{HookCandidate, HookInput, ResponseHead};
+use serde_json::Value;
 
 mod stream;
 use stream::SseOutput;
@@ -385,26 +386,24 @@ impl Gateway {
         let mut headers = logic::response_headers(response.headers());
         for step in provider.pipeline.iter().chain(&model.pipeline) {
             if let Some(hook) = step.after_receive {
-                let mut context = lifecycle.context("afterReceive");
-                context["status"] = json!(status);
-                context["headers"] = logic::headers_to_json(&headers)?;
-                let mut output = self
-                    .hook(hook, "afterReceive", Some(&step.name), context, lifecycle)
+                let context = lifecycle.context(HookInput::AfterReceive(ResponseHead {
+                    status,
+                    headers: logic::header_fields(&headers)?,
+                }));
+                let output = self
+                    .hook(hook, Some(&step.name), context, lifecycle)
                     .await?;
-                let next_status = output
-                    .context
-                    .get("status")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| u16::try_from(value).ok())
-                    .ok_or_else(|| hook_invalid("afterReceive", &step.name))?;
+                let HookCandidate::AfterReceive(head) = output.candidate else {
+                    return Err(hook_invalid("afterReceive", &step.name));
+                };
+                let next_status = head.status;
                 validate_response_status(original_status, next_status).map_err(|source| {
                     hook_invalid("afterReceive", &step.name).with_source(StatusMapping(source))
                 })?;
-                let next_headers =
-                    logic::headers_from_json(&output.context["headers"]).map_err(|source| {
-                        hook_invalid("afterReceive", &step.name).with_source(source)
-                    })?;
-                commit_effects(lifecycle, &mut output)?;
+                let next_headers = logic::headers_from_fields(&head.headers).map_err(|source| {
+                    hook_invalid("afterReceive", &step.name).with_source(source)
+                })?;
+                commit_effects(lifecycle, output.effects);
                 status = next_status;
                 headers = next_headers;
             }

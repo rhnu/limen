@@ -3,14 +3,14 @@
 use limen_script::{JsonLimits, RuntimeOptions, RuntimeStatus, ScriptErrorKind, ScriptRuntime};
 use serde_json::json;
 
-use super::{Fixture, TestResult, call, ensure, hook, stop};
+use super::{Fixture, TestResult, call, ensure, hook, request, stop};
 
 pub(crate) fn configure(command: &mut tokio::process::Command) {
     command
         .env("LIMEN_PROBE_ENV_TOKEN", "synthetic-upstream-token")
         .env("LIMEN_PROBE_ENV_EMPTY", "")
         .env("LIMEN_PROBE_ENV_UNICODE", "密钥-é")
-        .env("LIMEN_PROBE_ENV_LARGE", "x".repeat(1025))
+        .env("LIMEN_PROBE_ENV_LARGE", "x".repeat(4097))
         .env_remove("LIMEN_PROBE_ENV_MISSING");
     #[cfg(unix)]
     {
@@ -43,7 +43,8 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         path,
         RuntimeOptions {
             json_limits: JsonLimits {
-                max_bytes: 1024,
+                // Include the real typed hook envelope in the same output budget.
+                max_bytes: 4096,
                 ..JsonLimits::default()
             },
             ..RuntimeOptions::default()
@@ -60,16 +61,17 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
     )?;
     let id = hook(&config, "onRequest")?;
     let output = runtime
-        .invoke(call(id, 1, json!({"action":"check"})))
+        .invoke(call(id, 1, request(json!({"action":"check"}))))
         .await
         .outcome?
-        .context;
+        .effects
+        .state;
     ensure(
         output["checked"] == true,
         "environment error contracts were not checked",
     )?;
     let error = runtime
-        .invoke(call(id, 2, json!({"action":"uncaught"})))
+        .invoke(call(id, 2, request(json!({"action":"uncaught"}))))
         .await
         .outcome
         .err()
@@ -81,10 +83,11 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         "environment failure leaked input or retired a usable VM",
     )?;
     let output = runtime
-        .invoke(call(id, 3, json!({"action":"read"})))
+        .invoke(call(id, 3, request(json!({"action":"read"}))))
         .await
         .outcome?
-        .context;
+        .effects
+        .state;
     ensure(
         output["token"] == "synthetic-upstream-token" && output["fallback"] == "fallback",
         "async hook environment lookup failed after a rejected access",

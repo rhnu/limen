@@ -28,7 +28,7 @@ async fn sync_and_async_void_hooks_commit_and_preserve_pipeline_order() -> TestR
         .start(include_str!("../../fixtures/hooks/void.js"))
         .await?;
     let sync = runtime
-        .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
+        .invoke_fixture(call(hook(&config, "onRequest")?, 1, json!({})))
         .await
         .into_context()?;
     ensure(
@@ -36,7 +36,7 @@ async fn sync_and_async_void_hooks_commit_and_preserve_pipeline_order() -> TestR
         "sync void draft did not commit",
     )?;
     let asynchronous = runtime
-        .invoke(call(hook(&config, "onFinish")?, 2, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 2, json!({})))
         .await
         .into_context()?;
     ensure(
@@ -50,11 +50,11 @@ async fn sync_and_async_void_hooks_commit_and_preserve_pipeline_order() -> TestR
         .as_u64()
         .ok_or("model hook not registered")?;
     let provider_output = runtime
-        .invoke(call(provider, 3, json!({"order": []})))
+        .invoke_fixture(call(provider, 3, json!({"order": []})))
         .await
         .into_context()?;
     let model_output = runtime
-        .invoke(call(model, 4, provider_output))
+        .invoke_fixture(call(model, 4, provider_output))
         .await
         .into_context()?;
     ensure(
@@ -79,7 +79,9 @@ async fn pending_promises_allow_other_calls_and_wait_failure_keeps_runtime_ready
         let cancellation = pending.cancellation.clone();
         let pending_runtime = runtime.clone();
         let waiting =
-            tokio::spawn(async move { pending_runtime.invoke(pending).await.into_context() });
+            tokio::spawn(
+                async move { pending_runtime.invoke_fixture(pending).await.into_context() },
+            );
         wait_for(
             &runtime,
             hook(&config, "onError")?,
@@ -87,7 +89,7 @@ async fn pending_promises_allow_other_calls_and_wait_failure_keeps_runtime_ready
         )
         .await?;
         let output = runtime
-            .invoke(call(id, if deadline { 4 } else { 2 }, json!({})))
+            .invoke_fixture(call(id, if deadline { 4 } else { 2 }, json!({})))
             .await
             .into_context()?;
         ensure(
@@ -133,7 +135,9 @@ async fn cancelled_and_expired_calls_discard_drafts_but_allow_late_closure_effec
         let cancellation = pending.cancellation.clone();
         let pending_runtime = runtime.clone();
         let waiting =
-            tokio::spawn(async move { pending_runtime.invoke(pending).await.into_context() });
+            tokio::spawn(
+                async move { pending_runtime.invoke_fixture(pending).await.into_context() },
+            );
         wait_for(
             &runtime,
             hook(&config, "onError")?,
@@ -153,7 +157,7 @@ async fn cancelled_and_expired_calls_discard_drafts_but_allow_late_closure_effec
             "failed call exposed a draft instead of an error",
         )?;
         let trigger = runtime
-            .invoke(call(hook(&config, "onFinish")?, base + 1, json!({})))
+            .invoke_fixture(call(hook(&config, "onFinish")?, base + 1, json!({})))
             .await
             .into_context()?;
         ensure(trigger == json!({}), "late draft crossed into a new call")?;
@@ -180,7 +184,7 @@ async fn non_void_completions_and_thenables_fail_the_hook_contract() -> TestResu
     let id = hook(&config, "onRequest")?;
     for kind in 0..=12 {
         let output = runtime
-            .invoke(call(id, kind, json!({"kind": kind})))
+            .invoke_fixture(call(id, kind, json!({"kind": kind})))
             .await
             .into_context();
         ensure(
@@ -202,7 +206,7 @@ async fn startup_awaits_top_level_promise_before_publishing_ready() -> TestResul
         "top-level await was not awaited before extraction",
     )?;
     let output = runtime
-        .invoke(call(hook(&config, "onRequest")?, 1, json!({})))
+        .invoke_fixture(call(hook(&config, "onRequest")?, 1, json!({})))
         .await
         .into_context()?;
     ensure(
@@ -247,7 +251,7 @@ async fn json_bridge_rejects_invalid_values_and_preserves_safe_integer_boundary(
         .await?;
     for kind in 0..4 {
         let result = runtime
-            .invoke(call(
+            .invoke_fixture(call(
                 hook(&config, "onRequest")?,
                 kind,
                 json!({"kind": kind}),
@@ -260,7 +264,7 @@ async fn json_bridge_rejects_invalid_values_and_preserves_safe_integer_boundary(
         )?;
     }
     let result = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             hook(&config, "onRequest")?,
             5,
             json!({"unsafe": 9_007_199_254_740_992_u64}),
@@ -272,7 +276,7 @@ async fn json_bridge_rejects_invalid_values_and_preserves_safe_integer_boundary(
         "unsafe Rust input integer entered JS",
     )?;
     let result = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             hook(&config, "onRequest")?,
             6,
             json!({"safe": 9_007_199_254_740_991_u64, "null": null}),
@@ -337,7 +341,8 @@ async fn shutdown_discards_an_entered_pending_hook() -> TestResult {
         .await?;
     let pending_runtime = runtime.clone();
     let pending = call(hook(&config, "onRequest")?, 1, json!({}));
-    let waiting = tokio::spawn(async move { pending_runtime.invoke(pending).await.into_context() });
+    let waiting =
+        tokio::spawn(async move { pending_runtime.invoke_fixture(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,

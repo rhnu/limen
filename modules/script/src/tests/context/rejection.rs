@@ -24,7 +24,7 @@ async fn successful_void_hooks_project_owned_rejection_and_draft() -> TestResult
         for operation in ["sync", "async"] {
             for status in [400, 403, 422] {
                 let output = runtime
-                    .invoke(call(id, 1, input(phase, operation, json!(status))))
+                    .invoke_fixture(call(id, 1, input(phase, operation, json!(status))))
                     .await
                     .into_context()?;
                 ensure(
@@ -44,13 +44,16 @@ async fn successful_void_hooks_project_owned_rejection_and_draft() -> TestResult
         }
         let mut context = input(phase, "sync", Value::Null);
         context["meta"]["defaultStatus"] = json!(true);
-        let output = runtime.invoke(call(id, 2, context)).await.into_context()?;
+        let output = runtime
+            .invoke_fixture(call(id, 2, context))
+            .await
+            .into_context()?;
         ensure(
             output["rejection"] == json!({"status": 400}),
             "missing rejection status did not use 400",
         )?;
         let output = runtime
-            .invoke(call(id, 3, input(phase, "inspect", json!(422))))
+            .invoke_fixture(call(id, 3, input(phase, "inspect", json!(422))))
             .await
             .into_context()?;
         ensure(
@@ -82,7 +85,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
     ] {
         ensure(
             runtime
-                .invoke(call(id, 1, input("onRequest", "sync", status)))
+                .invoke_fixture(call(id, 1, input("onRequest", "sync", status)))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
@@ -92,7 +95,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
     for operation in ["extra", "twice", "replace", "method", "forge"] {
         ensure(
             runtime
-                .invoke(call(id, 2, input("beforeSend", operation, json!(422))))
+                .invoke_fixture(call(id, 2, input("beforeSend", operation, json!(422))))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
@@ -104,7 +107,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
         context[reserved] = json!({"status": 422});
         ensure(
             runtime
-                .invoke(call(id, 3, context))
+                .invoke_fixture(call(id, 3, context))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
@@ -127,7 +130,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
             context[reserved] = json!({"status": 422});
             ensure(
                 runtime
-                    .invoke(call(id, 3, context))
+                    .invoke_fixture(call(id, 3, context))
                     .await
                     .into_context()
                     .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
@@ -136,7 +139,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
         }
         if !matches!(phase, "onRequest" | "beforeSend") {
             let output = runtime
-                .invoke(call(id, 4, input(phase, "noop", json!(422))))
+                .invoke_fixture(call(id, 4, input(phase, "noop", json!(422))))
                 .await
                 .into_context()?;
             ensure(
@@ -145,7 +148,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
             )?;
             ensure(
                 runtime
-                    .invoke(call(id, 5, input(phase, "inspect", json!(422))))
+                    .invoke_fixture(call(id, 5, input(phase, "inspect", json!(422))))
                     .await
                     .into_context()
                     .is_err_and(|error| error.kind() == ScriptErrorKind::JavaScript),
@@ -176,7 +179,7 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
     ] {
         ensure(
             runtime
-                .invoke(call(id, 1, input("onRequest", operation, json!(403))))
+                .invoke_fixture(call(id, 1, input("onRequest", operation, json!(403))))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == expected),
@@ -186,7 +189,8 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
     let pending = call(id, 2, input("beforeSend", "pending", json!(422)));
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
+    let waiting =
+        tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await.into_context() });
     wait_for(
         &runtime,
         hook(&config, "onError")?,
@@ -201,16 +205,18 @@ async fn hook_errors_and_cancellation_prevent_rejection_commit() -> TestResult {
         "a recorded business rejection replaced cancellation",
     )?;
     runtime
-        .invoke(call(hook(&config, "onFinish")?, 3, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 3, json!({})))
         .await
         .into_context()?;
     let original = input("onRequest", "noop", json!(400));
     let output = runtime
-        .invoke(call(id, 4, original.clone()))
+        .invoke_fixture(call(id, 4, original.clone()))
         .await
         .into_context()?;
     ensure(
-        output == original && output.get("rejection").is_none(),
+        output["state"] == original["state"]
+            && output["body"] == original["body"]
+            && output.get("rejection").is_none(),
         "failed or late rejection draft polluted the next invocation",
     )?;
     stop(&runtime).await

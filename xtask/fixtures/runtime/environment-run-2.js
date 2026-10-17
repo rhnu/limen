@@ -8,12 +8,12 @@ export default {
   empty: limen.env('LIMEN_PROBE_ENV_EMPTY'),
   async onRequest(ctx) {
     await Promise.resolve();
-    if (ctx.action === 'read') {
-      ctx.token = limen.env('LIMEN_PROBE_ENV_TOKEN');
-      ctx.fallback = limen.env('LIMEN_PROBE_ENV_MISSING') ?? 'fallback';
+    if (ctx.state.action === 'read') {
+      ctx.state.token = limen.env('LIMEN_PROBE_ENV_TOKEN');
+      ctx.state.fallback = limen.env('LIMEN_PROBE_ENV_MISSING') ?? 'fallback';
       return;
     }
-    if (ctx.action === 'uncaught') { limen.env('A=B'); return; }
+    if (ctx.state.action === 'uncaught') { limen.env('A=B'); return; }
     const rejected = (run, type) => {
       try { run(); } catch (error) {
         if (!(error instanceof type)) throw new Error('wrong error type');
@@ -28,7 +28,7 @@ export default {
       rejected(() => limen.env(name), TypeError);
     }
     rejected(() => limen.env(), TypeError);
-    rejected(() => limen.env('x'.repeat(1025)), RangeError);
+    rejected(() => limen.env('x'.repeat(4097)), RangeError);
     rejected(() => limen.env('LIMEN_PROBE_ENV_LARGE'), RangeError);
     rejected(() => limen.env('LIMEN_PROBE_ENV_INVALID'), Error);
     rejected(() => { limen.env = () => 'changed'; }, TypeError);
@@ -37,6 +37,6 @@ export default {
     rejected(() => { delete globalThis.limen; }, TypeError);
     rejected(() => { limen.extra = true; }, TypeError);
     rejected(() => Object.setPrototypeOf(limen, {}), TypeError);
-    ctx.checked = true;
+    ctx.state.checked = true;
   }
 };

@@ -1,11 +1,11 @@
 let started = 0;
 export default {
   onRequest(ctx) {
-    if (ctx.pending) {
+    if (ctx.state.pending) {
       started++;
       return new Promise(() => {});
     }
-    ctx.done = true;
+    ctx.state.done = true;
   },
-  onError(ctx) { ctx.started = started; }
+  onError(ctx) { ctx.state.started = started; }
 };

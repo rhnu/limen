@@ -50,6 +50,6 @@ export default {
       default: mark(ctx);
     }
   },
-  onError(ctx) { ctx.started = started; },
+  onError(ctx) { ctx.state.started = started; },
   onFinish() { release(); },
 };

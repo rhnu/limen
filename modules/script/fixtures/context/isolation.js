@@ -11,7 +11,7 @@ export default {
     if (ctx.meta.failure === 'return') return {};
   },
   onFinish() { release(); },
-  onError(ctx) { ctx.started = started; },
+  onError(ctx) { ctx.state.started = started; },
   providers: { p: { pipeline: [{ name: 'provider', async beforeSend(ctx) {
     await Promise.resolve(); ctx.state.order.push('provider'); ctx.headers.append('x-step', 'provider');
   } }] } },

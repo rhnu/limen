@@ -1,6 +1,7 @@
 use std::{fs, sync::Arc};
 
 use limen_script::Cancellation;
+use serde_json::json;
 
 use super::{super::observations::Observations, *};
 use crate::{bootstrap::Bootstrap, gateway::FixtureResponse};
@@ -73,7 +74,10 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
     let provider = &gateway.business.providers["p"];
     let model = &gateway.business.models["chat"];
     let mut lifecycle = lifecycle();
-    lifecycle.state = json!({"previous":{"text":"retained"}});
+    lifecycle.state = json!({"previous":{"text":"retained"}})
+        .as_object()
+        .unwrap()
+        .clone();
     lifecycle.observations = Observations::new(4);
     lifecycle.observations.commit(
         limen_script::ObservationBatch {
@@ -136,7 +140,10 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         .unwrap()
         .unwrap();
     assert_eq!(retry["choices"][0]["delta"]["content"], "ZZ");
-    assert_eq!(lifecycle.state, json!({"previous":{"text":"retained"}}));
+    assert_eq!(
+        Value::Object(lifecycle.state),
+        json!({"previous":{"text":"retained"}})
+    );
     assert_eq!(lifecycle.observations.snapshot(&names), observations);
     loaded.shutdown().await.unwrap();
 }

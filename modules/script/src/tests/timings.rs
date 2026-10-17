@@ -43,7 +43,9 @@ async fn success_and_failure_reports_keep_each_attempted_phase() -> TestResult {
             ("invalid", Some(ScriptErrorKind::Json), true),
             ("contract", Some(ScriptErrorKind::Contract), false),
         ] {
-            let report = runtime.invoke(call(id, 1, json!({"mode": mode}))).await;
+            let report = runtime
+                .invoke_fixture(call(id, 1, json!({"mode": mode})))
+                .await;
             check_completed(report.timings, asynchronous, output)?;
             match expected {
                 Some(expected) => ensure(
@@ -81,7 +83,7 @@ async fn rejection_before_a_phase_leaves_it_unsampled() -> TestResult {
             ScriptErrorKind::Deadline => input.deadline = Instant::now(),
             _ => {},
         }
-        let report = runtime.invoke(input).await;
+        let report = runtime.invoke_fixture(input).await;
         ensure(
             report.outcome.is_err_and(|error| error.kind() == expected),
             "wrong hook failure",
@@ -108,7 +110,7 @@ async fn rejection_before_a_phase_leaves_it_unsampled() -> TestResult {
         )?;
     }
     stop(&runtime).await?;
-    let report = runtime.invoke(call(id, 5, json!({}))).await;
+    let report = runtime.invoke_fixture(call(id, 5, json!({}))).await;
     ensure(
         report
             .outcome
@@ -134,7 +136,7 @@ async fn shutdown_reports_observed_pending_failure_without_output_conversion() -
         .await?;
     let pending = call(hook(&config, "onRequest")?, 1, json!({}));
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await });
     wait_for(
         &runtime,
         hook(&config, "onError")?,

@@ -60,7 +60,7 @@ async fn registered_content_hooks_project_owned_events_and_transactional_state()
         let mut context = input("edit");
         context["sse"] = envelope.clone();
         let output = runtime
-            .invoke(call(provider, 1, context))
+            .invoke_fixture(call(provider, 1, context))
             .await
             .into_context()?;
         ensure(
@@ -69,14 +69,16 @@ async fn registered_content_hooks_project_owned_events_and_transactional_state()
                     "nested": {"value": 2}, "extensions": {"custom": [true, null, "owned"]}
                 }])
                 && output["state"]["visits"] == 1
-                && output["state"]["source"] == envelope
-                && output["sse"] == envelope,
+                && output["state"]["source"] == envelope,
             "content edits, source view or request state did not commit",
         )?;
         let mut next = input("noop");
         next["state"] = output["state"].clone();
         next["event"] = output["events"][0].clone();
-        let output = runtime.invoke(call(model, 2, next)).await.into_context()?;
+        let output = runtime
+            .invoke_fixture(call(model, 2, next))
+            .await
+            .into_context()?;
         ensure(
             output["state"]["visits"] == 2 && output["events"][0]["model"] == true,
             "registered model content hook did not receive the previous committed draft",
@@ -89,7 +91,7 @@ async fn registered_content_hooks_project_owned_events_and_transactional_state()
         ("onStreamEvent", "events", "stream"),
     ] {
         let output = runtime
-            .invoke(call(hook(step, phase)?, 3, draft(phase)))
+            .invoke_fixture(call(hook(step, phase)?, 3, draft(phase)))
             .await
             .into_context()?;
         let lower = if field == "events" {
@@ -128,7 +130,7 @@ async fn content_failures_discard_event_and_state_drafts_and_preserve_readonly_f
         let original = context.clone();
         ensure(
             runtime
-                .invoke(call(id, 1, context))
+                .invoke_fixture(call(id, 1, context))
                 .await
                 .into_context()
                 .is_err_and(|error| error.kind() == expected),
@@ -136,11 +138,14 @@ async fn content_failures_discard_event_and_state_drafts_and_preserve_readonly_f
         )?;
         let mut next = original;
         next["meta"]["operation"] = json!("noop");
-        let output = runtime.invoke(call(id, 2, next)).await.into_context()?;
+        let output = runtime
+            .invoke_fixture(call(id, 2, next))
+            .await
+            .into_context()?;
         ensure(
             output["state"]["visits"] == 1
                 && output["events"] == json!([{"nested":{"value":1}}])
-                && output["sse"] == json!({"id":"source-1", "extra":{"value":1}}),
+                && output["state"]["source"] == json!({"id":"source-1", "extra":{"value":1}}),
             "failed content draft affected the next invocation",
         )?;
     }
@@ -160,7 +165,10 @@ async fn content_replacement_count_is_bounded_at_call_and_commit() -> TestResult
     for count in [0, 1, 2] {
         let mut context = input("count");
         context["meta"]["count"] = json!(count);
-        let result = runtime.invoke(call(id, 1, context)).await.into_context();
+        let result = runtime
+            .invoke_fixture(call(id, 1, context))
+            .await
+            .into_context();
         if count <= 1 {
             ensure(
                 result?["events"]
@@ -177,7 +185,7 @@ async fn content_replacement_count_is_bounded_at_call_and_commit() -> TestResult
     }
     ensure(
         runtime
-            .invoke(call(id, 2, input("late-count")))
+            .invoke_fixture(call(id, 2, input("late-count")))
             .await
             .into_context()
             .is_err(),
@@ -194,7 +202,8 @@ async fn cancelled_content_cannot_commit_late_events_or_request_state() -> TestR
     let pending = call(id, 1, input("pending"));
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await.into_context() });
+    let waiting =
+        tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await.into_context() });
     let status = hook(&config, "onError")?;
     wait_for(&runtime, status, json!({"started":true,"finished":false})).await?;
     cancellation.cancel();
@@ -205,12 +214,12 @@ async fn cancelled_content_cannot_commit_late_events_or_request_state() -> TestR
         "cancelled content call committed a draft",
     )?;
     runtime
-        .invoke(call(hook(&config, "onFinish")?, 2, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 2, json!({})))
         .await
         .into_context()?;
     wait_for(&runtime, status, json!({"started":true,"finished":true})).await?;
     let output = runtime
-        .invoke(call(id, 3, input("noop")))
+        .invoke_fixture(call(id, 3, input("noop")))
         .await
         .into_context()?;
     ensure(

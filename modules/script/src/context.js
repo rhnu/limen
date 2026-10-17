@@ -13,15 +13,14 @@ function (i, capabilities) {
    * events: import("./internal/types").EventDraft | undefined}} Prepared */
   /** @type {WeakMap<object, Prepared>} */
   const prepared = i.newWeakMap();
-  /** @param {unknown} value */
-  function prepare(value) {
+  /** @param {unknown} value @param {unknown} phase */
+  function prepare(value, phase) {
     const root = record(value);
     if (descriptor(root, "reject") || descriptor(root, "rejection")
         || descriptor(root, "observe") || descriptor(root, "observations")) fail();
-    // Standalone scheduler drafts are removed when the typed call contract lands.
-    if (!descriptor(root, "meta")) return root;
     const meta = record(read(root, "meta"));
-    const policy = capabilities.phase(read(meta, "phase"));
+    if (read(meta, "phase") !== phase) fail();
+    const policy = capabilities.phase(phase);
     record(read(root, "state"));
     const keys = ownKeys(root);
     /** @type {Prepared} */
@@ -59,10 +58,7 @@ function (i, capabilities) {
   function project(value) {
     const root = record(value);
     const info = weakGet(prepared, root);
-    if (!info) {
-      if (descriptor(root, "observe") || descriptor(root, "observations")) fail();
-      return { context: root, observations: { events: [], dropped: 0 } };
-    }
+    if (!info) fail();
     /** @type {import("./internal/types").RecordValue} */
     const output = create(null);
     for (let index = 0; index < info.keys.length; index++) {

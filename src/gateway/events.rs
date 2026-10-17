@@ -1,4 +1,5 @@
 use limen_config::{Model, Provider, ResourceLimits};
+use limen_script::{EventInput, HookCandidate, HookInput, HookPhase, SseContext};
 use serde_json::Value;
 
 use super::{
@@ -24,10 +25,10 @@ pub(super) enum EventConsumer<'a> {
 }
 
 impl EventConsumer<'_> {
-    fn phase(&self) -> &'static str {
+    fn phase(&self) -> HookPhase {
         match self {
-            Self::Upstream { .. } => "onUpstreamEvent",
-            Self::Stream { .. } => "onStreamEvent",
+            Self::Upstream { .. } => HookPhase::OnUpstreamEvent,
+            Self::Stream { .. } => HookPhase::OnStreamEvent,
         }
     }
 
@@ -133,6 +134,7 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<Vec<Value>, Failure> {
         let phase = consumer.phase();
+        let phase_name = phase.as_str();
         // Callers establish source JSON and Chat guarantees before this stage.
         // Only fresh hook outputs need validation and expansion accounting here;
         // counting normalized input JSON could reject an unchanged raw SSE frame.
@@ -154,19 +156,30 @@ impl Gateway {
             let final_hook = remaining == 0;
             let mut next = Vec::new();
             for event in events {
-                let mut context = lifecycle.context(phase);
-                context["event"] = event;
-                context["sse"] = consumer.frame().map_or(Value::Null, |frame| {
-                    serde_json::json!({"event":frame.event,"id":frame.id,"retry":frame.retry})
-                });
-                let mut output = self
-                    .hook(hook, phase, Some(&step.name), context, lifecycle)
+                let input = EventInput {
+                    event,
+                    sse: sse_context(consumer.frame()),
+                };
+                let input = match &consumer {
+                    EventConsumer::Upstream { .. } => HookInput::OnUpstreamEvent(input),
+                    EventConsumer::Stream { .. } => HookInput::OnStreamEvent(input),
+                };
+                let output = self
+                    .hook(hook, Some(&step.name), lifecycle.context(input), lifecycle)
                     .await?;
-                let produced = output
-                    .context
-                    .get("events")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| hook_invalid(phase, &step.name))?;
+                let produced = match output.candidate {
+                    HookCandidate::OnUpstreamEvent { events }
+                        if phase == HookPhase::OnUpstreamEvent =>
+                    {
+                        events
+                    },
+                    HookCandidate::OnStreamEvent { events }
+                        if phase == HookPhase::OnStreamEvent =>
+                    {
+                        events
+                    },
+                    _ => return Err(hook_invalid(phase_name, &step.name)),
+                };
                 // The VM bridge already checked the whole output's JSON tree.
                 // Chat semantics and the per-event/cumulative byte budgets remain here.
                 let bytes = produced.iter().try_fold(0_usize, |sum, event| {
@@ -174,21 +187,18 @@ impl Gateway {
                         event,
                         &self.server.limits,
                         ErrorCode::HookFailed,
-                        phase,
+                        phase_name,
                     )?;
                     sum.checked_add(size)
-                        .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase))
+                        .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase_name))
                 })?;
-                budget.charge(produced.len(), bytes, &self.server.limits, phase)?;
+                budget.charge(produced.len(), bytes, &self.server.limits, phase_name)?;
                 // Earlier steps may still transform these events. The final step's
                 // whole batch must satisfy its consumer before any of its effects commit.
                 if final_hook {
-                    consumer.consume(produced, budget, &self.server.limits)?;
+                    consumer.consume(&produced, budget, &self.server.limits)?;
                 }
-                commit_effects(lifecycle, &mut output)?;
-                let Value::Array(produced) = output.context["events"].take() else {
-                    return Err(hook_invalid(phase, &step.name));
-                };
+                commit_effects(lifecycle, output.effects);
                 next.extend(produced);
             }
             events = next;
@@ -197,10 +207,10 @@ impl Gateway {
     }
 }
 
-fn event_hook(step: &limen_config::PipelineStep, phase: &str) -> Option<limen_script::HookId> {
+fn event_hook(step: &limen_config::PipelineStep, phase: HookPhase) -> Option<limen_script::HookId> {
     match phase {
-        "onUpstreamEvent" => step.on_upstream_event,
-        "onStreamEvent" => step.on_stream_event,
+        HookPhase::OnUpstreamEvent => step.on_upstream_event,
+        HookPhase::OnStreamEvent => step.on_stream_event,
         _ => None,
     }
 }
@@ -214,6 +224,14 @@ fn validate_event_payload(
     limen_chat::validate_chunk(event)
         .map_err(|source| Failure::new(code, phase).with_source(source))?;
     json::size(event, limits.max_event_bytes, code, phase)
+}
+
+pub(super) fn sse_context(frame: Option<&limen_chat::Frame>) -> Option<SseContext> {
+    frame.map(|frame| SseContext {
+        event: frame.event.clone(),
+        id: frame.id.clone(),
+        retry: frame.retry.clone(),
+    })
 }
 
 #[cfg(test)]

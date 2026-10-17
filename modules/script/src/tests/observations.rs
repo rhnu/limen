@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
-use crate::{HookOutput, RuntimeOptions, ScriptErrorKind, ScriptRuntime};
+use crate::{RuntimeOptions, ScriptErrorKind, ScriptRuntime};
 
 const SOURCE: &str = include_str!("../../fixtures/hooks/observations.js");
 
@@ -14,14 +14,16 @@ fn options(capacity: usize) -> RuntimeOptions {
 }
 
 fn context(phase: &str, mode: &str) -> Value {
-    let mut context = json!({"meta": {"phase": phase, "mode": mode}, "state": {}});
+    let mut context = super::context::draft(phase);
+    context["meta"]["mode"] = json!(mode);
+    context["state"] = json!({});
     if matches!(phase, "onContent" | "onUpstreamEvent" | "onStreamEvent") {
         context["event"] = json!({});
     }
     context
 }
 
-fn batch(output: &HookOutput, expected: &[u8], dropped: u64) -> TestResult {
+fn batch(output: &super::FixtureOutput, expected: &[u8], dropped: u64) -> TestResult {
     ensure(
         output.observations.events == expected,
         "observation IDs or order changed",
@@ -60,7 +62,7 @@ async fn sync_async_and_observer_phases_export_private_bounded_batches() -> Test
             ("empty", &[][..], 0),
         ] {
             let output = runtime
-                .invoke(call(id, 1, context(phase, mode)))
+                .invoke_fixture(call(id, 1, context(phase, mode)))
                 .await
                 .outcome?;
             batch(&output, expected, dropped)?;
@@ -71,7 +73,7 @@ async fn sync_async_and_observer_phases_export_private_bounded_batches() -> Test
         }
     }
     let output = runtime
-        .invoke(call(hook(&config, "onFinish")?, 2, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 2, json!({})))
         .await
         .outcome?;
     batch(&output, &[], 0)?;
@@ -97,7 +99,7 @@ async fn invalid_calls_mutation_and_forgery_fail_without_exporting_a_batch() -> 
         "forge",
     ] {
         let report = runtime
-            .invoke(call(id, 1, context("onRequest", mode)))
+            .invoke_fixture(call(id, 1, context("onRequest", mode)))
             .await;
         ensure(
             report
@@ -113,7 +115,7 @@ async fn invalid_calls_mutation_and_forgery_fail_without_exporting_a_batch() -> 
             _ => ScriptErrorKind::JavaScript,
         };
         let report = runtime
-            .invoke(call(id, 2, context("onRequest", mode)))
+            .invoke_fixture(call(id, 2, context("onRequest", mode)))
             .await;
         ensure(
             report.outcome.is_err_and(|error| error.kind() == expected),
@@ -124,7 +126,7 @@ async fn invalid_calls_mutation_and_forgery_fail_without_exporting_a_batch() -> 
         for reserved in ["observe", "observations"] {
             let mut input = phase.map_or_else(|| json!({}), |phase| context(phase, "empty"));
             input[reserved] = json!({"events": [0], "dropped": 0});
-            let report = runtime.invoke(call(id, 3, input)).await;
+            let report = runtime.invoke_fixture(call(id, 3, input)).await;
             ensure(
                 report.outcome.is_err(),
                 "caller forged private observations",
@@ -132,14 +134,14 @@ async fn invalid_calls_mutation_and_forgery_fail_without_exporting_a_batch() -> 
         }
     }
     let report = runtime
-        .invoke(call(hook(&config, "onFinish")?, 4, json!({"forge": true})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 4, json!({"forge": true})))
         .await;
     ensure(
         report.outcome.is_err(),
         "plain draft forged observations after prepare",
     )?;
     let output = runtime
-        .invoke(call(id, 5, context("onRequest", "empty")))
+        .invoke_fixture(call(id, 5, context("onRequest", "empty")))
         .await
         .outcome?;
     batch(&output, &[], 0)?;
@@ -152,12 +154,12 @@ async fn empty_registry_is_available_but_cannot_accept_names() -> TestResult {
     let (runtime, config) = fixture.start(SOURCE).await?;
     let id = hook(&config, "onRequest")?;
     let output = runtime
-        .invoke(call(id, 1, context("onFinish", "empty")))
+        .invoke_fixture(call(id, 1, context("onFinish", "empty")))
         .await
         .outcome?;
     batch(&output, &[], 0)?;
     let report = runtime
-        .invoke(call(id, 2, context("onRequest", "success")))
+        .invoke_fixture(call(id, 2, context("onRequest", "success")))
         .await;
     ensure(
         report
@@ -179,25 +181,28 @@ async fn concurrent_pending_and_cancelled_late_calls_keep_batches_separate() -> 
     let first_runtime = runtime.clone();
     let first = tokio::spawn(async move {
         first_runtime
-            .invoke(call(id, 1, context("onRequest", "pending-first")))
+            .invoke_fixture(call(id, 1, context("onRequest", "pending-first")))
             .await
     });
     wait_for(&runtime, status, json!({"started": 1, "finished": 0})).await?;
     let second_runtime = runtime.clone();
     let second = tokio::spawn(async move {
         second_runtime
-            .invoke(call(id, 2, context("onRequest", "pending-second")))
+            .invoke_fixture(call(id, 2, context("onRequest", "pending-second")))
             .await
     });
     wait_for(&runtime, status, json!({"started": 2, "finished": 0})).await?;
-    runtime.invoke(call(release, 3, json!({}))).await.outcome?;
+    runtime
+        .invoke_fixture(call(release, 3, json!({})))
+        .await
+        .outcome?;
     batch(&first.await?.outcome?, &[0, 2], 0)?;
     batch(&second.await?.outcome?, &[1, 2], 0)?;
 
     let pending = call(id, 4, context("onRequest", "pending-first"));
     let cancellation = pending.cancellation.clone();
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await });
     wait_for(&runtime, status, json!({"started": 3, "finished": 2})).await?;
     cancellation.cancel();
     ensure(
@@ -207,10 +212,13 @@ async fn concurrent_pending_and_cancelled_late_calls_keep_batches_separate() -> 
             .is_err_and(|error| error.kind() == ScriptErrorKind::Cancelled),
         "cancelled hook exported its batch",
     )?;
-    runtime.invoke(call(release, 5, json!({}))).await.outcome?;
+    runtime
+        .invoke_fixture(call(release, 5, json!({})))
+        .await
+        .outcome?;
     wait_for(&runtime, status, json!({"started": 3, "finished": 3})).await?;
     let output = runtime
-        .invoke(call(id, 6, context("onRequest", "empty")))
+        .invoke_fixture(call(id, 6, context("onRequest", "empty")))
         .await
         .outcome?;
     batch(&output, &[], 0)?;
@@ -225,7 +233,7 @@ async fn private_envelope_is_subject_to_the_existing_json_depth_budget() -> Test
     limits.json_limits.max_depth = 2;
     let (runtime, config) = ScriptRuntime::start(path, limits).await?;
     let report = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             hook(&config, "onRequest")?,
             1,
             context("onRequest", "empty"),
@@ -294,7 +302,7 @@ async fn upper_registry_and_capacity_bounds_accept_all_64_ids() -> TestResult {
     };
     let (runtime, config) = ScriptRuntime::start(path, options).await?;
     let output = runtime
-        .invoke(call(
+        .invoke_fixture(call(
             hook(&config, "onRequest")?,
             1,
             context("onRequest", "boundary"),
@@ -314,7 +322,7 @@ async fn deadline_failure_does_not_export_observations_from_late_work() -> TestR
     let mut pending = call(id, 1, context("onRequest", "pending-first"));
     pending.deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let waiting_runtime = runtime.clone();
-    let waiting = tokio::spawn(async move { waiting_runtime.invoke(pending).await });
+    let waiting = tokio::spawn(async move { waiting_runtime.invoke_fixture(pending).await });
     let status = hook(&config, "onError")?;
     wait_for(&runtime, status, json!({"started": 1, "finished": 0})).await?;
     ensure(
@@ -325,12 +333,12 @@ async fn deadline_failure_does_not_export_observations_from_late_work() -> TestR
         "expired hook exported its batch",
     )?;
     runtime
-        .invoke(call(hook(&config, "onFinish")?, 2, json!({})))
+        .invoke_fixture(call(hook(&config, "onFinish")?, 2, json!({})))
         .await
         .outcome?;
     wait_for(&runtime, status, json!({"started": 1, "finished": 1})).await?;
     let output = runtime
-        .invoke(call(id, 3, context("onRequest", "empty")))
+        .invoke_fixture(call(id, 3, context("onRequest", "empty")))
         .await
         .outcome?;
     batch(&output, &[], 0)?;

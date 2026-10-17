@@ -1,9 +1,12 @@
 //! Deep JSON exercises stay behind the external process and stack-failure boundary.
 
-use limen_script::{JsonLimits, RuntimeOptions, RuntimeStatus, ScriptErrorKind, ScriptRuntime};
+use limen_script::{
+    EventInput, HookCandidate, HookInput, HookPhase, JsonLimits, RuntimeOptions, RuntimeStatus,
+    ScriptErrorKind, ScriptRuntime,
+};
 use serde_json::{Value, json};
 
-use super::{Fixture, TestResult, call, ensure, hook, stop};
+use super::{Fixture, TestResult, call, context, ensure, hook, request, stop};
 
 fn options() -> RuntimeOptions {
     RuntimeOptions {
@@ -29,6 +32,17 @@ fn arrays(mut value: &Value) -> usize {
 
 fn nested(depth: usize) -> Value {
     (0..depth).fold(Value::Null, |value, _| Value::Array(vec![value]))
+}
+
+fn payload(phase: HookPhase, value: Value) -> HookInput {
+    match phase {
+        HookPhase::OnRequest => HookInput::OnRequest { body: value },
+        HookPhase::OnStreamEvent => HookInput::OnStreamEvent(EventInput {
+            event: value,
+            sse: None,
+        }),
+        _ => unreachable!("depth probes use request and stream event phases"),
+    }
 }
 
 pub(super) async fn startup(fixture: &Fixture) -> TestResult {
@@ -65,7 +79,7 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
         "config.js",
         r"
         function deep(ctx) {
-            if (ctx.meta.input) {
+            if (ctx.state.input) {
                 let value = (ctx.meta.phase === 'onStreamEvent' ? ctx.event : ctx.body).nested, depth = 0;
                 while (Array.isArray(value)) { value = value[0]; depth++; }
                 ctx.state.inputArrays = depth;
@@ -74,7 +88,7 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
                 return;
             }
             let nested = null;
-            for (let i = 0; i < ctx.meta.arrays; i++) nested = [nested];
+            for (let i = 0; i < ctx.state.arrays; i++) nested = [nested];
             if (ctx.meta.phase === 'onStreamEvent') ctx.event = {nested};
             else ctx.body = {nested};
         }
@@ -88,20 +102,18 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
         .as_u64()
         .ok_or("missing stream hook")?;
     for (phase, id, overhead) in [
-        ("onRequest", hook(&config, "onRequest")?, 3),
+        (HookPhase::OnRequest, hook(&config, "onRequest")?, 3),
         // The output envelope adds context/events/event before the nested field.
-        ("onStreamEvent", stream_hook, 4),
+        (HookPhase::OnStreamEvent, stream_hook, 4),
     ] {
         // The hook replaces this maximum-depth input before projection, because
         // its private output envelope adds depth beyond the incoming context.
         for (depth, accepted) in [(128, true), (129, false)] {
-            let mut context = json!({"meta": {"phase": phase, "input": true}, "state": {}});
-            context[if phase == "onRequest" {
-                "body"
-            } else {
-                "event"
-            }] = json!({"nested": nested(depth - 2)});
-            let report = runtime.invoke(call(id, 1, context)).await;
+            let input = context(
+                payload(phase, json!({"nested": nested(depth - 2)})),
+                json!({"input": true}),
+            );
+            let report = runtime.invoke(call(id, 1, input)).await;
             match report.outcome {
                 Ok(output) => {
                     ensure(
@@ -109,30 +121,29 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
                         "hook accepted an owned input beyond its depth limit",
                     )?;
                     ensure(
-                        output.context["state"]["inputArrays"] == depth - 2,
+                        output.effects.state["inputArrays"] == depth - 2,
                         "owned input did not survive VM parsing and preparation",
                     )?;
                 },
                 Err(error) if !accepted && error.kind() == ScriptErrorKind::Json => {},
-                Err(error) => return Err(format!("{phase} input depth {depth}: {error}").into()),
+                Err(error) => {
+                    return Err(format!("{} input depth {depth}: {error}", phase.as_str()).into());
+                },
             }
         }
         for (depth, accepted) in [(128, true), (129, false)] {
-            let mut context =
-                json!({"meta": {"phase": phase, "arrays": depth - overhead}, "state": {}});
-            context[if phase == "onRequest" {
-                "body"
-            } else {
-                "event"
-            }] = json!({});
-            let report = runtime.invoke(call(id, 1, context)).await;
+            let input = context(
+                payload(phase, json!({})),
+                json!({"arrays": depth - overhead}),
+            );
+            let report = runtime.invoke(call(id, 1, input)).await;
             match report.outcome {
                 Ok(output) => {
                     ensure(accepted, "hook accepted JSON beyond the configured depth")?;
-                    let nested = if phase == "onRequest" {
-                        &output.context["body"]["nested"]
-                    } else {
-                        &output.context["events"][0]["nested"]
+                    let nested = match &output.candidate {
+                        HookCandidate::OnRequest { body, .. } => &body["nested"],
+                        HookCandidate::OnStreamEvent { events } => &events[0]["nested"],
+                        _ => return Err("depth probe returned an unrelated phase".into()),
                     };
                     ensure(
                         arrays(nested) == depth - overhead,
@@ -140,7 +151,9 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
                     )?;
                 },
                 Err(error) if !accepted && error.kind() == ScriptErrorKind::Json => {},
-                Err(error) => return Err(format!("{phase} depth {depth}: {error}").into()),
+                Err(error) => {
+                    return Err(format!("{} depth {depth}: {error}", phase.as_str()).into());
+                },
             }
             ensure(
                 matches!(runtime.status(), RuntimeStatus::Ready),
@@ -157,8 +170,8 @@ pub(super) async fn stack_limit(fixture: &Fixture) -> TestResult {
         r"
         function recurse(left) { return left === 0 ? 0 : 1 + recurse(left - 1); }
         export default {onRequest(ctx) {
-            if (ctx.meta.recurse) ctx.state.value = recurse(100000);
-            else if (ctx.meta.deep) {
+            if (ctx.state.recurse) ctx.state.value = recurse(100000);
+            else if (ctx.state.deep) {
                 let nested = null;
                 for (let i = 0; i < 125; i++) nested = [nested];
                 ctx.body = {nested};
@@ -183,11 +196,7 @@ pub(super) async fn stack_limit(fixture: &Fixture) -> TestResult {
         .await?;
         let id = hook(&config, "onRequest")?;
         let report = runtime
-            .invoke(call(
-                id,
-                1,
-                json!({"meta": {"phase": "onRequest", "recurse": true}, "state": {}, "body": {}}),
-            ))
+            .invoke(call(id, 1, request(json!({"recurse": true}))))
             .await;
         ensure(
             report
@@ -200,32 +209,26 @@ pub(super) async fn stack_limit(fixture: &Fixture) -> TestResult {
             "stack budget failure retired the VM",
         )?;
         let report = runtime
-            .invoke(call(
-                id,
-                2,
-                json!({"meta": {"phase": "onRequest", "deep": true}, "state": {}, "body": {}}),
-            ))
+            .invoke(call(id, 2, request(json!({"deep": true}))))
             .await;
         match report.outcome {
-            Ok(output) => ensure(
-                arrays(&output.context["body"]["nested"]) == 125,
-                "deep output was incomplete",
-            )?,
+            Ok(output) => {
+                let HookCandidate::OnRequest { body, .. } = output.candidate else {
+                    return Err("stack probe returned an unrelated phase".into());
+                };
+                ensure(arrays(&body["nested"]) == 125, "deep output was incomplete")?;
+            },
             Err(error)
                 if stack_limit < options().stack_limit && error.kind() == ScriptErrorKind::Json => {
             },
             Err(error) => return Err(format!("stack budget {stack_limit}: {error}").into()),
         }
         let output = runtime
-            .invoke(call(
-                id,
-                3,
-                json!({"meta": {"phase": "onRequest", "recurse": false}, "state": {}, "body": {}}),
-            ))
+            .invoke(call(id, 3, request(json!({"recurse": false}))))
             .await
             .outcome?;
         ensure(
-            output.context["state"]["value"] == 1,
+            output.effects.state["value"] == 1,
             "stack budget failure poisoned a later call",
         )?;
         stop(&runtime).await?;

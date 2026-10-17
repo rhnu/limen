@@ -1,18 +1,26 @@
 use super::*;
 
-fn apply(policy: Value, body: Value) -> (Value, ObservationBatch) {
+fn request(body: Value) -> RequestDraft {
+    RequestDraft {
+        body,
+        url: "https://fictional.invalid/chat".into(),
+        headers: Vec::new(),
+    }
+}
+
+fn apply(policy: Value, body: Value) -> (RequestDraft, Option<RejectionStatus>, ObservationBatch) {
     let policy = serde_json::from_value(policy).unwrap();
-    let mut context = json!({"body":null,"client":{"headers":[]},"headers":[],"state":{}});
-    context["body"] = body;
-    let observations = before_send(
+    let mut request = request(body);
+    let (rejection, observations) = before_send(
         &policy,
-        &mut context,
+        &mut request,
+        &ClientContext::default(),
         &["changed".to_owned()],
         "policy",
         &mut || Ok(()),
     )
     .unwrap();
-    (context, observations)
+    (request, rejection, observations)
 }
 
 #[test]
@@ -23,12 +31,15 @@ fn token_cap_preserves_lower_values_sets_absent_and_rejects_conflicts() {
         (json!({"max_completion_tokens":2}), 2, false),
         (json!({"max_completion_tokens":20}), 10, true),
     ] {
-        let (context, observations) = apply(policy.clone(), body);
-        assert_eq!(context["body"]["max_completion_tokens"], expected);
+        let (context, rejection, observations) = apply(policy.clone(), body);
+        assert_eq!(rejection, None);
+        assert_eq!(context.body["max_completion_tokens"], expected);
         assert_eq!(!observations.events.is_empty(), changed);
     }
-    let (context, observations) = apply(policy.clone(), json!({"max_completion_tokens":2.0}));
-    assert_eq!(context["body"]["max_completion_tokens"].as_f64(), Some(2.0));
+    let (context, rejection, observations) =
+        apply(policy.clone(), json!({"max_completion_tokens":2.0}));
+    assert_eq!(rejection, None);
+    assert_eq!(context.body["max_completion_tokens"].as_f64(), Some(2.0));
     assert_eq!(observations.events, Vec::<u8>::new());
     for body in [
         json!({"max_tokens":2}),
@@ -36,9 +47,9 @@ fn token_cap_preserves_lower_values_sets_absent_and_rejects_conflicts() {
         json!({"max_completion_tokens":-1}),
         json!({"max_completion_tokens":1.5}),
     ] {
-        let (context, observations) = apply(policy.clone(), body.clone());
-        assert_eq!(context["rejection"]["status"], 422);
-        assert_eq!(context["body"], body);
+        let (context, rejection, observations) = apply(policy.clone(), body.clone());
+        assert_eq!(rejection, Some(RejectionStatus::UnprocessableEntity));
+        assert_eq!(context.body, body);
         assert_eq!(observations.events, Vec::<u8>::new());
     }
 }
@@ -47,13 +58,14 @@ fn token_cap_preserves_lower_values_sets_absent_and_rejects_conflicts() {
 fn field_removal_records_once_only_when_present() {
     let policy =
         json!({"kind":"dropRequestFields","fields":["temperature","seed"],"onChange":"changed"});
-    let (context, observations) = apply(
+    let (context, rejection, observations) = apply(
         policy.clone(),
         json!({"temperature":null,"seed":7,"vendor":1}),
     );
-    assert_eq!(context["body"], json!({"vendor":1}));
+    assert_eq!(rejection, None);
+    assert_eq!(context.body, json!({"vendor":1}));
     assert_eq!(observations.events, vec![0]);
-    let (_, observations) = apply(policy, json!({}));
+    let (_, _, observations) = apply(policy, json!({}));
     assert_eq!(observations.events, Vec::<u8>::new());
 }
 
@@ -63,39 +75,82 @@ fn forwarding_uses_exposed_headers_and_rejects_multiple_values() {
         json!({"kind":"forwardClientHeader","from":"X-Tenant","to":"X-Upstream"}),
     )
     .unwrap();
-    let mut context = json!({"client":{"headers":[{"name":"x-tenant","value":"a"}]},"headers":[{"name":"x-upstream","value":"old"},{"name":"other","value":"b"}]});
-    before_send(&policy, &mut context, &[], "policy", &mut || Ok(())).unwrap();
+    let mut client = ClientContext {
+        headers: vec![HeaderField {
+            name: "x-tenant".into(),
+            value: "a".into(),
+        }],
+    };
+    let mut request = request(json!({}));
+    request.headers = vec![
+        HeaderField {
+            name: "x-upstream".into(),
+            value: "old".into(),
+        },
+        HeaderField {
+            name: "other".into(),
+            value: "b".into(),
+        },
+    ];
+    let (rejection, _) = before_send(
+        &policy,
+        &mut request,
+        &client,
+        &[],
+        "policy",
+        &mut || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(rejection, None);
     assert_eq!(
-        context["headers"],
-        json!([{"name":"other","value":"b"},{"name":"x-upstream","value":"a"}])
+        request.headers,
+        vec![
+            HeaderField {
+                name: "other".into(),
+                value: "b".into()
+            },
+            HeaderField {
+                name: "x-upstream".into(),
+                value: "a".into()
+            }
+        ]
     );
-    context["client"]["headers"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name":"x-tenant","value":"duplicate"}));
-    let previous = context["headers"].clone();
-    before_send(&policy, &mut context, &[], "policy", &mut || Ok(())).unwrap();
-    assert_eq!(context["headers"], previous);
-    assert_eq!(context["rejection"]["status"], 422);
+    client.headers.push(HeaderField {
+        name: "x-tenant".into(),
+        value: "duplicate".into(),
+    });
+    let previous = request.headers.clone();
+    let (rejection, _) = before_send(
+        &policy,
+        &mut request,
+        &client,
+        &[],
+        "policy",
+        &mut || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(request.headers, previous);
+    assert_eq!(rejection, Some(RejectionStatus::UnprocessableEntity));
 }
 
 #[test]
 fn synthetic_tool_appends_instruction_and_preserves_original_history() {
-    let (context, _) = apply(
+    let (context, rejection, _) = apply(
         json!({"kind":"syntheticTextTool","maxBufferedChars":128}),
         json!({"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"real"}}]}),
     );
+    assert_eq!(rejection, None);
     assert_eq!(
-        context["body"]["messages"][0],
+        context.body["messages"][0],
         json!({"role":"user","content":"hello"})
     );
-    assert_eq!(context["body"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(context.body["messages"].as_array().unwrap().len(), 2);
     assert_eq!(
-        context["body"]["tools"][1]["function"]["name"],
+        context.body["tools"][1]["function"]["name"],
         "limen_emit_text"
     );
-    assert_eq!(context["body"]["tool_choice"], "required");
-    assert_eq!(context["body"]["parallel_tool_calls"], false);
+    assert_eq!(context.body["tool_choice"], "required");
+    assert_eq!(context.body["parallel_tool_calls"], false);
     for extra in [
         json!({"functions":[]}),
         json!({"tool_choice":"none"}),
@@ -106,12 +161,12 @@ fn synthetic_tool_appends_instruction_and_preserves_original_history() {
         body.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let (context, _) = apply(
+        let (context, rejection, _) = apply(
             json!({"kind":"syntheticTextTool","maxBufferedChars":128}),
             body.clone(),
         );
-        assert_eq!(context["body"], body);
-        assert_eq!(context["rejection"]["status"], 422);
+        assert_eq!(context.body, body);
+        assert_eq!(rejection, Some(RejectionStatus::UnprocessableEntity));
     }
 }
 
@@ -121,11 +176,23 @@ fn cancellation_and_unregistered_observation_do_not_publish_a_draft() {
         json!({"kind":"dropRequestFields","fields":["x"],"onChange":"unregistered"}),
     )
     .unwrap();
-    let mut context = json!({"body":{"x":1}});
-    let result = before_send(&policy, &mut context, &[], "policy", &mut || Ok(()));
+    let mut context = request(json!({"x":1}));
+    let result = before_send(
+        &policy,
+        &mut context,
+        &ClientContext::default(),
+        &[],
+        "policy",
+        &mut || Ok(()),
+    );
     assert_eq!(result.unwrap_err().code, ErrorCode::HookFailed);
-    let result = before_send(&policy, &mut context, &[], "policy", &mut || {
-        Err(Failure::new(ErrorCode::Cancelled, "beforeSend"))
-    });
+    let result = before_send(
+        &policy,
+        &mut context,
+        &ClientContext::default(),
+        &[],
+        "policy",
+        &mut || Err(Failure::new(ErrorCode::Cancelled, "beforeSend")),
+    );
     assert_eq!(result.unwrap_err().code, ErrorCode::Cancelled);
 }

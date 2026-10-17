@@ -1,6 +1,7 @@
 function edit(ctx) {
   switch (ctx.meta.operation) {
     case 'edit':
+      ctx.state.facts = {meta:ctx.meta, error:ctx.error};
       ctx.status = 503;
       ctx.body = JSON.stringify({ message: 'translated', original: ctx.body });
       ctx.contentType = 'application/json';
