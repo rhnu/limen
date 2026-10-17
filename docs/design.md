@@ -90,6 +90,8 @@ managerKey 由统一浏览器存储模块保存到当前 origin 的 localStorage
 
 管理界面提供用量、请求记录、运行日志、系统状态和配置五个顶栏入口，采用黑白灰样式；解释放在可聚焦、可点击的帮助标记中。列表与查询都遵守现有分页及时间边界，不自动遍历历史、不自动重试或订阅日志。数值字符串按整数精度保留，缺失与零分开；图表不能凭缺失值补造完整性。
 
+页面路由使用 React Router 的 hash data router，负责导航、代码懒加载与受控错误边界；管理数据统一由认证后的 React Query 查询获取。筛选条件保存在 URL，经 Valibot 校验和规范化后才构造 API 请求与查询键；重复、未知或非法参数显示错误，不静默换成另一组条件。游标属于当前查询的有界浏览状态，切换筛选即重置。会话 epoch 隔离新旧凭据，旧验证和旧请求的晚到结果不能改变新会话。
+
 [`api/admin.openapi.json`](../api/admin.openapi.json)是管理交互的机器可读契约，前端客户端由其生成。后端行为变化时同步更新契约；生成一致性检查与真实响应行为验证各自承担不同责任。构建、工具与检查入口统一见[开发指引](development.md)。
 
 主要实现入口：[`src/gateway/`](../src/gateway/)、[`modules/script/src/engine.rs`](../modules/script/src/engine.rs)、[`modules/chat/src/`](../modules/chat/src/)。

@@ -7,7 +7,7 @@ import {
     storageKey,
     useSession,
     writeKey,
-} from "./session";
+} from "./store";
 import { api, validateKey } from "../api/client";
 
 function memoryStorage() {
@@ -57,7 +57,7 @@ describe("browser credential lifecycle", () => {
         replaceSession("test-manager-key", "authenticated");
         expect(window.localStorage.getItem(storageKey)).toBe("test-manager-key");
         const authenticatedEpoch = useSession.getState().epoch;
-        const cleared = vi.fn();
+        const cleared = vi.fn<() => void>();
         const dispose = onSessionReset(cleared);
         replaceSession(null, "public");
         dispose();

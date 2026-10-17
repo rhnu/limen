@@ -17,6 +17,18 @@ describe("controlled API errors", () => {
             "unauthorized",
         );
     });
+    it.each([
+        null,
+        false,
+        [],
+        { error: null },
+        { error: "private payload" },
+        { error: { code: 123, request_id: {} } },
+    ])("handles malformed error envelopes without leaking their contents", (error) => {
+        const failure = mapFailure(error, new Response(null, { status: 500 }));
+        expect(failure.code).toBe("invalid_response");
+        expect(failure.requestId).toBeUndefined();
+    });
     it("rejects unapproved codes and arbitrary identities", () => {
         const failure = mapFailure(
             { error: { code: "untrusted payload", request_id: "<secret>" } },

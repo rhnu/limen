@@ -1,9 +1,9 @@
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@radix-ui/themes";
-import { api, ApiFailure } from "../api/client";
-import { useSession } from "../lib/session";
+import { ApiFailure } from "../api/errors";
+import { useSession } from "../session/store";
 import { label, numberText, timeText } from "../lib/values";
 import {
     PageTitle,
@@ -13,10 +13,12 @@ import {
     Failure,
     Empty,
     Pager,
-    useCursor,
     HelpMark,
 } from "../components/common";
-import type { GetLogsData, LogEntry, LogLevel } from "../api/generated/types.gen";
+import type { LogEntry } from "../api/generated/types.gen";
+import { queries } from "../api/queries";
+import { useCursor } from "../hooks/use-cursor";
+import { parseSearch, logsSearchSchema, serializeSearch, logLevels } from "../routing/search";
 
 function LogDetails({ entry }: { entry: LogEntry }) {
     return (
@@ -28,9 +30,7 @@ function LogDetails({ entry }: { entry: LogEntry }) {
                     .map(([key, value]) => (
                         <div key={key}>
                             <dt>{key}</dt>
-                            <dd>
-                                {typeof value === "object" ? JSON.stringify(value) : String(value)}
-                            </dd>
+                            <dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd>
                         </div>
                     ))}
             </dl>
@@ -41,46 +41,34 @@ function LogDetails({ entry }: { entry: LogEntry }) {
 export function Logs() {
     const [params, setParams] = useSearchParams();
     const epoch = useSession((state) => state.epoch);
-    const files = useQuery({
-        queryKey: [epoch, "log-files"],
-        queryFn: ({ signal }) => api.files(signal),
-    });
+    const search = parseSearch(logsSearchSchema, params);
+    const [formError, setFormError] = useState<{ identity: string; message: string } | null>(null);
+    const files = useQuery(queries.files(epoch, !search.error));
     const fallbackFile =
         files.data?.data.find((file) => file.active && file.fileId) ??
         files.data?.data.find((file) => file.fileId);
-    const fileId = params.get("fileId") || fallbackFile?.fileId || "";
+    const fileId = search.filters?.fileId ?? fallbackFile?.fileId ?? "";
     const selected = files.data?.data.find((file) => file.fileId === fileId);
-    const minLevel = params.get("minLevel") || "";
-    const paging = useCursor(`${fileId}:${params.toString()}`);
-    const query: GetLogsData["query"] = paging.cursor
-        ? { cursor: paging.cursor, limit: 100 }
-        : {
-              fileId,
-              limit: 100,
-              requestId: params.get("requestId") || undefined,
-              minLevel: ["trace", "debug", "info", "warn", "error"].includes(minLevel)
-                  ? (minLevel as LogLevel)
-                  : undefined,
-          };
-    const logs = useQuery({
-        queryKey: [epoch, "logs", fileId, params.toString(), paging.cursor],
-        queryFn: ({ signal }) => api.logs(query, signal),
-        enabled: !!selected?.fileId && !files.isFetching,
-    });
+    const minLevel = search.filters?.minLevel ?? "";
+    const filters = search.filters ? { ...search.filters, fileId: fileId || undefined } : null;
+    const identity = filters ? serializeSearch(filters).toString() : "";
+    const paging = useCursor(identity);
+    const logs = useQuery(
+        queries.logs(epoch, filters, paging.cursor, !!selected?.fileId && !files.isFetching),
+    );
     async function resetFiles() {
         paging.reset();
-        const next = new URLSearchParams(params);
-        next.delete("fileId");
-        setParams(next);
+        setParams(serializeSearch({ ...search.filters, fileId: undefined }));
         await files.refetch();
     }
     function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
         const next = new URLSearchParams();
-        for (const [key, value] of form)
-            if (String(value).trim()) next.set(key, String(value).trim());
-        setParams(next);
+        for (const [key, value] of new FormData(event.currentTarget))
+            if (typeof value === "string") next.append(key, value);
+        const parsed = parseSearch(logsSearchSchema, next);
+        setFormError(parsed.error ? { identity, message: parsed.error } : null);
+        if (parsed.filters) setParams(serializeSearch(parsed.filters));
     }
     return (
         <>
@@ -89,6 +77,7 @@ export function Logs() {
                 action={
                     <Refresh
                         busy={files.isFetching || logs.isFetching}
+                        disabled={!!search.error}
                         onClick={() => {
                             if (selected) void logs.refetch();
                             else void files.refetch();
@@ -98,17 +87,20 @@ export function Logs() {
             >
                 运行日志
             </PageTitle>
-            {files.isPending ? (
+            {search.error ? (
+                <div role="alert" className="inline-error">
+                    <p>{search.error}</p>
+                    <Button variant="outline" onClick={() => setParams({})}>
+                        清除筛选
+                    </Button>
+                </div>
+            ) : files.isPending ? (
                 <Loading />
             ) : files.isError ? (
                 <Failure error={files.error} reset={() => void files.refetch()} />
             ) : (
                 <>
-                    <form
-                        className="filters"
-                        key={`${fileId}:${params.toString()}`}
-                        onSubmit={submit}
-                    >
+                    <form className="filters" key={identity} onSubmit={submit}>
                         <Field label="日志文件">
                             <select name="fileId" defaultValue={fileId}>
                                 <option value="" disabled>
@@ -132,7 +124,7 @@ export function Logs() {
                         <Field label="最低级别">
                             <select name="minLevel" defaultValue={minLevel}>
                                 <option value="">全部级别</option>
-                                {["trace", "debug", "info", "warn", "error"].map((level) => (
+                                {logLevels.map((level) => (
                                     <option key={level} value={level}>
                                         {label(level)}
                                     </option>
@@ -157,6 +149,11 @@ export function Logs() {
                         >
                             重载文件清单
                         </Button>
+                        {formError?.identity === identity && (
+                            <p role="alert" className="inline-error">
+                                {formError.message}
+                            </p>
+                        )}
                     </form>
                     {!files.data.data.length ? (
                         <Empty>没有保留的非空日志文件。</Empty>

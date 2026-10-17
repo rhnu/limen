@@ -1,53 +1,44 @@
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight } from "lucide-react";
-import { api, ApiFailure } from "../api/client";
-import { useSession } from "../lib/session";
-import { dateQuery, label, numberText, timeText, windowError } from "../lib/values";
+import { ApiFailure } from "../api/errors";
+import { useSession } from "../session/store";
+import { label, numberText, timeText } from "../lib/values";
 import {
     PageTitle,
     Refresh,
-    Filters,
     Field,
     Loading,
     Failure,
     Empty,
     Pager,
-    useCursor,
     HelpMark,
 } from "../components/common";
-import type { GetRequestsData, Outcome, RecordState } from "../api/generated/types.gen";
-import type { ReactNode } from "react";
+import { queries } from "../api/queries";
+import { Filters } from "../components/filters";
+import { useCursor } from "../hooks/use-cursor";
+import { paths, requestPath, safeReturnTo } from "../routing/paths";
+import {
+    parseSearch,
+    parseRequestId,
+    requestsSearchSchema,
+    emptySearchSchema,
+    serializeSearch,
+    recordStates,
+    outcomes,
+} from "../routing/search";
+import { Facts } from "../components/facts";
 
 export function Requests() {
     const [params] = useSearchParams();
     const location = useLocation();
     const epoch = useSession((state) => state.epoch);
-    const paging = useCursor(params.toString());
-    const from = params.get("from") ?? "";
-    const to = params.get("to") ?? "";
-    const invalid = windowError(from, to);
-    const state = params.get("state");
-    const outcome = params.get("outcome");
-    const query: GetRequestsData["query"] = paging.cursor
-        ? { cursor: paging.cursor, limit: 50 }
-        : {
-              ...(!invalid ? dateQuery(from, to) : {}),
-              model: params.get("model") || undefined,
-              provider: params.get("provider") || undefined,
-              state: ["pending", "finalized", "interrupted"].includes(state ?? "")
-                  ? (state as RecordState)
-                  : undefined,
-              outcome: ["success", "failed", "cancelled"].includes(outcome ?? "")
-                  ? (outcome as Outcome)
-                  : undefined,
-              limit: 50,
-          };
-    const result = useQuery({
-        queryKey: [epoch, "requests", params.toString(), paging.cursor],
-        queryFn: ({ signal }) => api.requests(query, signal),
-        enabled: !invalid,
-    });
+    const search = parseSearch(requestsSearchSchema, params);
+    const paging = useCursor(search.canonical);
+    const invalid = search.error;
+    const state = search.filters?.state;
+    const outcome = search.filters?.outcome;
+    const result = useQuery(queries.requests(epoch, search.filters, paging.cursor));
     return (
         <>
             <PageTitle
@@ -63,12 +54,13 @@ export function Requests() {
                 请求记录
             </PageTitle>
             <Filters
+                kind="requests"
                 extra={
                     <>
                         <Field label="状态">
                             <select name="state" defaultValue={state ?? ""}>
                                 <option value="">全部状态</option>
-                                {["pending", "finalized", "interrupted"].map((value) => (
+                                {recordStates.map((value) => (
                                     <option key={value} value={value}>
                                         {label(value)}
                                     </option>
@@ -78,7 +70,7 @@ export function Requests() {
                         <Field label="结果">
                             <select name="outcome" defaultValue={outcome ?? ""}>
                                 <option value="">全部结果</option>
-                                {["success", "failed", "cancelled"].map((value) => (
+                                {outcomes.map((value) => (
                                     <option key={value} value={value}>
                                         {label(value)}
                                     </option>
@@ -130,7 +122,7 @@ export function Requests() {
                                             <td>
                                                 <Link
                                                     className="mono id-link"
-                                                    to={`/requests/${encodeURIComponent(item.requestId)}`}
+                                                    to={requestPath(item.requestId)}
                                                     state={{
                                                         returnTo:
                                                             location.pathname + location.search,
@@ -183,32 +175,25 @@ export function Requests() {
     );
 }
 
-export function Facts({ entries }: { entries: [string, ReactNode][] }) {
-    return (
-        <dl className="facts">
-            {entries.map(([key, value]) => (
-                <div key={key}>
-                    <dt>{key}</dt>
-                    <dd>{value ?? "未知"}</dd>
-                </div>
-            ))}
-        </dl>
-    );
-}
 const ms = (value: number | null) => (value === null ? "未知" : `${numberText(value)} ms`);
 export function RequestDetail() {
     const { id = "" } = useParams();
     const location = useLocation();
-    const returnTo =
-        typeof location.state?.returnTo === "string" &&
-        location.state.returnTo.startsWith("/requests?")
-            ? location.state.returnTo
-            : "/requests";
+    const navigationState: unknown = location.state;
+    const returnTo = safeReturnTo(
+        navigationState !== null &&
+            typeof navigationState === "object" &&
+            "returnTo" in navigationState
+            ? navigationState.returnTo
+            : undefined,
+        paths.requests,
+    );
+    const [params] = useSearchParams();
+    const search = parseSearch(emptySearchSchema, params);
     const epoch = useSession((state) => state.epoch);
-    const result = useQuery({
-        queryKey: [epoch, "request", id],
-        queryFn: ({ signal }) => api.request(id, signal),
-    });
+    const requestId = parseRequestId(id);
+    const invalid = search.error ?? requestId.error;
+    const result = useQuery(queries.request(epoch, requestId.id, !invalid));
     const item = result.data?.data;
     return (
         <>
@@ -217,11 +202,21 @@ export function RequestDetail() {
                 请求记录
             </Link>
             <PageTitle
-                action={<Refresh busy={result.isFetching} onClick={() => void result.refetch()} />}
+                action={
+                    <Refresh
+                        disabled={!!invalid}
+                        busy={result.isFetching}
+                        onClick={() => void result.refetch()}
+                    />
+                }
             >
                 请求详情
             </PageTitle>
-            {result.isPending ? (
+            {invalid ? (
+                <p role="alert" className="inline-error">
+                    {invalid}
+                </p>
+            ) : result.isPending ? (
                 <Loading />
             ) : result.isError ? (
                 <Failure error={result.error} reset={() => void result.refetch()} />
@@ -232,7 +227,9 @@ export function RequestDetail() {
                             <code>{item.requestId}</code>
                             <span className="status-tag">{label(item.state)}</span>
                             <span>{label(item.outcome)}</span>
-                            <Link to={`/logs?requestId=${encodeURIComponent(item.requestId)}`}>
+                            <Link
+                                to={`${paths.logs}?${serializeSearch({ requestId: item.requestId })}`}
+                            >
                                 查看关联日志 <ArrowUpRight size={14} />
                             </Link>
                         </div>
@@ -240,7 +237,7 @@ export function RequestDetail() {
                             <h2>请求</h2>
                             <Facts
                                 entries={[
-                                    ["运行 ID", <code>{item.runId}</code>],
+                                    ["运行 ID", <code key="run-id">{item.runId}</code>],
                                     ["开始时间", timeText(item.startedAt)],
                                     ["结束时间", timeText(item.finishedAt)],
                                     ["客户端流式", label(item.clientStream)],

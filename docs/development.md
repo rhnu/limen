@@ -51,7 +51,7 @@ cargo xtask test --isolated
 
 ## 前端与 JavaScript
 
-pnpm workspace 管理根脚本工具、`web/` 和 `api/codegen/`，锁文件为 `pnpm-lock.yaml`。脚本类型声明、策略库及类型契约检查集中在 `sdk/`；`fixtures/` 保存跨组件回归素材，各包专用素材留在包内。前端使用 React、Radix Themes、React Query、Zustand 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
+pnpm workspace 管理根脚本工具、`web/` 和 `api/codegen/`，锁文件为 `pnpm-lock.yaml`。脚本类型声明、策略库及类型契约检查集中在 `sdk/`；`fixtures/` 保存跨组件回归素材，各包专用素材留在包内。前端使用 React、React Router、Radix Themes、React Query、Zustand、Valibot 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
 
 ```sh
 pnpm dev:web
@@ -69,7 +69,11 @@ pnpm test:web
 pnpm build:web
 ```
 
-需要格式化前端时运行 `pnpm format:web`；生成目录由生成器维护，不手工格式化。`test:web` 仅运行确定性的纯逻辑测试，覆盖数值、时间、认证与错误状态。浏览器布局、键盘操作和真实请求需另行检查，不以构建通过代替。
+需要格式化前端时运行 `pnpm format:web`。Oxlint 的显式配置启用 React Hooks、可访问性、导入、Promise、Vitest 及类型感知检查，警告和失效的禁用注释都会导致失败；Oxfmt 统一负责格式。生成目录由生成器维护，不手工格式化或修补，仍参与 TypeScript 和生成一致性检查。前端增加索引可空、返回路径、未使用声明等检查；`exactOptionalPropertyTypes` 尚未启用，当前 Hey API 生成的客户端源码不满足该规则，不能用 lint ignore 或 `skipLibCheck` 绕过导入源码的编译。
+
+路由层维护 hash 路由、懒加载、错误边界和 URL 参数；Valibot 将筛选输入解析为规范化状态。查询定义集中管理查询键、API 参数和取消信号，页面组合查询与呈现，不另建 loader 数据缓存。会话层维护凭据和恢复验证，退出时取消请求并清空查询数据；游标状态独立于展示组件，最多保留 100 页。新增能力应沿这些职责接入，避免在页面中重新解析同一参数或存储一份服务端状态。
+
+`test:web` 使用 Vitest，仅运行确定性的纯逻辑测试，覆盖数值、时间、参数解析与序列化、查询条件、分页、会话取消和错误状态；传输边界使用合成响应，不访问真实管理服务。浏览器布局、键盘操作和真实请求需另行检查，不以构建通过代替。
 
 `build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。`check:types` 检查前端、[`sdk/`](../sdk/) 与示例，包括预期会被类型系统拒绝的契约用法。策略行为的常规测试在真实 QuickJS 中导入库源码，离线组合用例复用网关管线，Node.js 静态检查不能替代它们。
 

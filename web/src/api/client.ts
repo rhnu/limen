@@ -5,9 +5,8 @@ import type {
     GetRequestsData,
     GetUsageData,
 } from "./generated/types.gen";
-import { isCurrentSession, onSessionReset, replaceSession, useSession } from "../lib/session";
+import { isCurrentSession, onSessionReset, replaceSession, useSession } from "../session/store";
 import { mapFailure } from "./errors";
-export { ApiFailure } from "./errors";
 
 const controllers = new Set<AbortController>();
 onSessionReset(() => {

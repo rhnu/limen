@@ -10,28 +10,13 @@ import {
     Tooltip,
     Legend,
 } from "recharts";
-import { api } from "../api/client";
-import { useSession } from "../lib/session";
-import {
-    dateQuery,
-    label,
-    numberText,
-    safeChartValue,
-    timeText,
-    usageTotals,
-    windowError,
-} from "../lib/values";
-import {
-    PageTitle,
-    Refresh,
-    Filters,
-    Field,
-    Loading,
-    Failure,
-    Empty,
-    HelpMark,
-} from "../components/common";
-import type { UsageGroup, GetUsageData } from "../api/generated/types.gen";
+import { queries } from "../api/queries";
+import { parseSearch, usageSearchSchema } from "../routing/search";
+import { Filters } from "../components/filters";
+import { useSession } from "../session/store";
+import { label, numberText, safeChartValue, timeText, usageTotals } from "../lib/values";
+import { PageTitle, Refresh, Field, Loading, Failure, Empty, HelpMark } from "../components/common";
+import type { UsageGroup } from "../api/generated/types.gen";
 
 function Quality({ group }: { group: UsageGroup }) {
     return (
@@ -39,14 +24,14 @@ function Quality({ group }: { group: UsageGroup }) {
             <summary>统计详情</summary>
             <div className="quality-grid">
                 {[
-                    ["状态", group.states],
-                    ["结果", group.outcomes],
-                    ["用量质量", group.qualities],
-                    ["上游完成", group.upstreamCompleted],
-                ].map(([title, values]) => (
-                    <div key={String(title)}>
-                        <strong>{String(title)}</strong>
-                        {Object.entries(values as Record<string, number>).map(([key, value]) => (
+                    { title: "状态", values: group.states },
+                    { title: "结果", values: group.outcomes },
+                    { title: "用量质量", values: group.qualities },
+                    { title: "上游完成", values: group.upstreamCompleted },
+                ].map(({ title, values }) => (
+                    <div key={title}>
+                        <strong>{title}</strong>
+                        {Object.entries(values).map(([key, value]) => (
                             <span key={key}>
                                 {label(key)}：{numberText(value)}
                             </span>
@@ -55,20 +40,15 @@ function Quality({ group }: { group: UsageGroup }) {
                 ))}
                 <div>
                     <strong>独立用量样本</strong>
-                    {Object.entries(group.tokens).map(([key, token]) => (
-                        <span key={key}>
-                            {
-                                (
-                                    {
-                                        input: "输入",
-                                        output: "输出",
-                                        total: "总计",
-                                        cachedInput: "缓存输入",
-                                        reasoningOutput: "推理输出",
-                                    } as Record<string, string>
-                                )[key]
-                            }
-                            ：{numberText(token.sum)} / {token.samples} 个样本
+                    {[
+                        { title: "输入", token: group.tokens.input },
+                        { title: "输出", token: group.tokens.output },
+                        { title: "总计", token: group.tokens.total },
+                        { title: "缓存输入", token: group.tokens.cachedInput },
+                        { title: "推理输出", token: group.tokens.reasoningOutput },
+                    ].map(({ title, token }) => (
+                        <span key={title}>
+                            {title}：{numberText(token.sum)} / {token.samples} 个样本
                         </span>
                     ))}
                 </div>
@@ -80,29 +60,10 @@ function Quality({ group }: { group: UsageGroup }) {
 export function Usage() {
     const [params] = useSearchParams();
     const epoch = useSession((state) => state.epoch);
-    const group = params.get("groupBy") ?? "day";
-    const groupBy: "day" | "model" | "provider" | "none" = [
-        "day",
-        "model",
-        "provider",
-        "none",
-    ].includes(group)
-        ? (group as "day" | "model" | "provider" | "none")
-        : "day";
-    const from = params.get("from") ?? "";
-    const to = params.get("to") ?? "";
-    const invalid = windowError(from, to);
-    const query: NonNullable<GetUsageData["query"]> = {
-        ...(!invalid ? dateQuery(from, to) : {}),
-        groupBy,
-        model: params.get("model") || undefined,
-        provider: params.get("provider") || undefined,
-    };
-    const result = useQuery({
-        queryKey: [epoch, "usage", query],
-        queryFn: ({ signal }) => api.usage(query, signal),
-        enabled: !invalid,
-    });
+    const search = parseSearch(usageSearchSchema, params);
+    const groupBy = search.filters?.groupBy ?? "day";
+    const invalid = search.error;
+    const result = useQuery(queries.usage(epoch, search.filters));
     const summary = result.data?.data;
     const totals = summary ? usageTotals(summary.groups) : null;
     const chart = summary?.groups.map((item) => ({
@@ -131,6 +92,7 @@ export function Usage() {
                 用量
             </PageTitle>
             <Filters
+                kind="usage"
                 extra={
                     <Field label="分组">
                         <select name="groupBy" defaultValue={groupBy}>
@@ -160,15 +122,14 @@ export function Usage() {
                                 <strong>{numberText(totals.records)}</strong>
                             </div>
                             {[
-                                ["输入词元", totals.input],
-                                ["输出词元", totals.output],
-                                ["总词元", totals.total],
-                            ].map(([title, token]) => {
-                                const value = token as typeof totals.input;
+                                { title: "输入词元", value: totals.input },
+                                { title: "输出词元", value: totals.output },
+                                { title: "总词元", value: totals.total },
+                            ].map(({ title, value }) => {
                                 return (
-                                    <div key={String(title)}>
+                                    <div key={title}>
                                         <span>
-                                            {String(title)}{" "}
+                                            {title}{" "}
                                             <HelpMark>
                                                 {value.samples}{" "}
                                                 个已知样本。各项独立汇总，输入与输出之和不一定等于报告的总数。
@@ -230,7 +191,11 @@ export function Usage() {
                                                 />
                                                 <Tooltip
                                                     formatter={(value) =>
-                                                        numberText(value as number)
+                                                        numberText(
+                                                            typeof value === "number"
+                                                                ? value
+                                                                : undefined,
+                                                        )
                                                     }
                                                 />
                                                 <Legend />

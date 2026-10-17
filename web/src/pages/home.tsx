@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Login } from "../components/login";
-import { useSession } from "../lib/session";
+import { useSession } from "../session/store";
+import { paths } from "../routing/paths";
 
 export function Home() {
     const [login, setLogin] = useState(false);
@@ -10,21 +11,23 @@ export function Home() {
     return (
         <div className="encyclopedia">
             <header className="article-masthead">
-                <Link to="/" className="wordmark">
+                <Link to={paths.home} className="wordmark">
                     LIMEN
                 </Link>
             </header>
             <main className="article-layout">
                 <nav className="article-toc" aria-label="文章目录">
                     <strong>目录</strong>
-                    {[
-                        ["overview", "概述"],
-                        ["training", "训练与推理"],
-                        ["tokens", "词元与上下文"],
-                        ["conversation", "对话接口"],
-                        ["limits", "能力与局限"],
-                        ["gateway", "模型网关"],
-                    ].map(([id, title]) => (
+                    {(
+                        [
+                            ["overview", "概述"],
+                            ["training", "训练与推理"],
+                            ["tokens", "词元与上下文"],
+                            ["conversation", "对话接口"],
+                            ["limits", "能力与局限"],
+                            ["gateway", "模型网关"],
+                        ] as const
+                    ).map(([id, title]) => (
                         <a
                             key={id}
                             href={`#/#${id}`}
@@ -92,7 +95,10 @@ export function Home() {
                     className="colophon-mark"
                     aria-label="打开管理入口"
                     title="管理入口"
-                    onClick={() => (authenticated ? navigate("/usage") : setLogin(true))}
+                    onClick={() => {
+                        if (authenticated) void navigate(paths.usage);
+                        else setLogin(true);
+                    }}
                 >
                     ※
                 </button>

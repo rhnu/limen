@@ -1,6 +1,4 @@
-import type { ApiError } from "./generated/types.gen";
-
-const messages: Record<string, string> = {
+const messages = {
     invalid_query: "查询参数无效，请检查筛选条件。",
     unauthorized: "管理密钥无效或已失效，请重新登录。",
     not_found: "记录或管理接口不存在。",
@@ -13,25 +11,30 @@ const messages: Record<string, string> = {
     network_error: "无法读取管理接口，请检查连接后重试。",
     invalid_response: "管理接口返回了无法读取的响应。",
 };
+
+function isErrorCode(code: unknown): code is keyof typeof messages {
+    return typeof code === "string" && Object.hasOwn(messages, code);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object";
+}
 export class ApiFailure extends Error {
     constructor(
         public readonly code: string,
         public readonly status?: number,
         public readonly requestId?: string,
     ) {
-        super(Object.hasOwn(messages, code) ? messages[code] : messages.invalid_response);
+        super(isErrorCode(code) ? messages[code] : messages.invalid_response);
         this.name = "ApiFailure";
     }
 }
 export function mapFailure(error: unknown, response?: Response): ApiFailure {
-    const detail =
-        error && typeof error === "object" && "error" in error
-            ? (error as ApiError).error
-            : undefined;
+    const detail = isRecord(error) && isRecord(error.error) ? error.error : undefined;
     const code =
         response?.status === 401
             ? "unauthorized"
-            : detail && typeof detail.code === "string" && Object.hasOwn(messages, detail.code)
+            : detail && isErrorCode(detail.code)
               ? detail.code
               : response
                 ? "invalid_response"

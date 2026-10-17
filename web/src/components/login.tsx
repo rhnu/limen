@@ -1,14 +1,15 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Dialog, Button } from "@radix-ui/themes";
 import { useNavigate } from "react-router";
 import { validateKey } from "../api/client";
-import { replaceSession, useSession } from "../lib/session";
+import { replaceSession, useSession } from "../session/store";
+import { paths, safeReturnTo } from "../routing/paths";
 import { Failure, Field } from "./common";
 
 export function Login({
     open,
     onOpenChange,
-    destination = "/usage",
+    destination = paths.usage,
     gate = false,
 }: {
     open: boolean;
@@ -19,6 +20,8 @@ export function Login({
     const [key, setKey] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<unknown>(null);
+    const keyInput = useRef<HTMLInputElement>(null);
+    const returnFocus = useRef<HTMLElement | null>(null);
     const storageError = useSession((state) => state.storageError);
     const authError = useSession((state) => state.authError);
     const navigate = useNavigate();
@@ -34,7 +37,7 @@ export function Login({
             replaceSession(key, "authenticated");
             setKey("");
             onOpenChange(false);
-            navigate(destination, { replace: gate });
+            await navigate(safeReturnTo(destination), { replace: gate });
         } catch (failure) {
             if (useSession.getState().epoch === epoch) {
                 useSession.setState({ phase: "public" });
@@ -55,22 +58,41 @@ export function Login({
                 }
             }}
         >
-            <Dialog.Content maxWidth="420px">
+            <Dialog.Content
+                maxWidth="420px"
+                onOpenAutoFocus={(event) => {
+                    const active = document.activeElement;
+                    returnFocus.current = active instanceof HTMLElement ? active : null;
+                    event.preventDefault();
+                    keyInput.current?.focus();
+                }}
+                onCloseAutoFocus={(event) => {
+                    if (returnFocus.current?.isConnected) {
+                        event.preventDefault();
+                        returnFocus.current.focus();
+                    }
+                }}
+            >
                 <Dialog.Title>管理登录</Dialog.Title>
                 <Dialog.Description className="sr-only">
                     输入独立的 managerKey 访问只读管理页面。
                 </Dialog.Description>
-                <form onSubmit={submit} className="login-form">
+                <form
+                    onSubmit={(event) => {
+                        void submit(event);
+                    }}
+                    className="login-form"
+                >
                     <Field
                         label="managerKey"
                         help="管理密钥保存在此浏览器的本站存储中。退出会清除密钥；请仅在可信设备上登录。"
                     >
                         <input
+                            ref={keyInput}
                             autoComplete="off"
                             type="password"
                             value={key}
                             onChange={(event) => setKey(event.target.value)}
-                            autoFocus
                             required
                             spellCheck={false}
                         />

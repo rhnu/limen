@@ -1,16 +1,7 @@
-import {
-    cloneElement,
-    isValidElement,
-    useId,
-    useState,
-    type ReactNode,
-    type FormEvent,
-} from "react";
+import { cloneElement, isValidElement, useId, type ReactNode } from "react";
 import { Button, Popover, IconButton, Spinner, Tooltip } from "@radix-ui/themes";
 import { CircleHelp, RefreshCw } from "lucide-react";
-import { useSearchParams } from "react-router";
-import { windowError } from "../lib/values";
-import { ApiFailure } from "../api/client";
+import { ApiFailure } from "../api/errors";
 
 export function HelpMark({
     children,
@@ -157,91 +148,5 @@ export function Pager({
                 下一页
             </Button>
         </div>
-    );
-}
-export function useCursor(identity: string) {
-    const [state, setState] = useState<{ identity: string; cursors: (string | undefined)[] }>({
-        identity,
-        cursors: [undefined],
-    });
-    if (state.identity !== identity) setState({ identity, cursors: [undefined] });
-    const cursors = state.identity === identity ? state.cursors : [undefined];
-    return {
-        cursor: cursors[cursors.length - 1],
-        page: cursors.length - 1,
-        next: (cursor: string | null | undefined) => {
-            if (cursor && cursors.length < 100)
-                setState({ identity, cursors: [...cursors, cursor] });
-        },
-        previous: () =>
-            setState({ identity, cursors: cursors.length > 1 ? cursors.slice(0, -1) : cursors }),
-        reset: () => setState({ identity, cursors: [undefined] }),
-    };
-}
-
-export function Filters({ extra, children }: { extra?: ReactNode; children?: ReactNode }) {
-    const [params, setParams] = useSearchParams();
-    const identity = params.toString();
-    const [error, setError] = useState<{ identity: string; message: string } | null>(null);
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        const from = String(form.get("from") ?? "");
-        const to = String(form.get("to") ?? "");
-        const invalid = windowError(from, to);
-        setError(invalid ? { identity, message: invalid } : null);
-        if (invalid) return;
-        const next = new URLSearchParams();
-        for (const [key, value] of form)
-            if (String(value).trim()) next.set(key, String(value).trim());
-        setParams(next);
-    }
-    return (
-        <form className="filters" key={params.toString()} onSubmit={submit}>
-            <Field
-                label="开始时间"
-                help="使用浏览器本地时区。时间范围为左闭右开，最多 31 天；留空时查询最近 24 小时。"
-            >
-                <input name="from" type="datetime-local" defaultValue={params.get("from") ?? ""} />
-            </Field>
-            <Field label="结束时间">
-                <input name="to" type="datetime-local" defaultValue={params.get("to") ?? ""} />
-            </Field>
-            <Field label="模型">
-                <input
-                    name="model"
-                    defaultValue={params.get("model") ?? ""}
-                    placeholder="全部模型"
-                />
-            </Field>
-            <Field label="Provider">
-                <input
-                    name="provider"
-                    defaultValue={params.get("provider") ?? ""}
-                    placeholder="全部 Provider"
-                />
-            </Field>
-            {extra}
-            {children}
-            <Button type="submit" variant="outline">
-                应用筛选
-            </Button>
-            <Button
-                type="button"
-                variant="ghost"
-                onClick={(event) => {
-                    setError(null);
-                    event.currentTarget.form?.reset();
-                    setParams({});
-                }}
-            >
-                清除
-            </Button>
-            {error?.identity === identity && (
-                <div role="alert" className="inline-error">
-                    {error.message}
-                </div>
-            )}
-        </form>
     );
 }

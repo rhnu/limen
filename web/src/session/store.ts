@@ -8,6 +8,7 @@ export type SessionState = {
     epoch: number;
     storageError: string | null;
     authError: string | null;
+    verificationError: unknown;
 };
 
 export function readKey(storage: StoragePort): Pick<SessionState, "key" | "storageError"> {
@@ -37,7 +38,13 @@ function initial(): SessionState {
     } catch {
         restored = { key: null, storageError: "浏览器存储不可用。" };
     }
-    return { ...restored, phase: restored.key ? "verifying" : "public", epoch: 0, authError: null };
+    return {
+        ...restored,
+        phase: restored.key ? "verifying" : "public",
+        epoch: 0,
+        authError: null,
+        verificationError: null,
+    };
 }
 
 export const useSession = create<SessionState>(initial);
@@ -58,7 +65,14 @@ export function replaceSession(key: string | null, phase: SessionState["phase"])
         storageError = "浏览器存储不可用，请检查本站的存储权限。";
     }
     const epoch = useSession.getState().epoch + 1;
-    useSession.setState({ key, phase, epoch, storageError, authError: null });
+    useSession.setState({
+        key,
+        phase,
+        epoch,
+        storageError,
+        authError: null,
+        verificationError: null,
+    });
     return epoch;
 }
 

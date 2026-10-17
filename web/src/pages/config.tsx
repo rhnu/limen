@@ -1,24 +1,14 @@
 import { useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { api, ApiFailure } from "../api/client";
-import { useSession } from "../lib/session";
+import { ApiFailure } from "../api/errors";
+import { useSession } from "../session/store";
 import { label, numberText } from "../lib/values";
-import {
-    PageTitle,
-    Refresh,
-    Loading,
-    Failure,
-    Empty,
-    Pager,
-    useCursor,
-} from "../components/common";
-import { Facts } from "./requests";
-import type {
-    ModelConfig,
-    ProviderConfig,
-    ResourceLimits,
-    ServerConfig,
-} from "../api/generated/types.gen";
+import { PageTitle, Refresh, Loading, Failure, Empty, Pager } from "../components/common";
+import { Facts } from "../components/facts";
+import { queries } from "../api/queries";
+import { useCursor } from "../hooks/use-cursor";
+import { configSearchSchema, parseSearch, serializeSearch } from "../routing/search";
+import type { ResourceLimits, ServerConfig } from "../api/generated/types.gen";
 
 const limitLabels: Record<keyof ResourceLimits, string> = {
     startupMs: "启动期限 (ms)",
@@ -47,6 +37,8 @@ const limitLabels: Record<keyof ResourceLimits, string> = {
     maxJsonDepth: "JSON 深度上限",
     maxJsonNodes: "JSON 节点上限",
 };
+const limitNames = new Map(Object.entries(limitLabels));
+
 function Server({ config }: { config: ServerConfig }) {
     return (
         <>
@@ -95,7 +87,7 @@ function Server({ config }: { config: ServerConfig }) {
                 <h2>资源限制</h2>
                 <Facts
                     entries={Object.entries(config.limits).map(([key, value]) => [
-                        limitLabels[key as keyof ResourceLimits],
+                        limitNames.get(key) ?? key,
                         numberText(value),
                     ])}
                 />
@@ -105,27 +97,23 @@ function Server({ config }: { config: ServerConfig }) {
 }
 export function Config() {
     const [params, setParams] = useSearchParams();
-    const requested = params.get("section");
-    const section: "server" | "models" | "providers" =
-        requested === "models" || requested === "providers" ? requested : "server";
+    const search = parseSearch(configSearchSchema, params);
+    const section = search.filters?.section ?? "server";
     const epoch = useSession((state) => state.epoch);
-    const paging = useCursor(section);
-    const query =
-        section === "server"
-            ? { section }
-            : paging.cursor
-              ? { cursor: paging.cursor, limit: 50 }
-              : { section, limit: 50 };
-    const result = useQuery({
-        queryKey: [epoch, "config", section, paging.cursor],
-        queryFn: ({ signal }) => api.config(query, signal),
-    });
-    const data = result.data?.data;
+    const paging = useCursor(search.canonical);
+    const result = useQuery(queries.config(epoch, search.filters, paging.cursor));
+    const response = result.data;
     return (
         <>
             <PageTitle
                 help="显示启动时加载的非秘密配置。密钥、路径、脚本、请求头与 defaults 不会返回。配置修改需要在服务端进行并重启。"
-                action={<Refresh busy={result.isFetching} onClick={() => void result.refetch()} />}
+                action={
+                    <Refresh
+                        disabled={!!search.error}
+                        busy={result.isFetching}
+                        onClick={() => void result.refetch()}
+                    />
+                }
             >
                 配置
             </PageTitle>
@@ -142,13 +130,17 @@ export function Config() {
                         type="button"
                         aria-pressed={section === key}
                         className={section === key ? "active" : ""}
-                        onClick={() => setParams({ section: key })}
+                        onClick={() => setParams(serializeSearch({ section: key }))}
                     >
                         {name}
                     </button>
                 ))}
             </div>
-            {result.isPending ? (
+            {search.error ? (
+                <p role="alert" className="inline-error">
+                    {search.error}
+                </p>
+            ) : result.isPending ? (
                 <Loading />
             ) : result.isError ? (
                 <Failure
@@ -164,10 +156,10 @@ export function Config() {
                     }}
                 />
             ) : (
-                data && (
+                response && (
                     <>
-                        {!Array.isArray(data) ? (
-                            <Server config={data} />
+                        {response.section === "server" ? (
+                            <Server config={response.data} />
                         ) : (
                             <>
                                 <section className="panel flush">
@@ -190,8 +182,8 @@ export function Config() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {section === "models"
-                                                    ? (data as ModelConfig[]).map((item) => (
+                                                {response.section === "models"
+                                                    ? response.data.map((item) => (
                                                           <tr key={item.alias}>
                                                               <td>{item.alias}</td>
                                                               <td>{item.provider}</td>
@@ -200,7 +192,7 @@ export function Config() {
                                                               </td>
                                                           </tr>
                                                       ))
-                                                    : (data as ProviderConfig[]).map((item) => (
+                                                    : response.data.map((item) => (
                                                           <tr key={item.id}>
                                                               <td>{item.id}</td>
                                                               <td>{item.origin}</td>
@@ -209,23 +201,13 @@ export function Config() {
                                             </tbody>
                                         </table>
                                     </div>
-                                    {!data.length && <Empty>此分区没有配置项。</Empty>}
+                                    {!response.data.length && <Empty>此分区没有配置项。</Empty>}
                                 </section>
                                 <Pager
                                     page={paging.page}
-                                    next={
-                                        "nextCursor" in result.data &&
-                                        !!result.data.nextCursor &&
-                                        paging.page < 99
-                                    }
+                                    next={!!response.nextCursor && paging.page < 99}
                                     previous={paging.previous}
-                                    advance={() =>
-                                        paging.next(
-                                            "nextCursor" in result.data
-                                                ? result.data.nextCursor
-                                                : null,
-                                        )
-                                    }
+                                    advance={() => paging.next(response.nextCursor)}
                                     busy={result.isFetching}
                                 />
                                 {paging.page >= 99 && (

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check:types": "tsc --noEmit",
-    "lint": "oxlint --ignore-path .oxlintignore src vite.config.ts",
+    "lint": "oxlint --config .oxlintrc.json --ignore-path .oxlintignore --max-warnings 0 src vite.config.ts",
     "format:check": "oxfmt --check --ignore-path .oxfmtignore .",
     "test": "vitest run"
   },
@@ -20,6 +20,7 @@
     "react-is": "19.3.1",
     "react-router": "8.4.0",
     "recharts": "3.10.1",
+    "valibot": "1.5.0",
     "zustand": "5.0.15"
   },
   "devDependencies": {
@@ -28,6 +29,7 @@
     "@vitejs/plugin-react": "6.1.2",
     "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
+    "oxlint-tsgolint": "7.0.2004",
     "typescript": "7.0.2",
     "vite": "8.3.4",
     "vitest": "5.0.5"

@@ -14,7 +14,7 @@
     "dev:web": "pnpm --filter @limen/web dev",
     "check:types": "tsc --project tsconfig.json && tsc --project examples/libraries/tsconfig.json && pnpm --filter @limen/web check:types",
     "lint:web": "pnpm --filter @limen/web lint",
-    "format:web": "pnpm --filter @limen/web exec oxfmt --write .",
+    "format:web": "pnpm --filter @limen/web exec oxfmt --write --ignore-path .oxfmtignore .",
     "format:web:check": "pnpm --filter @limen/web format:check",
     "test:web": "pnpm --filter @limen/web test"
   },
