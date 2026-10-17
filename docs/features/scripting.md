@@ -216,7 +216,7 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 随附的 [Valibot 示例](../../examples/libraries/src/config.js)通过谓词校验请求，在 `onRequest` 拒绝无效参数，在 `beforeSend` 实施 provider 限制；保留原正文可避免校验器丢失未知扩展字段。构建脚本见 [`build.mjs`](../../examples/libraries/build.mjs)，生成文件为同目录的 `config.js`，不要直接编辑它。重分发库代码时保留其许可证。
 
-安装、构建、静态检查命令统一见[开发指引](../development.md#javascript-静态检查)。打包后执行配置检查及[对应离线用例](testing.md#运行示例)，验证真实 QuickJS 行为。
+安装、构建、静态检查命令统一见[开发指引](../development.md#前端与-javascript)。打包后执行配置检查及[对应离线用例](testing.md#运行示例)，验证真实 QuickJS 行为。
 
 ## 可复用策略库
 
@@ -253,4 +253,4 @@ name 遵循 pipeline step 名称规则，同一 pipeline 内不得重复。错�
 /** @satisfies {import("../../types/limen").Config} */
 ```
 
-按文件位置调整类型路径，完整用法见 [`examples/basic/config.js`](../../examples/basic/config.js)。声明使用 readonly 区分上下文权限，检查 hook 返回值和已知字段；完整运行校验仍在 Rust。项目检查入口见[开发指引](../development.md#javascript-静态检查)，hook 实现入口见 [`src/gateway/`](../../src/gateway/) 与 [`modules/script/src/context.js`](../../modules/script/src/context.js)。
+按文件位置调整类型路径，完整用法见 [`examples/basic/config.js`](../../examples/basic/config.js)。声明使用 readonly 区分上下文权限，检查 hook 返回值和已知字段；完整运行校验仍在 Rust。项目检查入口见[开发指引](../development.md#前端与-javascript)，hook 实现入口见 [`src/gateway/`](../../src/gateway/) 与 [`modules/script/src/context.js`](../../modules/script/src/context.js)。

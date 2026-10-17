@@ -37,6 +37,7 @@ http = "1.5.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+include_dir = { version = "0.7.4", default-features = false }
 process-wrap = { version = "10.0.1", default-features = false, features = ["std", "tokio1", "process-session", "job-object", "creation-flags", "kill-on-drop"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rquickjs = { version = "0.14.0", features = ["futures", "loader"] }
@@ -74,6 +75,7 @@ http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+include_dir.workspace = true
 limen-config.workspace = true
 limen-script.workspace = true
 limen-chat.workspace = true

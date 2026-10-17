@@ -1,0 +1,13 @@
+{
+  "name": "@limen/api-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-ts",
+    "check": "node check.mjs"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "typescript": "6.0.3"
+  }
+}

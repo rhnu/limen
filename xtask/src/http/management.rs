@@ -9,12 +9,110 @@ use super::fixture::{Fixture, Laboratory, Options, PENDING_CONFIG, request};
 pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
     laboratory
         .with_fixture(Options::default(), async |item| {
+            public_web(item).await?;
             authentication(item).await?;
             projection_and_parameters(item).await?;
             let id = precision(item).await?;
             log_window(item, &id).await
         })
         .await
+}
+
+async fn public_web(item: &Fixture) -> Result<()> {
+    let index = item.public(Method::GET, "/").await?;
+    ensure!(
+        index.status == 200
+            && index
+                .headers
+                .get("content-type")
+                .is_some_and(|value| value == "text/html; charset=utf-8")
+            && index
+                .headers
+                .get("cache-control")
+                .is_some_and(|value| value == "no-cache"),
+        "public management shell unavailable or cached permanently"
+    );
+    let head = item.public(Method::HEAD, "/").await?;
+    ensure!(
+        head.status == 200
+            && head.body.is_empty()
+            && head.headers.get("content-length") == index.headers.get("content-length")
+            && head.headers.get("content-type") == index.headers.get("content-type"),
+        "public shell HEAD metadata or body changed"
+    );
+    let html = std::str::from_utf8(&index.body).context("decode delivered management HTML")?;
+    let script = html
+        .split(['"', '\''])
+        .find(|value| {
+            value.starts_with("/assets/")
+                && std::path::Path::new(value)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("js"))
+        })
+        .context("delivered management shell has no local script")?;
+    let asset = item.public(Method::GET, script).await?;
+    ensure!(
+        asset.status == 200
+            && !asset.body.is_empty()
+            && asset
+                .headers
+                .get("content-type")
+                .is_some_and(|value| value == "text/javascript; charset=utf-8")
+            && asset
+                .headers
+                .get("cache-control")
+                .is_some_and(|value| value == "public, max-age=31536000, immutable")
+            && asset
+                .headers
+                .get("x-content-type-options")
+                .is_some_and(|value| value == "nosniff"),
+        "compiled script delivery MIME, cache or sniffing boundary changed"
+    );
+    let favicon = item.public(Method::GET, "/favicon.svg").await?;
+    ensure!(
+        favicon.status == 200
+            && favicon
+                .headers
+                .get("content-type")
+                .is_some_and(|value| value == "image/svg+xml"),
+        "public favicon unavailable"
+    );
+    for path in ["/assets/missing.js", "/usage"] {
+        ensure!(
+            item.public(Method::GET, path).await?.status == 404,
+            "unknown public path received a shell fallback"
+        );
+    }
+    let post = item.public(Method::POST, "/").await?;
+    ensure!(
+        post.status == 405
+            && post
+                .headers
+                .get("allow")
+                .is_some_and(|value| value == "GET, HEAD"),
+        "static method boundary changed"
+    );
+    for path in [
+        "/v1/models",
+        "/v1/missing",
+        "/admin/v1/status",
+        "/admin/v1/missing",
+    ] {
+        ensure!(
+            item.public(Method::GET, path).await?.status == 401,
+            "API namespace lost authentication priority"
+        );
+    }
+    let records = item.manager("/admin/v1/requests").await?;
+    ensure!(
+        records.status == 200 && records.body["data"].as_array().is_some_and(Vec::is_empty),
+        "static requests entered generation admission"
+    );
+    ensure!(
+        item.upstream.controls.lock().await.records.is_empty(),
+        "static requests reached the generation upstream"
+    );
+    Ok(())
 }
 
 async fn authentication(item: &Fixture) -> Result<()> {

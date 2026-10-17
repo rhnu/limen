@@ -28,6 +28,15 @@ impl Gateway {
             None
         };
         let Some(expected) = expected else {
+            if !admin
+                && let Some(response) = crate::web::handle(
+                    request,
+                    std::time::Duration::from_millis(self.server.limits.request_ms),
+                )
+                .await
+            {
+                return Dispatch::Response(response);
+            }
             return Dispatch::Response(error_response(
                 &Failure::new(ErrorCode::NotFound, "endpoint"),
                 id,

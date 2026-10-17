@@ -1,0 +1,10 @@
+packages:
+  - web
+  - tooling/api-client
+
+# The example bundler needs esbuild's platform binary installation.
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.58.0

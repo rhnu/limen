@@ -1,10 +1,22 @@
 {
-  "name": "limen-script-checks",
+  "name": "limen-tools",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
+    "api:generate": "pnpm --filter @limen/api-client generate",
+    "api:check": "pnpm --filter @limen/api-client check",
     "build:examples": "node examples/libraries/build.mjs",
-    "check:types": "tsc --project tsconfig.json && tsc --project examples/libraries/tsconfig.json"
+    "build:web": "pnpm --filter @limen/web build",
+    "dev:web": "pnpm --filter @limen/web dev",
+    "check:types": "tsc --project tsconfig.json && tsc --project examples/libraries/tsconfig.json && pnpm --filter @limen/web check:types",
+    "lint:web": "pnpm --filter @limen/web lint",
+    "format:web": "pnpm --filter @limen/web exec oxfmt --write .",
+    "format:web:check": "pnpm --filter @limen/web format:check",
+    "test:web": "pnpm --filter @limen/web test"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

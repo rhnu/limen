@@ -11,6 +11,7 @@
 | `modules/script`  | 本地 ESM 加载、QuickJS 所有权、hook 调度及 JS/JSON 桥接      |
 | `modules/chat`    | 有界 SSE 分帧、Chat 事件解释、完成状态和字段级 JSON/SSE 转换 |
 | `modules/storage` | SQLite schema、记录、保留清理和有界只读查询                  |
+| `web/`            | 同源只读管理界面、浏览器凭据存储和 hash 导航                 |
 | `xtask`           | 受父进程监督的隔离测试与进程树清理                           |
 
 主应用组合四个职责库；库不初始化进程日志或决定进程退出。依赖和 lint 在 workspace 根集中管理，工程规则见 [`AGENTS.md`](../AGENTS.md)。
@@ -75,7 +76,19 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 诊断只输出批准的元数据和错误分类，不记录正文、令牌、Cookie、原始 query、任意异常消息或携密源码。目标地址只保留 origin。上游 HTTP 错误正文属于可透传的响应数据；原始网络、解析和脚本异常仅供内部类型化处理，不能直接格式化到日志或客户端。
 
-推理接口范围为 Chat Completions 和显式模型列表；不增加 Responses、自动重试、故障转移或热重载。持久化和管理 API 按下述重构设计推进，WebUI 只是未来方向，不在当前实现范围内。单次生成请求不跟随重定向，也不自动重试。
+推理接口范围为 Chat Completions 和显式模型列表；不增加 Responses、自动重试、故障转移或热重载。持久化和管理 API 按下述重构设计推进，浏览器界面只消费只读管理能力。单次生成请求不跟随重定向，也不自动重试。
+
+## 浏览器管理界面
+
+`serve` 在同一监听地址提供构建时内嵌的前端。`/` 返回首页，`/assets/` 只返回已内嵌且媒体类型受支持的构建文件，`/favicon.svg` 返回图标；页面导航使用 hash，不增加服务端页面路由。`/v1` 与 `/admin/v1` 命名空间优先走原有认证和分派；未知路径、缺失资源不会回退到首页。静态请求不进入生成并发、业务脚本或用量记录。
+
+公开首页为静态 LLM 科普文章，页脚的 `※` 按钮打开管理登录。入口的隐藏方式只影响呈现；每个管理请求仍携带独立的 managerKey，由后端认证。管理关闭时首页仍可读取。前端不增加 Cookie 会话、账户或生成权限。
+
+managerKey 由统一浏览器存储模块保存到当前 origin 的 localStorage；加载保存的 key 后先通过 status 验证，才展示管理数据。退出或收到 401 时清除保存的凭据、取消请求并清空查询缓存；已取消请求的晚到结果不能恢复旧会话。存储失败可见，不能声称已经保存或删除。凭据不写入 URL、查询缓存键、诊断或页面正文。
+
+管理界面提供用量、请求记录、运行日志、系统状态和配置五个顶栏入口，采用黑白灰样式；解释放在可聚焦、可点击的帮助标记中。列表与查询都遵守现有分页及时间边界，不自动遍历历史、不自动重试或订阅日志。数值字符串按整数精度保留，缺失与零分开；图表不能凭缺失值补造完整性。
+
+[`api/admin.openapi.json`](../api/admin.openapi.json)是管理交互的机器可读契约，前端客户端由其生成。后端行为变化时同步更新契约；生成一致性检查与真实响应行为验证各自承担不同责任。构建、工具与检查入口统一见[开发指引](development.md)。
 
 主要实现入口：[`src/gateway/`](../src/gateway/)、[`modules/script/src/engine.rs`](../modules/script/src/engine.rs)、[`modules/chat/src/`](../modules/chat/src/)。
 
@@ -83,7 +96,7 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 ### 目标与适用状态
 
-本节是 WebUI 之前的持久化与只读管理契约，替代前期候选方案。前文描述生成管线，本节规定其持久化、管理、日志和启停边界。代码已按此契约实现，剩余环境验收只放在[路线图](roadmap.md)。
+本节规定生成管线的持久化、管理、日志和启停边界。代码已按此契约实现，剩余环境验收只放在[路线图](roadmap.md)。
 
 用户已确认的边界：
 
@@ -299,7 +312,7 @@ Docker 对 stderr 单独配置 `local` logging driver，`max-size: 10m`、`max-f
 
 管理响应使用 JSON、camelCase、UTC RFC3339 毫秒时间及 `Cache-Control: no-store`，带 `X-Limen-Request-Id`。错误 envelope 沿用 `{error: {code, message, request_id}}`，message 为固定受控文案。除上述 401/404/405 外：非法参数为 400 `invalid_query`，失效游标 410 `cursor_expired`，范围或分组过宽 422 `query_too_broad`，存储不可用 503 `storage_unavailable`，查询期限结束 504 `query_timeout`；不返回部分汇总伪装成功。
 
-不发送跨域许可头，未来 WebUI 默认同源；配置改写、重启、文件下载、任意文件路径和 SQL 查询均没有端点。
+不发送跨域许可头，浏览器管理界面使用同源请求；配置改写、重启、文件下载、任意文件路径和 SQL 查询均没有端点。
 
 ### 只读管理 API
 

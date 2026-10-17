@@ -12,7 +12,7 @@ cargo run --locked -- test --config examples/testing/server.toml --cases example
 
 该目录演示全部四种 JSON/SSE 组合。`--cases` 可指向一个 `.case.json` 文件或目录；目录只扫描本层文件，按文件名排序。每个用例创建新的服务和 VM 生命周期，不继承前一用例的闭包状态。
 
-第三方库示例需先按[开发指引](../development.md#javascript-静态检查)构建，再执行：
+第三方库示例需先按[开发指引](../development.md#前端与-javascript)构建，再执行：
 
 ```sh
 cargo run --locked -- check --config examples/libraries/server.toml

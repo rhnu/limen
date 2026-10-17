@@ -2,11 +2,7 @@
 
 ## 本机与私网
 
-先按[配置与接入](configuration.md)准备 `local/config/server.toml` 和同目录 `config.js`，执行 `check` 后启动 `serve`。发行构建可使用：
-
-```sh
-cargo build --release --locked --bin limen
-```
+先按[配置与接入](configuration.md)准备 `local/config/server.toml` 和同目录 `config.js`，执行 `check` 后启动 `serve`。从源码构建时，先按[开发指引](../development.md#准备与构建)构建内嵌前端，再选择 Cargo 的 release 构建；发行二进制运行时不依赖 Node.js。
 
 默认监听 `127.0.0.1:8080`，可在服务配置中指定 IP 与端口。Limen 提供 HTTP/1 服务；需要公网 TLS、域名或访问边界时由外部反向代理处理。客户端与上游 token 分开管理。上游客户端不使用系统代理环境变量，也不跟随重定向或自动重试。
 

@@ -106,6 +106,12 @@ pub struct Reply {
     pub body: Value,
 }
 
+pub struct PublicReply {
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: Vec<u8>,
+}
+
 impl Reply {
     /// Correlate transport replies with structured terminal and timing events.
     pub fn request_id(&self) -> Result<&str> {
@@ -258,6 +264,37 @@ impl Fixture {
             )],
         )
         .await
+    }
+
+    /// Read public static responses without credentials, within the client's HTTP deadline.
+    pub async fn public(&self, method: Method, path: &str) -> Result<PublicReply> {
+        const MAX_BYTES: usize = 2 * 1024 * 1024;
+        let mut response = self
+            .client
+            .request(method, format!("http://127.0.0.1:{}{path}", self.port))
+            .header("connection", "close")
+            .send()
+            .await
+            .context("send public HTTP experiment request")?;
+        let status = response.status().as_u16();
+        let headers = response.headers().clone();
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("read public HTTP response")?
+        {
+            ensure!(
+                chunk.len() <= MAX_BYTES - body.len(),
+                "public HTTP response exceeded experiment limit"
+            );
+            body.extend_from_slice(&chunk);
+        }
+        Ok(PublicReply {
+            status,
+            headers,
+            body,
+        })
     }
 
     pub fn application_log_dir(&self) -> PathBuf {

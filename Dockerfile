@@ -1,5 +1,18 @@
 # syntax=docker/dockerfile:1
 
+FROM node:24-trixie-slim AS frontend
+
+WORKDIR /build
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json ./web/package.json
+COPY tooling/api-client/package.json ./tooling/api-client/package.json
+RUN npm install --global "$(node -p "require('./package.json').packageManager")"
+RUN pnpm install --frozen-lockfile
+COPY api ./api
+COPY tooling/api-client ./tooling/api-client
+COPY web ./web
+RUN pnpm api:generate && pnpm build:web
+
 FROM rust:1.99.0-slim-trixie AS chef
 
 ARG TARGETARCH
@@ -18,16 +31,20 @@ RUN rustc --version | grep -F "rustc ${RUST_VERSION} "
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 COPY modules ./modules
 COPY xtask ./xtask
+COPY --from=frontend /build/web/dist ./web/dist
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /build/recipe.json ./recipe.json
+COPY --from=frontend /build/web/dist ./web/dist
 # Keep dependency artifacts in a layer: GHA cache does not export cache mounts.
 RUN cargo chef cook --release --locked --bin limen --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 COPY modules ./modules
 COPY xtask ./xtask

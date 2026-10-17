@@ -1,0 +1,2338 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Limen read-only management API",
+    "version": "0.1.0",
+    "description": "The seven existing read-only management endpoints. Requires a separate manager key; disabled management returns 404. All operations use GET with no body. Unknown or repeated query parameters are rejected; raw query maximum 4096 bytes, response maximum 1 MiB. Defaults: concurrency 4, deadline 2000 ms. Success payloads use data; list cursors are present and nullable. UTC timestamps use RFC3339 milliseconds. Persisted token/byte counts and lifecycle counters are decimal strings; resource-limit values are JSON integers as currently serialized. No CORS permission headers are sent."
+  },
+  "security": [
+    {
+      "managerKey": []
+    }
+  ],
+  "paths": {
+    "/admin/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Read process and subsystem health",
+        "description": "Reads in-memory health without querying SQLite or executing JavaScript. HTTP 200 indicates that status is readable; inspect acceptingGenerations.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/requests": {
+      "get": {
+        "operationId": "getRequests",
+        "summary": "List persisted generation requests",
+        "description": "Descending (startedAt, recordId), bounded to 31 days and 100 rows per page. Cursors retain the first page record-ID high watermark and filters; terminal updates and retention may still change later pages.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Model"
+          },
+          {
+            "$ref": "#/components/parameters/Provider"
+          },
+          {
+            "$ref": "#/components/parameters/State"
+          },
+          {
+            "$ref": "#/components/parameters/Outcome"
+          },
+          {
+            "$ref": "#/components/parameters/ListLimit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/requests/{requestId}": {
+      "get": {
+        "operationId": "getRequest",
+        "summary": "Read one persisted generation request",
+        "description": "Returns 404 if absent or removed by retention, without distinguishing those cases.",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "description": "Persisted request ID. No default time-window restriction.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/usage": {
+      "get": {
+        "operationId": "getUsage",
+        "summary": "Summarize known usage",
+        "description": "One bounded consistent read: at most 100000 matching records and 128 groups. Exceeding either limit returns 422 rather than partial totals. Known consumption from failed/cancelled requests is included.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Model"
+          },
+          {
+            "$ref": "#/components/parameters/Provider"
+          },
+          {
+            "$ref": "#/components/parameters/GroupBy"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/logs/files": {
+      "get": {
+        "operationId": "getLogFiles",
+        "summary": "List nonempty managed log files",
+        "description": "Active file followed by retained backups. No arbitrary directory entries, paths, or downloads. nextCursor is always null.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogFilesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/logs": {
+      "get": {
+        "operationId": "getLogs",
+        "summary": "Read a reverse log window",
+        "description": "Reads one file newest first, scanning at most 1 MiB per request. Cursor binds file and filters; later pages can provide only cursor/limit. Damaged or partial lines increment skippedRecords; an empty matching window can still have a nextCursor.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FileId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/LogLimit"
+          },
+          {
+            "$ref": "#/components/parameters/MinLevel"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/admin/v1/config": {
+      "get": {
+        "operationId": "getConfig",
+        "summary": "Read the loaded non-secret configuration projection",
+        "description": "Server is the default section and forbids limit/cursor. Models/providers are homogeneous arrays ordered by identifier, default limit 50 and maximum 100. A cursor inherits its section; explicitly supplied section must match.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Section"
+          },
+          {
+            "$ref": "#/components/parameters/ListLimit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "X-Limen-Request-Id": {
+                "description": "Gateway-assigned request identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "405": {
+            "$ref": "#/components/responses/Error405"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error410"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "managerKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Independent auth.manager_key; never a client api_key. Exactly one Authorization: Bearer header. Query and Cookie credentials are not accepted."
+      }
+    },
+    "parameters": {
+      "From": {
+        "name": "from",
+        "in": "query",
+        "required": false,
+        "description": "Inclusive request start time. Supply together with to; when both are absent, defaults to the last 24 hours. Maximum window is 31 days. Cursor pages inherit the original window.",
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "To": {
+        "name": "to",
+        "in": "query",
+        "required": false,
+        "description": "Exclusive request start time; must be later than from. Supply both endpoints or neither.",
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "Model": {
+        "name": "model",
+        "in": "query",
+        "required": false,
+        "description": "Exact match; 1-128 UTF-8 bytes. Repeated cursor-page filters must match the original filter.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "Provider": {
+        "name": "provider",
+        "in": "query",
+        "required": false,
+        "description": "Exact match; 1-128 UTF-8 bytes. Repeated cursor-page filters must match the original filter.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque run-bound cursor. Later pages may supply only cursor and limit; explicitly repeated filters must match. Service restart expires the cursor.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "ListLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum rows; the response byte budget can shorten a page.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "LogLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum matching log entries in this scan window.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 100
+        }
+      },
+      "State": {
+        "name": "state",
+        "in": "query",
+        "required": false,
+        "description": "Exact persisted state filter.",
+        "schema": {
+          "$ref": "#/components/schemas/RecordState"
+        }
+      },
+      "Outcome": {
+        "name": "outcome",
+        "in": "query",
+        "required": false,
+        "description": "Exact terminal outcome filter.",
+        "schema": {
+          "$ref": "#/components/schemas/Outcome"
+        }
+      },
+      "GroupBy": {
+        "name": "groupBy",
+        "in": "query",
+        "required": false,
+        "description": "One aggregation dimension; day uses UTC calendar dates.",
+        "schema": {
+          "$ref": "#/components/schemas/GroupBy",
+          "default": "day"
+        }
+      },
+      "Section": {
+        "name": "section",
+        "in": "query",
+        "required": false,
+        "description": "Defaults to server without a cursor; a cursor inherits its models/providers section. limit/cursor are invalid for server.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "server",
+            "models",
+            "providers"
+          ]
+        }
+      },
+      "FileId": {
+        "name": "fileId",
+        "in": "query",
+        "required": false,
+        "description": "Exact log file identity; defaults to the active file. No path is accepted.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9-]+$"
+        }
+      },
+      "RequestId": {
+        "name": "requestId",
+        "in": "query",
+        "required": false,
+        "description": "Exact associated request ID.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9-]+$"
+        }
+      },
+      "MinLevel": {
+        "name": "minLevel",
+        "in": "query",
+        "required": false,
+        "description": "Includes this severity and all more severe levels; omitted means no level filter.",
+        "schema": {
+          "$ref": "#/components/schemas/LogLevel"
+        }
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "invalid_query: invalid, unknown or duplicate parameters, query over 4096 bytes, or a nonempty GET body.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "unauthorized: missing, malformed or invalid manager Bearer key.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "not_found: unknown endpoint/record, cleaned-up record, or management disabled.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error405": {
+        "description": "method_not_allowed: only GET is supported (Allow: GET).",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          },
+          "Allow": {
+            "schema": {
+              "type": "string",
+              "const": "GET"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error410": {
+        "description": "cursor_expired: restart, removed/truncated log file or changed log identity.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error422": {
+        "description": "query_too_broad: time range, scan/group scope or response byte budget exceeded.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error503": {
+        "description": "busy or storage_unavailable: admission is full or requested data cannot be read.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Error504": {
+        "description": "query_timeout: management deadline exceeded.",
+        "headers": {
+          "X-Limen-Request-Id": {
+            "description": "Gateway-assigned request identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "All management namespace responses disable caching, including authentication failures and disabled management.",
+            "schema": {
+              "type": "string",
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "RecordState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "finalized",
+          "interrupted"
+        ]
+      },
+      "Outcome": {
+        "type": "string",
+        "enum": [
+          "success",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "UsageQuality": {
+        "type": "string",
+        "enum": [
+          "missing",
+          "partial",
+          "reported",
+          "invalid",
+          "conflicting"
+        ]
+      },
+      "GroupBy": {
+        "type": "string",
+        "enum": [
+          "none",
+          "day",
+          "model",
+          "provider"
+        ]
+      },
+      "LogLevel": {
+        "type": "string",
+        "enum": [
+          "trace",
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      "StorageHealth": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "failed",
+              "stopping"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "LogSinkHealth": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "failed"
+            ]
+          },
+          "dropped": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision."
+          },
+          "ioErrors": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision."
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "permission_denied",
+              "storage_full",
+              "not_found",
+              "io",
+              null
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "dropped",
+          "ioErrors",
+          "lastError"
+        ],
+        "additionalProperties": false
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "acceptingGenerations": {
+            "type": "boolean"
+          },
+          "vm": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "retired"
+            ]
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageHealth"
+          },
+          "logging": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "$ref": "#/components/schemas/LogSinkHealth"
+              },
+              "stderr": {
+                "$ref": "#/components/schemas/LogSinkHealth"
+              }
+            },
+            "required": [
+              "file",
+              "stderr"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "version",
+          "runId",
+          "startedAt",
+          "acceptingGenerations",
+          "vm",
+          "storage",
+          "logging"
+        ],
+        "additionalProperties": false,
+        "description": "A readable status returns HTTP 200 even when generation admission is disabled."
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Status"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "RequestRecord": {
+        "type": "object",
+        "properties": {
+          "recordId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RecordState"
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "success",
+              "failed",
+              "cancelled",
+              null
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorPhase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorStep": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "configuredUpstreamModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finalUpstreamModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clientStream": {
+            "type": "boolean"
+          },
+          "upstreamStatus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "upstreamMedia": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstreamCompleted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "inputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "totalTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "cachedInputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "reasoningOutputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "usageSource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usageQuality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "missing",
+              "partial",
+              "reported",
+              "invalid",
+              "conflicting",
+              null
+            ]
+          },
+          "inputBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outboundBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "upstreamBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outputBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "requestMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamHeadersMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "firstOutputMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "required": [
+          "recordId",
+          "requestId",
+          "runId",
+          "startedAt",
+          "finishedAt",
+          "state",
+          "outcome",
+          "errorCode",
+          "errorPhase",
+          "errorStep",
+          "model",
+          "provider",
+          "configuredUpstreamModel",
+          "finalUpstreamModel",
+          "clientStream",
+          "upstreamStatus",
+          "upstreamMedia",
+          "upstreamCompleted",
+          "inputTokens",
+          "outputTokens",
+          "totalTokens",
+          "cachedInputTokens",
+          "reasoningOutputTokens",
+          "usageSource",
+          "usageQuality",
+          "inputBytes",
+          "outboundBytes",
+          "upstreamBytes",
+          "outputBytes",
+          "requestMs",
+          "upstreamHeadersMs",
+          "firstOutputMs"
+        ],
+        "additionalProperties": false,
+        "description": "Persisted generation metadata. Nullable fields are always present; unknown results stay null. Finalized does not prove the client received every byte."
+      },
+      "RequestResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RequestRecord"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "RequestsPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestRecord"
+            },
+            "maxItems": 100
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "TokenSum": {
+        "type": "object",
+        "properties": {
+          "sum": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "sum",
+          "samples"
+        ],
+        "additionalProperties": false,
+        "description": "No samples is {sum:null,samples:0}; failed or cancelled requests still contribute known usage."
+      },
+      "TokenTotals": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/TokenSum"
+          },
+          "output": {
+            "$ref": "#/components/schemas/TokenSum"
+          },
+          "total": {
+            "$ref": "#/components/schemas/TokenSum"
+          },
+          "cachedInput": {
+            "$ref": "#/components/schemas/TokenSum"
+          },
+          "reasoningOutput": {
+            "$ref": "#/components/schemas/TokenSum"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "total",
+          "cachedInput",
+          "reasoningOutput"
+        ],
+        "additionalProperties": false
+      },
+      "UsageGroup": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null for groupBy=none or unknown model/provider; UTC YYYY-MM-DD for day grouping."
+          },
+          "records": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "states": {
+            "type": "object",
+            "properties": {
+              "pending": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "finalized": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "interrupted": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "pending",
+              "finalized",
+              "interrupted"
+            ],
+            "additionalProperties": false
+          },
+          "outcomes": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cancelled": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "success",
+              "failed",
+              "cancelled",
+              "unknown"
+            ],
+            "additionalProperties": false
+          },
+          "qualities": {
+            "type": "object",
+            "properties": {
+              "missing": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "partial": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reported": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "invalid": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "conflicting": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "missing",
+              "partial",
+              "reported",
+              "invalid",
+              "conflicting",
+              "unknown"
+            ],
+            "additionalProperties": false
+          },
+          "upstreamCompleted": {
+            "type": "object",
+            "properties": {
+              "true": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "false": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "true",
+              "false",
+              "unknown"
+            ],
+            "additionalProperties": false
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/TokenTotals"
+          }
+        },
+        "required": [
+          "key",
+          "records",
+          "states",
+          "outcomes",
+          "qualities",
+          "upstreamCompleted",
+          "tokens"
+        ],
+        "additionalProperties": false
+      },
+      "Retention": {
+        "type": "object",
+        "properties": {
+          "retentionDays": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxRecords": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "oldestStartedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          }
+        },
+        "required": [
+          "retentionDays",
+          "maxRecords",
+          "oldestStartedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Current retention bounds; oldestStartedAt does not promise completeness of earlier history."
+      },
+      "UsageSummary": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "groupBy": {
+            "$ref": "#/components/schemas/GroupBy"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageGroup"
+            },
+            "maxItems": 128
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "groupBy",
+          "retention",
+          "groups"
+        ],
+        "additionalProperties": false
+      },
+      "UsageResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UsageSummary"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "LogFile": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "sizeBytes": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision."
+          },
+          "firstTimestamp": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unreadable"
+            ]
+          }
+        },
+        "required": [
+          "fileId",
+          "active",
+          "sizeBytes",
+          "firstTimestamp"
+        ],
+        "additionalProperties": false,
+        "description": "Empty files are omitted. An unreadable first record yields null fileId/firstTimestamp and state=unreadable; readable entries omit state."
+      },
+      "LogFilesPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogFile"
+            },
+            "maxItems": 33
+          },
+          "nextCursor": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "data",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "LogEntry": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "const": 1
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "level": {
+            "$ref": "#/components/schemas/LogLevel"
+          },
+          "logId": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "processPanicked",
+              "configurationRejected",
+              "configurationFailed",
+              "configurationLoading",
+              "configurationLoaded",
+              "runtimeStopped",
+              "listenerStarted",
+              "listenerStopping",
+              "connectionFailed",
+              "connectionDeadline",
+              "requestFinished",
+              "requestRejected",
+              "requestFailed",
+              "requestTiming",
+              "requestPersistenceFailed",
+              "hookStatistics",
+              "scriptObservation",
+              "scriptObservationsDropped",
+              "observationSkipped",
+              "observationCompleted",
+              "observationFailed",
+              "errorResponsePolicyFailed",
+              "errorResponsePolicySkipped",
+              "requestWorkerFailed",
+              "fileLoggingFailed",
+              "diagnostic"
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Associated request ID when supplied by the logging event."
+          },
+          "phase": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "code": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "model": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "provider": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "step": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "origin": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "observationEvent": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "count": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "dropped": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "reason": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "command": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "line": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "column": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "outcome": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "errorKind": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamStatus": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "clientStream": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "elapsedMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "requestMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "connectionLimit": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "connections": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "models": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "providers": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "status": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "observation": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "cleanup": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "calls": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "failedCalls": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "interruptedCalls": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "reportedCalls": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "wallMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "queueMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "queueSamples": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "initialCallMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "initialCallSamples": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "pendingMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "pendingSamples": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "inputBridgeMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "inputBridgeSamples": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "outputBridgeMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "outputBridgeSamples": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "requestDecodeMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamHeadersWaitMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamFirstByteMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamFirstChunkMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamReadWaitMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamFirstEventMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamQueueWaitMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamDrainMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "panicked": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "cancelled": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "timestamp",
+          "level",
+          "logId",
+          "event"
+        ],
+        "additionalProperties": false,
+        "description": "Validated structured log record. Only the encoder/reader field whitelist is exposed. Optional diagnostic metadata can contain JSON scalar or structured values; arbitrary raw messages are never returned."
+      },
+      "LogsPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            },
+            "maxItems": 200
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fileId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skippedRecords": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scannedBytes": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision."
+          }
+        },
+        "required": [
+          "data",
+          "nextCursor",
+          "fileId",
+          "skippedRecords",
+          "scannedBytes"
+        ],
+        "additionalProperties": false,
+        "description": "Reverse window in one file. Empty data with a non-null nextCursor means the scan window had no matching entries. scannedBytes is at most 1048576."
+      },
+      "ResourceLimits": {
+        "type": "object",
+        "properties": {
+          "startupMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hookMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "executionMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "vmWorkMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cleanupMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "shutdownMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "memoryBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stackBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "concurrency": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "queueCapacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobBatch": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxBodyBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxEventBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxOutputEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxObservationsPerHook": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxObservationsPerRequest": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxOutputBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxAggregateBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxAggregateEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxModules": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxSourceBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxJsonDepth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxJsonNodes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "startupMs",
+          "hookMs",
+          "requestMs",
+          "executionMs",
+          "vmWorkMs",
+          "cleanupMs",
+          "shutdownMs",
+          "memoryBytes",
+          "stackBytes",
+          "concurrency",
+          "queueCapacity",
+          "maxPending",
+          "jobBatch",
+          "maxBodyBytes",
+          "maxEventBytes",
+          "maxOutputEvents",
+          "maxObservationsPerHook",
+          "maxObservationsPerRequest",
+          "maxOutputBytes",
+          "maxAggregateBytes",
+          "maxAggregateEvents",
+          "maxModules",
+          "maxSourceBytes",
+          "maxJsonDepth",
+          "maxJsonNodes"
+        ],
+        "additionalProperties": false,
+        "description": "Loaded resource limits. These fields are JSON integers, including byte limits, because the server serializes ResourceLimits directly."
+      },
+      "ServerConfig": {
+        "type": "object",
+        "properties": {
+          "listen": {
+            "type": "string"
+          },
+          "apiKeyConfigured": {
+            "type": "boolean",
+            "const": true
+          },
+          "managerKeyConfigured": {
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ResourceLimits"
+          },
+          "storage": {
+            "type": "object",
+            "properties": {
+              "retentionDays": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxRecords": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxDbBytes": {
+                "type": "string",
+                "pattern": "^[0-9]+$",
+                "description": "Unsigned decimal string; preserves integer precision."
+              },
+              "operationMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "retentionDays",
+              "maxRecords",
+              "maxDbBytes",
+              "operationMs"
+            ],
+            "additionalProperties": false
+          },
+          "log": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "$ref": "#/components/schemas/LogLevel"
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "json"
+                ]
+              },
+              "maxFileBytes": {
+                "type": "string",
+                "pattern": "^[0-9]+$",
+                "description": "Unsigned decimal string; preserves integer precision."
+              },
+              "maxFiles": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "level",
+              "format",
+              "maxFileBytes",
+              "maxFiles"
+            ],
+            "additionalProperties": false
+          },
+          "management": {
+            "type": "object",
+            "properties": {
+              "concurrency": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "concurrency",
+              "timeoutMs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "listen",
+          "apiKeyConfigured",
+          "managerKeyConfigured",
+          "limits",
+          "storage",
+          "log",
+          "management"
+        ],
+        "additionalProperties": false,
+        "description": "Loaded, non-secret server projection; excludes keys, paths, scripts, headers and defaults."
+      },
+      "ModelConfig": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "configuredUpstreamModel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "provider",
+          "configuredUpstreamModel"
+        ],
+        "additionalProperties": false
+      },
+      "ProviderConfig": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "description": "URL origin only; no path, query or credentials."
+          }
+        },
+        "required": [
+          "id",
+          "origin"
+        ],
+        "additionalProperties": false
+      },
+      "ServerConfigResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ServerConfig"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ModelsConfigPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelConfig"
+            },
+            "maxItems": 100
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "ProvidersConfigPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderConfig"
+            },
+            "maxItems": 100
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigResponse": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ServerConfigResponse"
+          },
+          {
+            "$ref": "#/components/schemas/ModelsConfigPage"
+          },
+          {
+            "$ref": "#/components/schemas/ProvidersConfigPage"
+          }
+        ],
+        "description": "section=server returns a server object without nextCursor. section=models/providers returns the corresponding homogeneous array and nextCursor. Empty model/provider pages overlap, so this union uses anyOf."
+      },
+      "ApiErrorDetail": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_query",
+              "unauthorized",
+              "not_found",
+              "method_not_allowed",
+              "cursor_expired",
+              "query_too_broad",
+              "storage_unavailable",
+              "busy",
+              "query_timeout"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

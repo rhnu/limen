@@ -5,6 +5,7 @@ mod gateway;
 mod offline;
 mod server;
 mod telemetry;
+mod web;
 
 use std::process::ExitCode;
 

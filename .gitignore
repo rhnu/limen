@@ -1,5 +1,7 @@
 /target/
 /node_modules/
+**/node_modules/
+/web/dist/
 /examples/libraries/config.js
 .rumdl_cache/
 

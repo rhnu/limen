@@ -26,6 +26,17 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - name: Install locked workspace tools
+        run: pnpm install --frozen-lockfile
+      - name: Build embedded frontend
+        run: pnpm build:web
       - name: Install the repository toolchain
         run: rustup show
       - name: Cache Rust dependencies
@@ -47,21 +58,15 @@ jobs:
         run: cargo dev lint --locked --deny-warnings
       - name: Regular tests
         run: cargo test --workspace --lib --bins --locked
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - name: Install library example build tools
-        run: npm ci --ignore-scripts
       - name: Bundle the library example
-        run: npm run build:examples
+        run: pnpm build:examples
       - name: Bundled library example
         run: cargo run --locked -- test --config examples/libraries/server.toml --cases examples/libraries
       - name: Isolated boundary tests
         run: cargo xtask test --isolated
 
-  script-types:
-    name: JavaScript types
+  frontend:
+    name: JavaScript and frontend
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -72,10 +77,21 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Install static checking tools
-        run: npm ci --ignore-scripts
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - name: Install locked workspace tools
+        run: pnpm install --frozen-lockfile
+      - name: Check generated API client
+        run: pnpm api:check
       - name: Check JavaScript and declaration contracts
-        run: npm run check:types
+        run: pnpm check:types
+      - name: Lint and format frontend
+        run: |
+          pnpm lint:web
+          pnpm format:web:check
+      - name: Frontend logic tests
+        run: pnpm test:web
 
   markdown:
     name: Markdown
@@ -95,7 +111,7 @@ jobs:
   image:
     name: Linux amd64 image
     runs-on: ubuntu-24.04
-    needs: [rust, script-types, markdown]
+    needs: [rust, frontend, markdown]
     timeout-minutes: 30
     permissions:
       contents: read
