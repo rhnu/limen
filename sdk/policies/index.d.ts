@@ -1,4 +1,4 @@
-import type { JsonObject, PipelineStep } from "../types/limen";
+import type { JsonObject, PipelineStep } from "../limen";
 
 export interface CapCompletionTokensOptions {
   name: string;

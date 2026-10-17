@@ -1,4 +1,4 @@
-import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "../../policies/index.js";
+import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "../policies/index.js";
 
 /** @typedef {{ calls?: number }} State */
 /** @type {import("../limen").PipelineStep<State>[]} */

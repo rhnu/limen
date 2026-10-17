@@ -12,6 +12,8 @@
 | `modules/chat`    | 有界 SSE 分帧、Chat 事件解释、完成状态和字段级 JSON/SSE 转换 |
 | `modules/storage` | SQLite schema、记录、保留清理和有界只读查询                  |
 | `web/`            | 同源只读管理界面、浏览器凭据存储和 hash 导航                 |
+| `sdk/`            | 业务脚本的编辑类型契约、纯 ESM 策略库及类型契约检查          |
+| `api/`            | 管理 API 的 OpenAPI 契约及独立客户端生成工具                 |
 | `xtask`           | 受父进程监督的隔离测试与进程树清理                           |
 
 主应用组合四个职责库；库不初始化进程日志或决定进程退出。依赖和 lint 在 workspace 根集中管理，工程规则见 [`AGENTS.md`](../AGENTS.md)。

@@ -28,4 +28,4 @@ cargo run --locked -- test --config examples/testing/server.toml --cases example
 - [开发指引](development.md)：构建、检查和测试入口。
 - [路线图](roadmap.md)：尚未完成的仓库事项与验收。
 
-配置完整类型见 [`types/limen.d.ts`](../types/limen.d.ts)，可运行素材见 [`examples/`](../examples/)。类型声明帮助编辑与静态检查，运行时校验仍以 Rust 实现为准。
+配置完整类型见 [`sdk/limen.d.ts`](../sdk/limen.d.ts)，可运行素材见 [`examples/`](../examples/)。类型声明帮助编辑与静态检查，运行时校验仍以 Rust 实现为准。

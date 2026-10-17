@@ -220,11 +220,11 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 ## 可复用策略库
 
-[`policies/index.js`](../../policies/index.js) 是只依赖 ECMAScript 的本地 ESM，工厂返回现有 `PipelineStep`，按原有 provider → model 顺序执行。它不需要 Node.js 或额外宿主能力：
+[`sdk/policies/index.js`](../../sdk/policies/index.js) 是只依赖 ECMAScript 的本地 ESM，工厂返回现有 `PipelineStep`，按原有 provider → model 顺序执行。它不需要 Node.js 或额外宿主能力：
 
 ```js
 import { capCompletionTokens, dropRequestFields, forwardClientHeader }
-  from "../../policies/index.js";
+  from "../../sdk/policies/index.js";
 
 const pipeline = [
   capCompletionTokens({ name: "cap-output", max: 4096 }),
@@ -247,10 +247,10 @@ name 遵循 pipeline step 名称规则，同一 pipeline 内不得重复。错�
 
 ## 脚本静态检查
 
-[`types/limen.d.ts`](../../types/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，不是可导入的运行时模块。在默认导出的配置对象前添加 JSDoc：
+[`sdk/limen.d.ts`](../../sdk/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，不是可导入的运行时模块。在默认导出的配置对象前添加 JSDoc：
 
 ```js
-/** @satisfies {import("../../types/limen").Config} */
+/** @satisfies {import("../../sdk/limen").Config} */
 ```
 
 按文件位置调整类型路径，完整用法见 [`examples/basic/config.js`](../../examples/basic/config.js)。声明使用 readonly 区分上下文权限，检查 hook 返回值和已知字段；完整运行校验仍在 Rust。项目检查入口见[开发指引](../development.md#前端与-javascript)，hook 实现入口见 [`src/gateway/`](../../src/gateway/) 与 [`modules/script/src/context.js`](../../modules/script/src/context.js)。

@@ -1,6 +1,6 @@
 // `limen test --config examples/testing/server.toml --cases examples/testing`
 // uses the fixture responses and never connects to this reserved example host.
-/** @satisfies {import("../../types/limen").Config} */
+/** @satisfies {import("../../sdk/limen").Config} */
 export default {
   providers: {
     demo: {

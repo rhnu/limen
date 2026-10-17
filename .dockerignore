@@ -10,9 +10,9 @@
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !api/admin.openapi.json
-!tooling/api-client/package.json
-!tooling/api-client/openapi-ts.config.ts
-!tooling/api-client/check.mjs
+!api/codegen/package.json
+!api/codegen/openapi-ts.config.ts
+!api/codegen/check.mjs
 !web/package.json
 !web/tsconfig.json
 !web/vite.config.ts

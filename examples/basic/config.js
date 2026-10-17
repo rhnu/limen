@@ -1,6 +1,6 @@
-import { capCompletionTokens } from "../../policies/index.js";
+import { capCompletionTokens } from "../../sdk/policies/index.js";
 
-/** @satisfies {import("../../types/limen").Config} */
+/** @satisfies {import("../../sdk/limen").Config} */
 export default {
   providers: {
     primary: {

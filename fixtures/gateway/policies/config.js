@@ -1,4 +1,4 @@
-import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "../../../policies/index.js";
+import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "../../../sdk/policies/index.js";
 import { endpoint } from "../endpoint.js";
 
 const capOptions = { name: "unit-cap", max: 16, onChange: "capped" };

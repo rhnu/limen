@@ -51,7 +51,7 @@ cargo xtask test --isolated
 
 ## 前端与 JavaScript
 
-pnpm workspace 管理根脚本工具、`web/` 和 `tooling/api-client/`，锁文件为 `pnpm-lock.yaml`。前端使用 React、Radix Themes、React Query、Zustand 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
+pnpm workspace 管理根脚本工具、`web/` 和 `api/codegen/`，锁文件为 `pnpm-lock.yaml`。脚本类型声明、策略库及类型契约检查集中在 `sdk/`；`fixtures/` 保存跨组件回归素材，各包专用素材留在包内。前端使用 React、Radix Themes、React Query、Zustand 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
 
 ```sh
 pnpm dev:web
@@ -71,7 +71,7 @@ pnpm build:web
 
 需要格式化前端时运行 `pnpm format:web`；生成目录由生成器维护，不手工格式化。`test:web` 仅运行确定性的纯逻辑测试，覆盖数值、时间、认证与错误状态。浏览器布局、键盘操作和真实请求需另行检查，不以构建通过代替。
 
-`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。`check:types` 检查前端、类型声明、[`policies/`](../policies/) 与示例，包括预期会被类型系统拒绝的契约用法。策略行为的常规测试在真实 QuickJS 中导入库源码，离线组合用例复用网关管线，Node.js 静态检查不能替代它们。
+`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。`check:types` 检查前端、[`sdk/`](../sdk/) 与示例，包括预期会被类型系统拒绝的契约用法。策略行为的常规测试在真实 QuickJS 中导入库源码，离线组合用例复用网关管线，Node.js 静态检查不能替代它们。
 
 静态检查不能证明 QuickJS 兼容性、JSON 合法性或协议语义。继续使用 [`limen check` 和离线用例](features/testing.md)验证实际模块；第三方库的打包边界见[脚本文档](features/scripting.md#第三方库)。
 

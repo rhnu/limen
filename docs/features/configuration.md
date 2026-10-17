@@ -13,7 +13,7 @@ local/
   logs/
 ```
 
-也可将整个 `examples/` 与 `policies/` 一起复制到 `local/` 下，从 `local/examples/basic/` 开始修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/examples/basic/server.toml`。basic 示例导入 `../../policies/index.js`，需保留这层相对关系；不能只复制 `config.js`。
+从仓库运行时，也可将 `examples/basic/server.toml` 与 `examples/basic/config.js` 复制到 `local/config/`，修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/config/server.toml`。basic 示例导入仓库内的 `../../sdk/policies/index.js`；复制到 `local/config/` 后相对关系仍成立，需保留仓库中的策略库。
 
 未指定 `--config` 时，只读 `./config/server.toml`，不存在直接报错。YAML/YML 必须通过 `--config` 显式选择，不探测旧目录或其他扩展名。配置按扩展名解析，必须是 UTF-8。
 
@@ -146,4 +146,4 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 流式请求添加 `"stream":true` 并使用 `curl -N`；PowerShell 使用 `curl.exe`。响应和错误边界见[响应与流协议](transport.md)。
 
-权威字段与校验入口：[`types/limen.d.ts`](../../types/limen.d.ts)、[`modules/config/src/server.rs`](../../modules/config/src/server.rs)、[`modules/config/src/business.rs`](../../modules/config/src/business.rs)。
+权威字段与校验入口：[`sdk/limen.d.ts`](../../sdk/limen.d.ts)、[`modules/config/src/server.rs`](../../modules/config/src/server.rs)、[`modules/config/src/business.rs`](../../modules/config/src/business.rs)。

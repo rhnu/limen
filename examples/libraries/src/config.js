@@ -1,5 +1,5 @@
 import { integer, maxValue, minValue, number, object, optional, pipe, safeParse } from "valibot";
-import { capCompletionTokens, dropRequestFields } from "../../../policies/index.js";
+import { capCompletionTokens, dropRequestFields } from "../../../sdk/policies/index.js";
 
 // These validators use ordinary ECMAScript only; no URL, DOM or Node.js APIs.
 const requestOptions = object({
@@ -7,7 +7,7 @@ const requestOptions = object({
   max_completion_tokens: optional(pipe(number(), integer(), minValue(1))),
 });
 
-/** @satisfies {import("../../../types/limen").Config} */
+/** @satisfies {import("../../../sdk/limen").Config} */
 export default {
   onRequest(ctx) {
     const policy = ctx.client.headers.getAll("x-example-policy");

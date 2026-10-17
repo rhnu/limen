@@ -33,9 +33,9 @@ function businessHeader(value) {
 }
 
 /**
- * @template {import("../types/limen").JsonObject} [State=import("../types/limen").JsonObject]
+ * @template {import("../limen").JsonObject} [State=import("../limen").JsonObject]
  * @param {import("./index").CapCompletionTokensOptions} options
- * @returns {import("../types/limen").PipelineStep<State>}
+ * @returns {import("../limen").PipelineStep<State>}
  */
 export function capCompletionTokens(options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) invalid();
@@ -48,7 +48,7 @@ export function capCompletionTokens(options) {
   const onChange = observation(options.onChange);
   return Object.freeze({
     name,
-    /** @param {import("../types/limen").BeforeSendContext<State>} ctx */
+    /** @param {import("../limen").BeforeSendContext<State>} ctx */
     beforeSend(ctx) {
       if (Object.hasOwn(ctx.body, other)) return ctx.reject(422);
       if (Object.hasOwn(ctx.body, field)) {
@@ -65,9 +65,9 @@ export function capCompletionTokens(options) {
 }
 
 /**
- * @template {import("../types/limen").JsonObject} [State=import("../types/limen").JsonObject]
+ * @template {import("../limen").JsonObject} [State=import("../limen").JsonObject]
  * @param {import("./index").DropRequestFieldsOptions} options
- * @returns {import("../types/limen").PipelineStep<State>}
+ * @returns {import("../limen").PipelineStep<State>}
  */
 export function dropRequestFields(options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) invalid();
@@ -83,7 +83,7 @@ export function dropRequestFields(options) {
   const onChange = observation(options.onChange);
   return Object.freeze({
     name,
-    /** @param {import("../types/limen").BeforeSendContext<State>} ctx */
+    /** @param {import("../limen").BeforeSendContext<State>} ctx */
     beforeSend(ctx) {
       let changed = false;
       for (const field of fields) {
@@ -98,9 +98,9 @@ export function dropRequestFields(options) {
 }
 
 /**
- * @template {import("../types/limen").JsonObject} [State=import("../types/limen").JsonObject]
+ * @template {import("../limen").JsonObject} [State=import("../limen").JsonObject]
  * @param {import("./index").ForwardClientHeaderOptions} options
- * @returns {import("../types/limen").PipelineStep<State>}
+ * @returns {import("../limen").PipelineStep<State>}
  */
 export function forwardClientHeader(options) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) invalid();
@@ -109,7 +109,7 @@ export function forwardClientHeader(options) {
   const to = businessHeader(options.to);
   return Object.freeze({
     name,
-    /** @param {import("../types/limen").BeforeSendContext<State>} ctx */
+    /** @param {import("../limen").BeforeSendContext<State>} ctx */
     beforeSend(ctx) {
       const values = ctx.client.headers.getAll(from);
       if (values.length > 1) return ctx.reject(422);

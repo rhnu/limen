@@ -1,6 +1,6 @@
 packages:
   - web
-  - tooling/api-client
+  - api/codegen
 
 # The example bundler needs esbuild's platform binary installation.
 allowBuilds:
