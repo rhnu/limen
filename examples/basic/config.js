@@ -1,4 +1,4 @@
-import { capCompletionTokens } from "../../sdk/policies/index.js";
+import { capCompletionTokens } from "limen:policies";
 
 /** @satisfies {import("../../sdk/limen").Config} */
 export default {

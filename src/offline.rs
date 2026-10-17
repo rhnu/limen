@@ -463,6 +463,17 @@ fn compare_statistics(
             }),
         );
     }
+    if !expected.native_calls.is_empty() {
+        check(
+            "stats.nativeCalls",
+            expected.native_calls.iter().all(|(phase, count)| {
+                actual["timings"]["native"][phase]["calls"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    == *count
+            }),
+        );
+    }
     if !expected.timing_presence.is_empty() {
         check(
             "stats.timingPresence",

@@ -8,6 +8,8 @@ use limen_chat::UsageTracker;
 use limen_script::{HookReport, HookTimings, ScriptErrorKind};
 use serde_json::{Value, json};
 
+use super::error::{ErrorCode, Failure};
+
 /// Runtime-owned facts are sampled before policy drafts can alter them.
 #[derive(Default)]
 pub(super) struct Statistics {
@@ -55,6 +57,21 @@ struct TimingData {
     queue: Option<Duration>,
     drain: Option<Duration>,
     hooks: BTreeMap<&'static str, HookSummary>,
+    native: BTreeMap<&'static str, NativeSummary>,
+}
+
+#[derive(Default)]
+struct NativeSummary {
+    calls: u64,
+    failed: u64,
+    interrupted: u64,
+    wall: Duration,
+}
+
+impl NativeSummary {
+    fn json(&self) -> Value {
+        json!({"calls":self.calls,"failedCalls":self.failed,"interruptedCalls":self.interrupted,"wallMs":ms(self.wall)})
+    }
 }
 
 #[derive(Default)]
@@ -155,6 +172,15 @@ impl Timings {
         }
     }
 
+    pub fn native(&self, phase: &'static str) -> NativeGuard {
+        NativeGuard {
+            timings: self.clone(),
+            phase,
+            started: Instant::now(),
+            result: None,
+        }
+    }
+
     pub fn start_upstream(&self, now: Instant) { self.lock().upstream_started = Some(now); }
 
     pub fn headers(&self, now: Instant) {
@@ -202,11 +228,16 @@ impl Timings {
             .iter()
             .map(|(phase, value)| ((*phase).to_owned(), value.json()))
             .collect();
+        let native: serde_json::Map<String, Value> = data
+            .native
+            .iter()
+            .map(|(phase, value)| ((*phase).to_owned(), value.json()))
+            .collect();
         json!({"requestMs":data.request.map(ms),"requestDecodeMs":data.decode.map(ms),
             "upstreamHeadersWaitMs":data.headers.map(ms),"upstreamFirstByteMs":data.first_byte.map(ms),
             "upstreamFirstChunkMs":data.first_chunk.map(ms),"downstreamFirstEventMs":data.first_output.map(ms),
             "upstreamReadWaitMs":data.read.map(ms),"downstreamQueueWaitMs":data.queue.map(ms),
-            "downstreamDrainMs":data.drain.map(ms),"hooks":hooks})
+            "downstreamDrainMs":data.drain.map(ms),"hooks":hooks,"native":native})
     }
 }
 
@@ -268,6 +299,42 @@ impl Drop for HookGuard {
     }
 }
 
+pub(super) struct NativeGuard {
+    timings: Timings,
+    phase: &'static str,
+    started: Instant,
+    result: Option<(bool, bool)>,
+}
+
+impl NativeGuard {
+    pub fn finish<T>(mut self, result: &Result<T, Failure>) {
+        self.result = Some((
+            result.is_err(),
+            result.as_ref().err().is_some_and(|failure| {
+                matches!(
+                    failure.code,
+                    ErrorCode::Cancelled | ErrorCode::DeadlineExceeded
+                )
+            }),
+        ));
+    }
+}
+
+impl Drop for NativeGuard {
+    fn drop(&mut self) {
+        let mut data = self.timings.lock();
+        if data.frozen {
+            return;
+        }
+        let summary = data.native.entry(self.phase).or_default();
+        summary.calls = summary.calls.saturating_add(1);
+        summary.wall = summary.wall.saturating_add(self.started.elapsed());
+        let (failed, interrupted) = self.result.unwrap_or((true, true));
+        summary.failed = summary.failed.saturating_add(u64::from(failed));
+        summary.interrupted = summary.interrupted.saturating_add(u64::from(interrupted));
+    }
+}
+
 fn ms(value: Duration) -> f64 { value.as_secs_f64() * 1000.0 }
 
 pub(super) fn record(request_id: &str, stats: &Value) {
@@ -286,6 +353,19 @@ pub(super) fn record(request_id: &str, stats: &Value) {
         "request timing"
     );
     record_hooks(request_id, timings, false);
+    if let Some(native) = timings["native"].as_object() {
+        for (phase, summary) in native {
+            tracing::info!(
+                request_id,
+                phase,
+                calls = summary["calls"].as_u64(),
+                failed_calls = summary["failedCalls"].as_u64(),
+                interrupted_calls = summary["interruptedCalls"].as_u64(),
+                wall_ms = summary["wallMs"].as_f64(),
+                "native policy statistics"
+            );
+        }
+    }
 }
 
 pub(super) fn record_cleanup(request_id: &str, timings: &Value) {

@@ -25,8 +25,6 @@ struct Outcome {
     observations: Value,
 }
 
-fn import(module: &str) -> String { serde_json::to_string(&format!("../../{module}")).unwrap() }
-
 async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) -> Outcome {
     let directory =
         tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
@@ -145,36 +143,47 @@ fn encoded(events: &[Value], done: bool) -> String {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sdk_content_algorithms_execute_in_real_quickjs() {
-    let imports = format!(
-        "import {{runContentPolicyTests}} from {};",
-        import("sdk/tests/content-runtime.js")
-    );
+async fn native_and_script_steps_share_provider_model_order() {
     let settings = config(
-        &imports,
+        "import {replaceText} from 'limen:content';",
+        "replaceText({name:'first',search:'old',replacement:'middle',maxBufferedChars:2}),{name:'inspect',onContent(ctx){if(ctx.event.type==='part_delta')ctx.state.seen=(ctx.state.seen||'')+ctx.event.text;}}",
+        "replaceText({name:'last',search:'middle',replacement:'new',maxBufferedChars:5})",
         "",
-        "",
-        "onRequest(ctx){ctx.state.checked=runContentPolicyTests();}",
     );
-    let result = run(
-        &settings,
-        json!({"model":"real-model","extension":{"opaque":true}}),
-        None,
-        false,
-    )
-    .await;
-    assert_eq!(result.status, 200);
-    assert_eq!(result.state, json!({"checked":true}));
+    let input = encoded(
+        &[
+            chunk(json!({"role":"assistant","content":"ol"}), None),
+            chunk(json!({"content":"d"}), None),
+            chunk(json!({}), Some("stop")),
+        ],
+        true,
+    );
+    for stream in [false, true] {
+        for sse in [false, true] {
+            let result = run(
+                &settings,
+                complete(json!({"role":"assistant","content":"old"}), "stop"),
+                sse.then_some(input.as_str()),
+                stream,
+            )
+            .await;
+            assert!(result.error.is_none(), "{:?}", result.error);
+            assert_eq!(result.body["choices"][0]["message"]["content"], "new");
+            assert_eq!(result.state, json!({"seen":"middle"}));
+            assert!(
+                result.stats["timings"]["native"]["onContent"]["calls"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn common_text_transform_covers_four_paths_and_every_delta_split() {
-    let imports = format!(
-        "import {{replaceText}} from {};",
-        import("sdk/content/index.js")
-    );
     let settings = config(
-        &imports,
+        "import {replaceText} from 'limen:content';",
         "replaceText({name:'literal',search:'aba',replacement:'Z',maxBufferedChars:2})",
         "",
         "",
@@ -355,12 +364,8 @@ async fn semantic_steps_keep_independent_output_lifecycles() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn complete_part_mapping_is_common_to_four_paths() {
-    let imports = format!(
-        "import {{mapPartText}} from {};",
-        import("sdk/content/index.js")
-    );
     let settings = config(
-        &imports,
+        "import {mapPartText} from 'limen:content';",
         "mapPartText({name:'complete',kinds:['text'],maxBufferedChars:32,transform:text=>text.replace(/a+b/g,'X')})",
         "",
         "",
@@ -396,12 +401,8 @@ async fn runnable_content_examples_cover_all_four_transports() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn synthetic_tool_is_unwrapped_in_all_paths_and_keeps_actual_tools() {
-    let imports = format!(
-        "import {{syntheticTextTool}} from {};",
-        import("sdk/content/index.js")
-    );
     let settings = config(
-        &imports,
+        "import {syntheticTextTool} from 'limen:content';",
         "{name:'source-view',onContent(ctx){ctx.state.observed=true;}},syntheticTextTool({name:'transport',maxBufferedChars:1024})",
         "",
         "",

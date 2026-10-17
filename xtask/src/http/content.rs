@@ -13,7 +13,8 @@ const CONFIG: &str = include_str!("../../fixtures/http/content.js");
 
 /// A test-owned gate keeps upstream finish/DONE unavailable until transformed text arrives.
 pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
-    laboratory
+    for alias in ["chat", "script"] {
+        laboratory
         .with_fixture(
             Options {
                 config: Some(CONFIG),
@@ -40,7 +41,7 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     upstream.split_gate = Some(Arc::clone(&gate));
                 }
                 let mut stream = item
-                    .open_request(request(&[("stream", json!(true))]))
+                    .open_request(request(&[("stream", json!(true)), ("model", json!(alias))]))
                     .await?;
                 let mut received = Vec::new();
                 read_until(&mut stream, &mut received, b"Hello reader").await?;
@@ -65,7 +66,8 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                     !contains(&received, b"event: error"),
                     "completed content stream emitted an error"
                 );
-                item.statistics(&request_id, &[("onContent", false)])
+                let phases = if alias == "script" { &[("onContent", false)][..] } else { &[] };
+                item.statistics(&request_id, phases)
                     .await?
                     .outcome("success", None)?;
                 ensure!(
@@ -83,7 +85,7 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 }
                 let truncated = item
                     .send(
-                        request(&[("stream", json!(true))]),
+                        request(&[("stream", json!(true)), ("model", json!(alias))]),
                         Method::POST,
                         "/v1/chat/completions",
                         &[("Connection", None)],
@@ -97,7 +99,7 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                         && !text.contains("[DONE]"),
                     "truncated transformed content was reported successful"
                 );
-                item.statistics(truncated.request_id()?, &[("onContent", false)])
+                item.statistics(truncated.request_id()?, phases)
                     .await?
                     .outcome("failed", Some("upstream_protocol"))?;
                 ensure!(
@@ -107,7 +109,9 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 Ok(())
             },
         )
-        .await
+        .await?;
+    }
+    Ok(())
 }
 
 fn contains(bytes: &[u8], expected: &[u8]) -> bool {

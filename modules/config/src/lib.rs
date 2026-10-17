@@ -1,10 +1,15 @@
 //! Validated startup configuration.
 
+mod builtin;
 mod business;
 mod error;
 mod json;
 mod server;
 
+pub use builtin::{
+    BuiltinPolicy, CapCompletionTokens, CompletionTokenField, DropRequestFields,
+    ForwardClientHeader, ReplaceText, SyntheticTextTool,
+};
 pub use business::{
     BusinessConfig, HookId, Model, PipelineStep, Provider, UpstreamAuth, validate_endpoint,
     validate_json,

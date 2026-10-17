@@ -13,7 +13,7 @@ local/
   logs/
 ```
 
-从仓库运行时，也可将 `examples/basic/server.toml` 与 `examples/basic/config.js` 复制到 `local/config/`，修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/config/server.toml`。basic 示例导入仓库内的 `../../sdk/policies/index.js`；复制到 `local/config/` 后相对关系仍成立，需保留仓库中的策略库。
+从仓库运行时，也可将 `examples/basic/server.toml` 与 `examples/basic/config.js` 复制到 `local/config/`，修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/config/server.toml`。basic 示例通过 `limen:policies` 导入二进制内置策略，不需要复制 SDK 运行时文件；外部类型声明只用于编辑与静态检查。
 
 未指定 `--config` 时，只读 `./config/server.toml`，不存在直接报错。YAML/YML 必须通过 `--config` 显式选择，不探测旧目录或其他扩展名。配置按扩展名解析，必须是 UTF-8。
 

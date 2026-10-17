@@ -27,9 +27,10 @@
 !modules/*/src/**/*.rs
 !xtask/Cargo.toml
 !xtask/src/**/*.rs
-# These scripts are embedded with include_str!, not deployment configuration.
+# These scripts are embedded with include_str!/include_bytes!, not deployment configuration.
 !modules/script/src/context.js
 !modules/script/src/json/bridge.js
+!modules/script/src/builtins/*.js
 
 # These remain excluded even if placed below an allowed source directory.
 **/local

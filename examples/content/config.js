@@ -1,4 +1,4 @@
-import { mapPartText, replaceText, syntheticTextTool } from "../../sdk/content/index.js";
+import { mapPartText, replaceText, syntheticTextTool } from "limen:content";
 
 // Use either alias with either client stream setting. Upstream JSON/SSE is independent.
 const replacement = replaceText({

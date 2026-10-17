@@ -18,7 +18,7 @@ use render::{apply_event, positional_metadata, render_frame};
 
 type PartKey = (u64, String);
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum ContentError {
     #[error("invalid Chat semantic content event")]
     InvalidEvent,

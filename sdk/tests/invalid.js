@@ -278,3 +278,6 @@ fetch("https://fictional.invalid/");
 document.title;
 // @ts-expect-error Browser/Node timers are not exposed.
 setTimeout(() => {}, 1);
+
+// @ts-expect-error Embedded factory helpers are private implementation details.
+descriptor({ name: "hidden", max: 1 }, "capCompletionTokens", ["max"]);

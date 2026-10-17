@@ -11,6 +11,7 @@ await build({
   entryPoints: ["examples/libraries/src/config.js"],
   outfile: "examples/libraries/config.js",
   bundle: true,
+  external: ["limen:*"],
   format: "esm",
   platform: "neutral",
   target: "es2023",

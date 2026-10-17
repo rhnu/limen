@@ -98,9 +98,9 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 
 这是 `expect` 对象的内容，需放入完整用例。截断流用例应声明错误、`done: false`，并可检查已输出事件；SSE 的 `event: error` 不计入 `response.events`，错误本身用 `expect.error` 断言。
 
-`stats` 的三个分组可单独声明。`usage` 完整相等比较；`hookCalls` 和 `timingPresence` 仅比较声明的阶段或字段，未知名称会拒绝用例。空的 `stats` 不构成有效断言。用量字段与耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，回归素材见 [`fixtures/gateway/statistics/`](../../fixtures/gateway/statistics/)。确定性时间算术由 Rust 单元测试检查，离线用例不对真实运行耗时设置脆弱的精确值或阈值。
+`stats` 各分组可单独声明。`usage` 完整相等比较；`hookCalls`、`nativeCalls` 和 `timingPresence` 仅比较声明的阶段或字段，未知名称会拒绝用例。`nativeCalls` 接受 `beforeSend` 与 `onContent`，只统计 Rust 内置策略，未调用的阶段为零。空的 `stats` 不构成有效断言。用量字段与耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，回归素材见 [`fixtures/gateway/statistics/`](../../fixtures/gateway/statistics/)。确定性时间算术由 Rust 单元测试检查，离线用例不对真实运行耗时设置脆弱的精确值或阈值。
 
-`stats.hookCalls.onContent` 统计语义事件回调次数，不是源 JSON 或 SSE 帧数量；一份源正文可产生多个 part 与 choice 生命周期事件。验证统一正文策略时同时检查最终正文、state 和失败 phase，避免只凭调用次数判断变换正确。当前 step 的同源语义批次失败时，state 和受控观测一起丢弃，前序已提交批次保留。
+`stats.hookCalls.onContent` 与 `stats.nativeCalls.onContent` 分别统计 JS 和原生语义事件调用次数，不是源 JSON 或 SSE 帧数量；一份源正文可产生多个 part 与 choice 生命周期事件。验证统一正文策略时同时检查最终正文、state 和失败 phase，避免只凭调用次数判断变换正确。当前 step 的同源语义批次失败时，state 和受控观测一起丢弃，前序已提交批次保留。
 
 失败分类可直接定位检查边界：`outbound.body` 指向请求策略，`response.events` 指向事件变换，`state` 指向提交，`error` 指向终态。fixture 使用合成数据；即使比较器隐藏值，也不要把真实 token、正文或 Cookie 保存进仓库。
 

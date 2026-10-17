@@ -93,12 +93,17 @@ pub(super) struct ExpectedStats {
     #[serde(default)]
     pub hook_calls: BTreeMap<String, u64>,
     #[serde(default)]
+    pub native_calls: BTreeMap<String, u64>,
+    #[serde(default)]
     pub timing_presence: BTreeMap<String, bool>,
 }
 
 impl ExpectedStats {
     pub fn has_assertion(&self) -> bool {
-        self.usage.is_some() || !self.hook_calls.is_empty() || !self.timing_presence.is_empty()
+        self.usage.is_some()
+            || !self.hook_calls.is_empty()
+            || !self.native_calls.is_empty()
+            || !self.timing_presence.is_empty()
     }
 
     pub fn valid_fields(&self) -> bool {
@@ -113,20 +118,24 @@ impl ExpectedStats {
                     | "onStreamEvent"
                     | "onContent"
             )
-        }) && self.timing_presence.keys().all(|key| {
-            matches!(
-                key.as_str(),
-                "requestMs"
-                    | "requestDecodeMs"
-                    | "upstreamHeadersWaitMs"
-                    | "upstreamFirstByteMs"
-                    | "upstreamFirstChunkMs"
-                    | "downstreamFirstEventMs"
-                    | "upstreamReadWaitMs"
-                    | "downstreamQueueWaitMs"
-                    | "downstreamDrainMs"
-            )
-        })
+        }) && self
+            .native_calls
+            .keys()
+            .all(|key| matches!(key.as_str(), "beforeSend" | "onContent"))
+            && self.timing_presence.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "requestMs"
+                        | "requestDecodeMs"
+                        | "upstreamHeadersWaitMs"
+                        | "upstreamFirstByteMs"
+                        | "upstreamFirstChunkMs"
+                        | "downstreamFirstEventMs"
+                        | "upstreamReadWaitMs"
+                        | "downstreamQueueWaitMs"
+                        | "downstreamDrainMs"
+                )
+            })
     }
 }
 

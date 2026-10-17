@@ -1,4 +1,4 @@
-import { mapPartText, replaceText, syntheticTextTool } from "../content/index.js";
+import { mapPartText, replaceText, syntheticTextTool } from "limen:content";
 
 /** @type {import("../limen").PipelineStep} */
 export const content = {
@@ -56,3 +56,12 @@ export const missingTool = { type: "part_start", choice: 0, part: "tool", kind: 
 /** @type {import("../limen").ContentEvent} */
 // @ts-expect-error control markers remain gateway owned.
 export const done = { type: "done" };
+
+// @ts-expect-error Native state is private to Rust.
+replaceText({ name: "bad", search: "a", replacement: "b", maxBufferedChars: 1, stateKey: "custom" });
+// @ts-expect-error Native tool state is private to Rust.
+syntheticTextTool({ name: "bad", maxBufferedChars: 512, stateKey: "custom" });
+// Callback policies retain explicit request-state configuration.
+mapPartText({ name: "custom", kinds: ["text"], stateKey: "custom", maxBufferedChars: 8, transform: value => value });
+// @ts-expect-error Only explicitly registered embedded modules exist.
+import { unknown } from "limen:unknown";

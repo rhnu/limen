@@ -231,6 +231,7 @@ const EVENTS: &[(&str, &str)] = &[
     ("request timing", "requestTiming"),
     ("request persistence failed", "requestPersistenceFailed"),
     ("hook statistics", "hookStatistics"),
+    ("native policy statistics", "nativePolicyStatistics"),
     ("script observation", "scriptObservation"),
     ("script observations dropped", "scriptObservationsDropped"),
     ("observation not executed", "observationSkipped"),

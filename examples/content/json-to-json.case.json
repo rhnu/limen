@@ -46,6 +46,10 @@
   },
   "expect": {
     "sent": true,
+    "stats": {
+      "nativeCalls": { "beforeSend": 1 },
+      "hookCalls": { "beforeSend": 0 }
+    },
     "response": {
       "status": 200,
       "body": {

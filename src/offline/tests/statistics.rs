@@ -109,6 +109,7 @@ async fn wrong_statistics_expectations_report_only_safe_categories() {
             json!({"usage":{"private":"synthetic-private-value"}}),
         ),
         ("stats.hookCalls", json!({"hookCalls":{"onRequest":2}})),
+        ("stats.nativeCalls", json!({"nativeCalls":{"beforeSend":1}})),
         (
             "stats.timingPresence",
             json!({"timingPresence":{"requestMs":false}}),
@@ -133,6 +134,7 @@ async fn absent_stats_groups_are_not_compared_and_absent_stages_count_as_zero() 
     for expected in [
         json!({"sent":true,"stats":{}}),
         json!({"stats":{"hookCalls":{"onUpstreamEvent":0}}}),
+        json!({"stats":{"nativeCalls":{"beforeSend":0,"onContent":0}}}),
         json!({"stats":{"timingPresence":{"upstreamFirstChunkMs":false}}}),
     ] {
         let mut case = json_case();
@@ -146,6 +148,7 @@ async fn empty_statistics_groups_do_not_supply_an_assertion() {
     for statistics in [
         json!({}),
         json!({"hookCalls":{}}),
+        json!({"nativeCalls":{}}),
         json!({"timingPresence":{}}),
     ] {
         let mut case = json_case();
@@ -159,6 +162,7 @@ async fn unknown_statistics_stages_and_timing_fields_are_rejected() {
     for statistics in [
         json!({"hookCalls":{"unknownStage":1}}),
         json!({"hookCalls":{"onFinish":1}}),
+        json!({"nativeCalls":{"onRequest":1}}),
         json!({"timingPresence":{"unknownTimingMs":true}}),
         json!({"timingPresence":{"hooks":true}}),
     ] {
@@ -176,6 +180,8 @@ fn statistics_schema_rejects_unknown_groups_null_and_wrong_scalar_types() {
         json!({"hookCalls":null}),
         json!({"hookCalls":{"onRequest":-1}}),
         json!({"hookCalls":{"onRequest":"1"}}),
+        json!({"nativeCalls":null}),
+        json!({"nativeCalls":{"beforeSend":-1}}),
         json!({"timingPresence":null}),
         json!({"timingPresence":{"requestMs":1}}),
     ] {

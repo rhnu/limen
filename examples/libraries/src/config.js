@@ -1,5 +1,5 @@
 import { integer, maxValue, minValue, number, object, optional, pipe, safeParse } from "valibot";
-import { capCompletionTokens, dropRequestFields } from "../../../sdk/policies/index.js";
+import { capCompletionTokens, dropRequestFields } from "limen:policies";
 
 // These validators use ordinary ECMAScript only; no URL, DOM or Node.js APIs.
 const requestOptions = object({

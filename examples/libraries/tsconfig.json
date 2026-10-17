@@ -3,6 +3,6 @@
   "compilerOptions": {
     "skipLibCheck": true
   },
-  "include": ["src/**/*.js"],
+  "include": ["../../sdk/**/*.d.ts", "src/**/*.js"],
   "exclude": ["build.mjs", "config.js"]
 }

@@ -7,6 +7,20 @@ use serde_json::json;
 use super::{Error, shutdown_status, with_cleanup};
 
 #[test]
+fn native_configuration_failures_keep_typed_cause_and_safe_diagnostic() {
+    let error = Error::NativeContent(limen_chat::NativeContentError::Limit);
+    assert_eq!(error.phase(), "business_config");
+    assert_eq!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<limen_chat::NativeContentError>(),
+        Some(&limen_chat::NativeContentError::Limit)
+    );
+    assert!(error.diagnostic().to_string().contains("resource limit"));
+}
+
+#[test]
 fn server_errors_keep_their_phase_for_both_formats() {
     for format in [
         limen_config::ServerFormat::Toml,

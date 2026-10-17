@@ -65,6 +65,8 @@ pub struct Model {
 pub struct PipelineStep {
     pub name: String,
     #[serde(default, deserialize_with = "present_option")]
+    pub builtin: Option<crate::BuiltinPolicy>,
+    #[serde(default, deserialize_with = "present_option")]
     pub before_send: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
     pub after_receive: Option<HookId>,
@@ -288,12 +290,16 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
             step.on_stream_event,
             step.on_error_response,
         ];
-        if !names.insert(&step.name) || hooks.iter().all(Option::is_none) {
+        let has_hooks = hooks.iter().any(Option::is_some);
+        if !names.insert(&step.name) || has_hooks == step.builtin.is_some() {
             return Err(ConfigError::new(
                 ConfigErrorKind::Schema,
                 field,
-                "steps require unique names and at least one hook",
+                "steps require unique names and either hooks or one builtin",
             ));
+        }
+        if let Some(builtin) = &step.builtin {
+            builtin.validate(field)?;
         }
     }
     Ok(())

@@ -5,7 +5,7 @@ use axum::{
     http::{Request, header},
     response::Response,
 };
-use limen_config::{Model, Provider};
+use limen_config::{Model, Provider, validate_json};
 use limen_script::{HookCall, HookId, HookOutput};
 use serde_json::{Value, json};
 
@@ -13,7 +13,7 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    logic, protocol,
+    logic, native, protocol,
     response::Delivery,
     stats::WaitKind,
     upstream::is_json_media,
@@ -114,14 +114,50 @@ impl Gateway {
         let mut url = provider.endpoint.clone();
         let mut headers = logic::outbound_headers(provider)?;
         for step in provider.pipeline.iter().chain(&model.pipeline) {
-            if let Some(hook) = step.before_send {
+            if step.before_send.is_some()
+                || step
+                    .builtin
+                    .as_ref()
+                    .is_some_and(limen_config::BuiltinPolicy::has_before_send)
+            {
                 let mut context = lifecycle.context("beforeSend");
                 context["body"] = body;
                 context["url"] = json!(url);
                 context["headers"] = logic::headers_to_json(&headers)?;
-                let mut output = self
-                    .hook(hook, "beforeSend", Some(&step.name), context, lifecycle)
-                    .await?;
+                let deadline = self.hook_deadline(lifecycle);
+                let mut output = if let Some(policy) = &step.builtin {
+                    lifecycle.phase = "beforeSend";
+                    lifecycle.step = Some(step.name.clone());
+                    let measurement = lifecycle.statistics.timings.native("beforeSend");
+                    let result = (|| {
+                        self.validate_native_draft(&context, "beforeSend", &step.name)?;
+                        let observations = native::before_send(
+                            policy,
+                            &mut context,
+                            &self.server.observability.events,
+                            &step.name,
+                            &mut || self.native_active(lifecycle, deadline),
+                        )?;
+                        self.validate_native_draft(&context, "beforeSend", &step.name)?;
+                        self.native_active(lifecycle, deadline)?;
+                        Ok(HookOutput {
+                            context,
+                            observations,
+                        })
+                    })();
+                    measurement.finish(&result);
+                    result?
+                } else {
+                    self.hook(
+                        step.before_send
+                            .ok_or_else(|| hook_invalid("beforeSend", &step.name))?,
+                        "beforeSend",
+                        Some(&step.name),
+                        context,
+                        lifecycle,
+                    )
+                    .await?
+                };
                 logic::validate_body_shape(require_body(&output.context)?)
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 if require_body(&output.context)?
@@ -140,6 +176,11 @@ impl Gateway {
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
                 let next_headers = logic::headers_from_json(&output.context["headers"])
                     .map_err(|source| hook_invalid("beforeSend", &step.name).with_source(source))?;
+                if step.builtin.is_some() {
+                    self.native_active(lifecycle, deadline)?;
+                } else {
+                    self.request_active(lifecycle, &lifecycle.cancellation)?;
+                }
                 commit_request(lifecycle, &mut output)?;
                 body = output.context["body"].take();
                 let Value::String(next_url) = output.context["url"].take() else {
@@ -150,6 +191,46 @@ impl Gateway {
             }
         }
         Ok((body, url, headers))
+    }
+
+    pub(super) fn validate_native_draft(
+        &self,
+        value: &Value,
+        phase: &'static str,
+        step: &str,
+    ) -> Result<(), Failure> {
+        validate_json(
+            value,
+            self.server.limits.max_json_depth,
+            self.server.limits.max_json_nodes,
+        )
+        .map_err(|source| hook_invalid(phase, step).with_source(source))?;
+        super::json::size(
+            value,
+            self.server.limits.max_output_bytes,
+            ErrorCode::HookFailed,
+            phase,
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn native_active(
+        &self,
+        lifecycle: &Lifecycle,
+        deadline: Instant,
+    ) -> Result<(), Failure> {
+        self.request_active(lifecycle, &lifecycle.cancellation)
+            .map_err(|mut failure| {
+                failure.step.clone_from(&lifecycle.step);
+                failure
+            })?;
+        if Instant::now() >= deadline {
+            let mut failure = Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase);
+            failure.step.clone_from(&lifecycle.step);
+            Err(failure)
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) async fn hook(

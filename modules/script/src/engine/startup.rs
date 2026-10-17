@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use super::{Hooks, Vm, conversion_error, module_error};
 use crate::{
     ScriptError, ScriptErrorKind,
-    loader::{self, LocalLoader, LocalResolver},
+    loader::{self, ModuleLoader, ModuleResolver},
 };
 
 pub(super) async fn load(
@@ -32,12 +32,12 @@ pub(super) async fn load(
     diagnostics.register(name);
     runtime
         .set_loader(
-            LocalResolver(diagnostics.clone()),
-            LocalLoader {
+            ModuleResolver(diagnostics.clone()),
+            ModuleLoader {
                 diagnostics: diagnostics.clone(),
                 remaining: options.max_source_bytes - bytes.len(),
                 max_modules: options.max_modules,
-                loaded: HashSet::from([path.clone()]),
+                loaded: HashSet::from([name.to_owned()]),
             },
         )
         .await;

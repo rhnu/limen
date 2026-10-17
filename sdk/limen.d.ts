@@ -1,3 +1,5 @@
+/// <reference path="./modules.d.ts" />
+
 /**
  * Optional editor/static-checking contract for QuickJS configuration modules.
  * Import these types in JSDoc; they provide no JavaScript runtime module.
@@ -265,6 +267,12 @@ export interface HookTimingSummary {
   readonly outputBridge: TimingSample;
 }
 export type RequestHookPhase = Exclude<Phase, "onErrorResponse" | "onError" | "onFinish">;
+export interface NativeTimingSummary {
+  readonly calls: number;
+  readonly failedCalls: number;
+  readonly interruptedCalls: number;
+  readonly wallMs: number;
+}
 export interface RequestTimings {
   readonly requestMs: number | null;
   readonly requestDecodeMs: number | null;
@@ -276,6 +284,7 @@ export interface RequestTimings {
   readonly downstreamQueueWaitMs: number | null;
   readonly downstreamDrainMs: number | null;
   readonly hooks: Readonly<Partial<Record<RequestHookPhase, HookTimingSummary>>>;
+  readonly native: Readonly<Partial<Record<RequestHookPhase, NativeTimingSummary>>>;
 }
 
 interface ObserverContext<P extends "onError" | "onFinish", State extends JsonObject> extends ObservationContext {
@@ -309,10 +318,24 @@ interface PipelineHooks<State extends JsonObject> {
   onErrorResponse: Hook<ErrorResponseContext<State>>;
 }
 type AtLeastOne<T> = Partial<T> & { [Key in keyof T]: Pick<T, Key> }[keyof T];
-/** Steps require a name and at least one phase hook. */
-export type PipelineStep<State extends JsonObject = JsonObject> = {
+/** A JavaScript step registers at least one hook and cannot contain a native descriptor. */
+export type ScriptStep<State extends JsonObject = JsonObject> = {
   name: string;
+  builtin?: never;
 } & AtLeastOne<PipelineHooks<State>>;
+
+export type BuiltinPolicy =
+  | ({ kind: "capCompletionTokens" } & Omit<import("limen:policies").CapCompletionTokensOptions, "name">)
+  | ({ kind: "dropRequestFields" } & Omit<import("limen:policies").DropRequestFieldsOptions, "name">)
+  | ({ kind: "forwardClientHeader" } & Omit<import("limen:policies").ForwardClientHeaderOptions, "name">)
+  | ({ kind: "replaceText" } & Omit<import("limen:content").ReplaceTextOptions, "name">)
+  | ({ kind: "syntheticTextTool" } & Omit<import("limen:content").SyntheticTextToolOptions, "name">);
+/** Native policy state remains owned by Rust and is absent from ctx.state. */
+export type BuiltinStep = {
+  readonly name: string;
+  readonly builtin: Readonly<BuiltinPolicy>;
+} & { [Key in keyof PipelineHooks<JsonObject>]?: never };
+export type PipelineStep<State extends JsonObject = JsonObject> = ScriptStep<State> | BuiltinStep;
 
 /** Defaults are shallow; client values win. Routing control fields are forbidden. */
 export type Defaults = JsonObject & {

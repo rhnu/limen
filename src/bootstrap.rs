@@ -1,6 +1,7 @@
 use std::{
     fmt,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -13,6 +14,7 @@ use tracing::Instrument;
 pub struct Bootstrap {
     pub server: ServerConfig,
     pub business: BusinessConfig,
+    pub(crate) native_content: Arc<crate::gateway::NativeContentTemplates>,
     pub runtime: ScriptRuntime,
     pub run_id: String,
     pub started_at: String,
@@ -30,6 +32,8 @@ pub enum Error {
     },
     #[error("config.js runtime failed")]
     Script(#[from] ScriptError),
+    #[error("native policy configuration failed")]
+    NativeContent(#[from] limen_chat::NativeContentError),
     #[error("configuration startup budget exceeded")]
     StartupTimeout(#[source] tokio::time::error::Elapsed),
     #[error("configuration validation exceeded the startup budget")]
@@ -70,7 +74,7 @@ impl Error {
                 file: "server configuration",
                 ..
             } => "server_config",
-            Self::Config { .. } | Self::StartupBudget => "business_config",
+            Self::Config { .. } | Self::StartupBudget | Self::NativeContent(_) => "business_config",
             Self::Script(_) | Self::StartupTimeout(_) => "script_startup",
             Self::ShutdownTimeout(_) | Self::ShutdownState { .. } | Self::LogShutdown => "shutdown",
             Self::Logging(_) => "logging",
@@ -96,6 +100,7 @@ impl fmt::Display for Diagnostic<'_> {
                 write!(formatter, "{}: {}", self.0, source.diagnostic())
             },
             Error::Script(source) => write!(formatter, "{}: {}", self.0, source.diagnostic()),
+            Error::NativeContent(source) => write!(formatter, "{}: {source}", self.0),
             Error::StartupTimeout(source) | Error::ShutdownTimeout(source) => {
                 write!(formatter, "{}: {source}", self.0)
             },
@@ -253,6 +258,24 @@ impl Bootstrap {
         };
         match result {
             Ok(business) => {
+                let native_content = match crate::gateway::NativeContentTemplates::compile(
+                    &business,
+                    &server.limits,
+                    deadline,
+                ) {
+                    Ok(templates) => Ok(Arc::new(templates)),
+                    Err(limen_chat::NativeContentError::Interrupted) => Err(Error::StartupBudget),
+                    Err(source) => Err(Error::NativeContent(source)),
+                };
+                let native_content = match native_content {
+                    Ok(templates) => templates,
+                    Err(primary) => {
+                        return Err(with_cleanup(
+                            primary,
+                            stop(&runtime, server.limits.shutdown_ms).await,
+                        ));
+                    },
+                };
                 tracing::info!(
                     providers = business.providers.len(),
                     models = business.models.len(),
@@ -262,6 +285,7 @@ impl Bootstrap {
                 Ok(Self {
                     server,
                     business,
+                    native_content,
                     runtime,
                     run_id,
                     started_at: chrono::Utc::now()

@@ -1,4 +1,4 @@
-import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "../policies/index.js";
+import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "limen:policies";
 
 /** @typedef {{ calls?: number }} State */
 /** @type {import("../limen").PipelineStep<State>[]} */
@@ -21,3 +21,14 @@ dropRequestFields({ name: "bad", fields: [1] });
 forwardClientHeader({ name: "bad", from: "x-profile" });
 // @ts-expect-error policies do not add arbitrary hooks or a composition schema.
 capCompletionTokens({ name: "bad", max: 64, onRequest() {} });
+
+// @ts-expect-error Native descriptors have no JavaScript hook to call.
+policies[0].beforeSend({});
+/** @type {import("../limen").PipelineStep} */
+// @ts-expect-error A step must choose native execution or JavaScript hooks.
+export const mixed = { name: "mixed", builtin: { kind: "capCompletionTokens", max: 1 }, beforeSend() {} };
+/** @type {import("../limen").PipelineStep} */
+// @ts-expect-error Unknown native descriptor kinds are rejected.
+export const unknown = { name: "unknown", builtin: { kind: "unknown" } };
+/** @type {import("../limen").PipelineStep} */
+export const descriptor = { name: "literal", builtin: { kind: "dropRequestFields", fields: ["store"] } };

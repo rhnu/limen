@@ -6,6 +6,7 @@ mod chunk;
 mod content;
 mod convert;
 mod error;
+mod native_content;
 mod sse;
 mod usage;
 
@@ -14,6 +15,7 @@ pub use chunk::{ChunkTracker, validate_chunk};
 pub use content::{ContentError, ContentFrame, ContentProjector, validate_content_event};
 pub use convert::JsonChunks;
 pub use error::Error;
+pub use native_content::{NativeContentError, NativeContentLimits, NativeContentPolicy};
 pub use sse::{DONE, Event, Frame, FrameDecoder, encode_chunk, encode_error};
 pub use usage::{UsageQuality, UsageStats, UsageTracker};
 

@@ -53,7 +53,7 @@ cargo xtask test --isolated http/content-transform
 
 ## 前端与 JavaScript
 
-pnpm workspace 管理根脚本工具、`web/` 和 `api/codegen/`，锁文件为 `pnpm-lock.yaml`。脚本类型声明、策略库及类型契约检查集中在 `sdk/`；`fixtures/` 保存跨组件回归素材，各包专用素材留在包内。前端使用 React、React Router、Radix Themes、React Query、Zustand、Valibot 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
+pnpm workspace 管理根脚本工具、`web/` 和 `api/codegen/`，锁文件为 `pnpm-lock.yaml`。脚本类型声明与类型契约检查集中在外部 `sdk/`，运行时内置模块由 `modules/script` 提供；`fixtures/` 保存跨组件回归素材，各包专用素材留在包内。前端使用 React、React Router、Radix Themes、React Query、Zustand、Valibot 和 Recharts；说明内容通过帮助标记按需展开。开发服务器仅代理管理 API 到本机 8080 端口：
 
 ```sh
 pnpm dev:web
@@ -79,9 +79,17 @@ pnpm build:web
 
 `test:web` 使用 Vitest，仅运行确定性的纯逻辑测试，覆盖数值、时间、参数解析与序列化、查询条件、分页、会话取消和错误状态；传输边界使用合成响应，不访问真实管理服务。浏览器布局、键盘操作和真实请求需另行检查，不以构建通过代替。
 
-`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。`check:types` 检查前端、[`sdk/`](../sdk/) 与示例，包括预期会被类型系统拒绝的契约用法。策略行为的常规测试在真实 QuickJS 中导入库源码，离线组合用例复用网关管线，Node.js 静态检查不能替代它们。
+`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。打包时将 `limen:*` 保留为 external，由 Limen 解析内置模块；第三方依赖仍打包为本地 ESM。`check:types` 检查前端、[`sdk/`](../sdk/)、内嵌 JS 实现与示例，包括预期会被类型系统拒绝的契约用法。常规测试分别验证真实 QuickJS 的模块导入与脚本回调、Rust 原生策略算法以及复用网关管线的离线组合，Node.js 静态检查不能替代它们。
 
 静态检查不能证明 QuickJS 兼容性、JSON 合法性或协议语义。继续使用 [`limen check` 和离线用例](features/testing.md)验证实际模块；第三方库的打包边界见[脚本文档](features/scripting.md#第三方库)。
+
+### 内置脚本能力
+
+新增 SDK 工具先判断它是否参与管线执行。普通辅助函数通过内置模块导出；确定性管线策略使用 `builtin.kind` 的显式枚举，保留自定义 JS hook 作为独立 step。不要为某个工具另开全局命名空间、私有加载器或绕过网关校验的执行路径。模块注册、外部类型和运行时实现保持单一来源，不复制运行时 JS 到 `sdk/`、示例或 `local/`。
+
+新增内置模块时登记固定名称及内嵌实现，补外部模块声明，并测试真实 VM 的导入、重复导入和失败行为。新增原生策略时同时接入配置校验、阶段分派和纯逻辑测试；有请求状态的策略还需计入总容量，测试取消、超限及批次回滚。跨 JS/Rust 混排的行为以离线管线组合验证，不能仅凭工厂生成了合法描述判定执行正确。修改外部模块名或选项时同步示例、fixtures、本机配置和 esbuild 入口，不保留旧导入兼容层。
+
+原生执行时间与 JS hook 时间分别统计。原生文本缓冲的 `maxBufferedChars` 按 UTF-16 单元计量，宿主总资源预算按字节计量；Rust 的 `str::len()` 不能替代前者。算法输入、输出展开及状态容量都需有界，不能只在大对象已经构造完成后检查最终大小。内核契约见[设计](design.md#内置模块与策略扩展)。
 
 ## Markdown 与交付
 

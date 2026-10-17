@@ -12,6 +12,66 @@ fn parse(value: Value) -> Result<BusinessConfig, ConfigError> {
 }
 
 #[test]
+fn builtin_descriptors_validate_options_and_keep_content_defaults() {
+    let mut value = basic();
+    value["providers"]["primary"]["pipeline"] = json!([
+        {"name":"cap","builtin":{"kind":"capCompletionTokens","max":128}},
+        {"name":"drop","builtin":{"kind":"dropRequestFields","fields":["temperature"]}},
+        {"name":"header","builtin":{"kind":"forwardClientHeader","from":"X-Tenant","to":"x-tenant"}},
+        {"name":"replace","builtin":{"kind":"replaceText","search":"abc","replacement":"x","maxBufferedChars":2}},
+        {"name":"tool","builtin":{"kind":"syntheticTextTool","maxBufferedChars":128}},
+        {"name":"custom","onContent":1}
+    ]);
+    let parsed = parse(value).unwrap();
+    let Some(crate::BuiltinPolicy::SyntheticTextTool(options)) =
+        &parsed.providers["primary"].pipeline[4].builtin
+    else {
+        panic!("expected tool policy");
+    };
+    assert_eq!(options.tool_name, "limen_emit_text");
+    assert_eq!(options.max_parts, 64);
+    assert_eq!(options.max_pending_events, 64);
+}
+
+#[test]
+fn builtin_descriptors_reject_mixed_hooks_unknown_fields_and_unsafe_options() {
+    for builtin in [
+        json!(null),
+        json!({"kind":"unknown"}),
+        json!({"kind":"capCompletionTokens","max":0}),
+        json!({"kind":"capCompletionTokens","max":4,"field":"temperature"}),
+        json!({"kind":"capCompletionTokens","max":4,"onChange":"Private event"}),
+        json!({"kind":"capCompletionTokens","max":4,"onChange":null}),
+        json!({"kind":"dropRequestFields","fields":["messages"]}),
+        json!({"kind":"dropRequestFields","fields":["x","x"]}),
+        json!({"kind":"forwardClientHeader","from":"authorization","to":"x-key"}),
+        json!({"kind":"forwardClientHeader","from":"x-key","to":"Cookie"}),
+        json!({"kind":"replaceText","search":"abc","replacement":"x","maxBufferedChars":1}),
+        json!({"kind":"replaceText","search":"a","replacement":"x","maxBufferedChars":2,"stateKey":"legacy"}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":1}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"maxPendingEvents":0}),
+    ] {
+        let mut value = basic();
+        value["models"]["chat"]["pipeline"] = json!([{"name":"policy","builtin":builtin}]);
+        assert!(parse(value).is_err());
+    }
+    for hook in [
+        "beforeSend",
+        "afterReceive",
+        "onResponse",
+        "onContent",
+        "onUpstreamEvent",
+        "onStreamEvent",
+        "onErrorResponse",
+    ] {
+        let mut value = basic();
+        value["models"]["chat"]["pipeline"] =
+            json!([{"name":"policy","builtin":{"kind":"capCompletionTokens","max":4},hook:1}]);
+        assert!(parse(value).is_err());
+    }
+}
+
+#[test]
 fn model_aliases_accept_colons_and_preserve_distinct_mappings() {
     for alias in [
         "Vendor/model_v1.2:vertex:flex".to_owned(),

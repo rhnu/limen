@@ -14,7 +14,7 @@ use rquickjs::{
 };
 
 use crate::{
-    ScriptError, ScriptErrorKind,
+    ScriptError, ScriptErrorKind, builtins,
     error::exception::{self, Location},
 };
 
@@ -87,9 +87,9 @@ impl ModuleDiagnostics {
     }
 }
 
-pub(crate) struct LocalResolver(pub ModuleDiagnostics);
+pub(crate) struct ModuleResolver(pub ModuleDiagnostics);
 
-impl Resolver for LocalResolver {
+impl Resolver for ModuleResolver {
     fn resolve<'js>(
         &mut self,
         _ctx: &Ctx<'js>,
@@ -97,7 +97,12 @@ impl Resolver for LocalResolver {
         name: &str,
         attributes: Option<ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
-        let reject = || Error::new_resolving("local module", "local import");
+        let reject = || Error::new_resolving("script module", "module import");
+        if attributes.is_none()
+            && let Some(module) = builtins::find(name)
+        {
+            return Ok(module.name.to_owned());
+        }
         if attributes.is_some()
             || !(name.starts_with("./") || name.starts_with("../"))
             || name.contains('\\')
@@ -115,23 +120,32 @@ impl Resolver for LocalResolver {
     }
 }
 
-pub(crate) struct LocalLoader {
+pub(crate) struct ModuleLoader {
     pub diagnostics: ModuleDiagnostics,
     pub remaining: usize,
     pub max_modules: usize,
-    pub loaded: HashSet<PathBuf>,
+    pub loaded: HashSet<String>,
 }
 
-impl Loader for LocalLoader {
+impl Loader for ModuleLoader {
     fn load<'js>(
         &mut self,
         ctx: &Ctx<'js>,
         name: &str,
         attributes: Option<ImportAttributes<'js>>,
     ) -> rquickjs::Result<Module<'js, Declared>> {
-        let reject = || Error::new_loading("local module");
+        let reject = || Error::new_loading("script module");
         if attributes.is_some() || self.loaded.len() >= self.max_modules {
             return Err(reject());
+        }
+        if let Some(module) = builtins::find(name) {
+            if module.source_len() > self.remaining {
+                return Err(reject());
+            }
+            self.remaining -= module.source_len();
+            self.loaded.insert(name.to_owned());
+            self.diagnostics.register(name);
+            return Module::declare(ctx.clone(), name, module.source());
         }
         let path = module_path(Path::new(name)).map_err(|error| {
             self.diagnostics.retain(error);
@@ -145,7 +159,7 @@ impl Loader for LocalLoader {
             reject()
         })?;
         self.remaining -= bytes.len();
-        self.loaded.insert(path);
+        self.loaded.insert(name.to_owned());
         self.diagnostics.register(name);
         Module::declare(ctx.clone(), name, bytes)
     }

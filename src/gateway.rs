@@ -6,6 +6,7 @@ mod events;
 mod json;
 mod lifecycle;
 mod logic;
+mod native;
 mod observations;
 mod observe;
 mod persistence;
@@ -29,6 +30,7 @@ use axum::{
     http::{HeaderValue, Request, header},
     response::Response,
 };
+pub(crate) use content::NativeContentTemplates;
 use error::{ErrorCode, Failure};
 use lifecycle::Lifecycle;
 use limen_config::{BusinessConfig, ServerConfig};
@@ -48,6 +50,7 @@ use crate::bootstrap::Bootstrap;
 pub struct Gateway {
     server: ServerConfig,
     business: BusinessConfig,
+    native_content: Arc<NativeContentTemplates>,
     runtime: ScriptRuntime,
     transport: transport::Transport,
     shutdown: Cancellation,
@@ -118,6 +121,7 @@ impl Gateway {
         Arc::new(Self {
             server: loaded.server.clone(),
             business: loaded.business.clone(),
+            native_content: Arc::clone(&loaded.native_content),
             runtime: loaded.runtime.clone(),
             transport,
             shutdown,

@@ -3,6 +3,30 @@ use limen_script::{HookOutput, ObservationBatch, ScriptError};
 use super::*;
 
 #[test]
+fn native_timings_count_real_execution_without_js_bridge_samples() {
+    let timings = Timings::default();
+    timings.native("beforeSend").finish(&Ok::<_, Failure>(()));
+    timings
+        .native("beforeSend")
+        .finish(&Err::<(), _>(Failure::new(
+            ErrorCode::HookFailed,
+            "beforeSend",
+        )));
+    drop(timings.native("onContent"));
+    let snapshot = timings.snapshot();
+    assert!(snapshot["hooks"].as_object().unwrap().is_empty());
+    assert_eq!(snapshot["native"]["beforeSend"]["calls"], 2);
+    assert_eq!(snapshot["native"]["beforeSend"]["failedCalls"], 1);
+    assert_eq!(snapshot["native"]["beforeSend"]["interruptedCalls"], 0);
+    assert_eq!(snapshot["native"]["onContent"]["interruptedCalls"], 1);
+    assert!(snapshot["native"]["beforeSend"]["queue"].is_null());
+    timings.freeze(Duration::ZERO);
+    let frozen = timings.snapshot();
+    drop(timings.native("onContent"));
+    assert_eq!(timings.snapshot(), frozen);
+}
+
+#[test]
 fn milestones_use_their_documented_origins_and_keep_the_first_event() {
     let start = Instant::now();
     let timings = Timings::default();

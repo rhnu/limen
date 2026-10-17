@@ -2,7 +2,7 @@
 
 ## 模块与运行环境
 
-`config.js` 必须是默认导出配置对象的 ESM。可用相对路径导入本地 `.js`、`.mjs`，包括 `../`；模块按规范化文件路径加载并受总源码大小和模块数量限制。不能直接导入包名、`node:`、URL、带 query/fragment 的路径或 import attributes。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
+`config.js` 必须是默认导出配置对象的 ESM。通过 `limen:policies`、`limen:content` 导入二进制内置工具，不需要部署 SDK 运行时文件。也可用相对路径导入自己的本地 `.js`、`.mjs`，包括 `../`；本地模块按规范化文件路径加载并受总源码大小和模块数量限制。未知 `limen:` 模块、包名、`node:`、URL、带 query/fragment 的路径及 import attributes 均被拒绝。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
 
 环境提供 ECMAScript 内建能力和 `limen.env()`，不提供 Node.js、DOM、文件系统、网络或计时器 API。`async`/Promise 可用，顶层 await 也受启动预算约束；没有宿主 I/O 能唤醒的悬空 Promise 只能等待超时。需要 npm 库时先[打包为本地 ESM](#第三方库)。
 
@@ -137,18 +137,19 @@ const forwardTenant = {
 
 `stats.timings` 使用毫秒，保留亚毫秒小数；尚未进入的阶段为 `null`。新用量与耗时在请求终态确定时冻结，`onError` 和 `onFinish` 看到相同内容。既有 `elapsedMs` 仍在每次观察时采样。
 
-| 字段                                           | 口径                                                                   |
-| ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `requestMs`                                    | 网关开始处理请求至终态确定，不含之后的失败帧写入和终结观察             |
-| `requestDecodeMs`                              | 请求正文读取、初始解析和校验                                           |
-| `upstreamHeadersWaitMs`                        | 发起上游请求至响应头到达；旧 `upstreamHeadersMs` 仍从请求开始计时      |
-| `upstreamFirstByteMs` / `upstreamFirstChunkMs` | 发起上游请求至首个非空正文片段、首个合法 Chat chunk；JSON 上游没有后者 |
-| `downstreamFirstEventMs`                       | 请求开始至首个模型事件进入有界响应体，不是客户端实际收到的时间         |
-| `upstreamReadWaitMs`                           | 等待上游读取的累计时间，不包含处理事件和等待下游的间隔                 |
-| `downstreamQueueWaitMs` / `downstreamDrainMs`  | 等待输出通道和 SSE 响应体排空确认的累计时间；JSON 路径没有排空确认     |
-| `hooks`                                        | 按业务 hook 阶段汇总调用、失败、中断、返回报告次数与 `wallMs`          |
+| 字段                                           | 口径                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `requestMs`                                    | 网关开始处理请求至终态确定，不含之后的失败帧写入和终结观察                |
+| `requestDecodeMs`                              | 请求正文读取、初始解析和校验                                              |
+| `upstreamHeadersWaitMs`                        | 发起上游请求至响应头到达；旧 `upstreamHeadersMs` 仍从请求开始计时         |
+| `upstreamFirstByteMs` / `upstreamFirstChunkMs` | 发起上游请求至首个非空正文片段、首个合法 Chat chunk；JSON 上游没有后者    |
+| `downstreamFirstEventMs`                       | 请求开始至首个模型事件进入有界响应体，不是客户端实际收到的时间            |
+| `upstreamReadWaitMs`                           | 等待上游读取的累计时间，不包含处理事件和等待下游的间隔                    |
+| `downstreamQueueWaitMs` / `downstreamDrainMs`  | 等待输出通道和 SSE 响应体排空确认的累计时间；JSON 路径没有排空确认        |
+| `hooks`                                        | 按业务 hook 阶段汇总调用、失败、中断、返回报告次数与 `wallMs`             |
+| `native`                                       | 按原生策略阶段汇总 `calls`、`failedCalls`、`interruptedCalls` 和 `wallMs` |
 
-每个 hook 汇总还有 `queue`、`initialCall`、`pending`、`inputBridge`、`outputBridge`，均为 `{ totalMs, samples }`。它们分别表示命令排队、初次函数调用、Promise 返回到终结观察、输入桥接、输出投影转换。`samples: 0` 表示没有采样，区别于实测零耗时。外层取消仍记录已经等待的 wall 时间和中断次数，无法取得的运行时细分不补零样本。Promise 等待包含共享调度时间，不是该 hook 的 CPU 时间；里程碑与持续时间不能简单相加。终结观察自身的计时单独进入清理诊断，不放入其尚未结束时读取的请求快照。
+每个 hook 汇总还有 `queue`、`initialCall`、`pending`、`inputBridge`、`outputBridge`，均为 `{ totalMs, samples }`。它们分别表示命令排队、初次函数调用、Promise 返回到终结观察、输入桥接、输出投影转换。`samples: 0` 表示没有采样，区别于实测零耗时。外层取消仍记录已经等待的 wall 时间和中断次数，无法取得的运行时细分不补零样本。原生策略不进入 VM，不产生这些 JS 细分样本。Promise 等待包含共享调度时间，不是该 hook 的 CPU 时间；里程碑与持续时间不能简单相加。终结观察自身的计时单独进入清理诊断，不放入其尚未结束时读取的请求快照。
 
 ## 受控观测
 
@@ -210,10 +211,10 @@ const observeLimit = {
 
 ### 正文策略工厂
 
-[`sdk/content/index.js`](../../sdk/content/index.js) 提供纯 ESM 工厂，返回普通 pipeline step。使用例子：
+内置模块 `limen:content` 提供正文策略工厂。使用例子：
 
 ```js
-import { replaceText } from "../../sdk/content/index.js";
+import { replaceText } from "limen:content";
 
 const pipeline = [replaceText({
   name: "replace-brand",
@@ -223,13 +224,13 @@ const pipeline = [replaceText({
 })];
 ```
 
-路径适用于仓库内 `examples/content/config.js`；把 pipeline 放入所需 provider 或 model，并按部署位置调整导入路径。策略将请求数据放在 `ctx.state`，同一个 step 可供多个请求复用。完整选项与编辑类型见 [`sdk/content/index.d.ts`](../../sdk/content/index.d.ts)。
+把 pipeline 放入所需 provider 或 model；内置模块名称不随配置所在目录变化。`replaceText` 与 `syntheticTextTool` 由 Rust 执行，请求状态由管线隔离，不进入 `ctx.state`。`mapPartText` 的用户回调由 JS 执行。完整选项与外部编辑类型见 [`sdk/modules.d.ts`](../../sdk/modules.d.ts)。
 
-- `replaceText({ name, search, replacement, maxBufferedChars, maxParts?, stateKey? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
+- `replaceText({ name, search, replacement, maxBufferedChars, maxParts? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
 - `mapPartText({ name, kinds, maxBufferedChars, transform, maxParts?, stateKey? })` 缓冲所选 text/reasoning/refusal/tool part 的字符串，在 `part_end` 调用同步 `transform(text, info)`，返回替换字符串。`info` 只读，包含 choice、part、kind 和可选 finishReason。工具 ID/名称元数据仍及时传递，参数文字等待映射完成；全文正则或工具参数 JSON 编辑可以使用这一模式。每个 part 的保留文本受必填 UTF-16 长度上限约束，超限即失败；输出另受网关预算约束。该模式会延迟正文交付，流中断时不会调用映射函数或成功刷新缓冲。
-- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts?, stateKey? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不缓存完整参数字符串；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
+- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不缓存完整参数字符串；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
 
-工厂的 `maxParts` 默认 64；可选 `stateKey` 用于隔离多个策略实例，不要让不同策略共享同一键。`syntheticTextTool` 的 `maxPendingEvents` 默认 64；`maxBufferedChars` 限制尚未判定工具身份时暂存事件的 JSON 字符串长度与工具元数据，必须至少覆盖工具名长度，不限制完整回答长度。所有输出仍受网关事件、JSON 和字节预算约束。
+工厂的 `maxParts` 默认 64。原生策略按管线位置自动隔离状态，不接受 `stateKey`；只有 `mapPartText` 保留该选项，用于隔离其 `ctx.state` 槽位，不要让不同脚本策略共享同一键。`syntheticTextTool` 的 `maxPendingEvents` 默认 64；`maxBufferedChars` 限制尚未判定工具身份时暂存事件的 JSON 字符串长度与工具元数据，必须至少覆盖工具名长度，不限制完整回答长度。所有输出仍受网关事件、JSON 和字节预算约束，原生缓冲也受请求总字节预算约束。
 
 `syntheticTextTool` 在请求使用 legacy `functions`/`function_call`、`response_format`、非 1 的 `n`、`parallel_tool_calls: true`、非缺省/`auto` 的 `tool_choice`、非 function 工具或工具名冲突时拒绝 422。工具内容语法错误会失败；`length` 或 `content_filter` 允许在合法但未完成的 JSON 前缀处关闭，保留已经收到的文本和原结束原因，不补造后续字符。工厂不会在上游不遵循工具要求时重试或故障转移。
 
@@ -264,7 +265,7 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 ## 第三方库
 
-选择只依赖 ECMAScript 的库，先在 Node.js 开发环境打包为不含外部导入的本地 ESM，再交给 QuickJS。构建工具不会为运行时提供 `fetch`、`process`、`Buffer`、文件系统或 DOM；目标语法可编译不代表库的宿主能力可用。
+选择只依赖 ECMAScript 的库，先在 Node.js 开发环境将第三方依赖打包为本地 ESM，再交给 QuickJS。esbuild 使用 `external: ["limen:*"]` 保留内置模块导入，其余第三方依赖须打入产物。构建工具不会为运行时提供 `fetch`、`process`、`Buffer`、文件系统或 DOM；目标语法可编译不代表库的宿主能力可用。
 
 随附的 [Valibot 示例](../../examples/libraries/src/config.js)通过谓词校验请求，在 `onRequest` 拒绝无效参数，在 `beforeSend` 实施 provider 限制；保留原正文可避免校验器丢失未知扩展字段。构建脚本见 [`build.mjs`](../../examples/libraries/build.mjs)，生成文件为同目录的 `config.js`，不要直接编辑它。重分发库代码时保留其许可证。
 
@@ -272,11 +273,11 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 ## 可复用策略库
 
-[`sdk/policies/index.js`](../../sdk/policies/index.js) 是只依赖 ECMAScript 的本地 ESM，工厂返回现有 `PipelineStep`，按原有 provider → model 顺序执行。它不需要 Node.js 或额外宿主能力：
+内置模块 `limen:policies` 提供请求策略工厂，返回原生 `PipelineStep` 描述，按原有 provider → model 顺序在 Rust 执行：
 
 ```js
 import { capCompletionTokens, dropRequestFields, forwardClientHeader }
-  from "../../sdk/policies/index.js";
+  from "limen:policies";
 
 const pipeline = [
   capCompletionTokens({ name: "cap-output", max: 4096 }),
@@ -285,7 +286,7 @@ const pipeline = [
 ];
 ```
 
-示例路径适用于仓库的 `examples/basic/config.js`；按部署位置调整导入路径，并把 `pipeline` 放入所需 provider 或 model。工厂创建时验证参数并保存配置副本，返回的 step 冻结，同一个 step 可在多个请求中复用。请求数据仍留在当前上下文。
+把 `pipeline` 放入所需 provider 或 model。工厂保存配置副本并冻结返回的描述，完整参数校验在配置启动检查中由 Rust 完成。一个 step 只能是原生策略或自定义 JS hook，不能向原生描述追加 hook；需要组合时在 pipeline 中声明相邻 step。同一个工厂结果可供多个请求或管线位置复用。
 
 | 工厂                                                    | 行为                                                                                                                                                                                                          |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -295,11 +296,11 @@ const pipeline = [
 
 name 遵循 pipeline step 名称规则，同一 pipeline 内不得重复。错误配置抛出固定 TypeError，不回显参数。前两个工厂的 `onChange` 可填写已注册观测名，只在实际设置、裁剪或删除时记录一次；它使用[受控观测](#受控观测)的提交与容量规则。静态类型能检查参数形状，但不能代替运行时数值、头名或注册表校验。
 
-库源码与声明一起供编辑器使用；部署只需运行时 JS。保留相对关系复制模块，或复用[第三方库示例](#第三方库)的 esbuild 流程打包为单个 ESM。basic 示例直接导入库，libraries 示例把这些策略与 Valibot 一起打包；回归用例见 [`fixtures/gateway/policies/`](../../fixtures/gateway/policies/)。
+运行时工具随二进制提供，部署不需要 `sdk/`。外部类型声明仅供编辑器和类型检查使用。basic 示例直接导入内置模块；libraries 示例打包 Valibot 并保留 `limen:policies` 导入。回归用例见 [`fixtures/gateway/policies/`](../../fixtures/gateway/policies/)。
 
 ## 脚本静态检查
 
-[`sdk/limen.d.ts`](../../sdk/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，不是可导入的运行时模块。在默认导出的配置对象前添加 JSDoc：
+[`sdk/limen.d.ts`](../../sdk/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，会自动引用 [`sdk/modules.d.ts`](../../sdk/modules.d.ts) 中的 `limen:` 内置模块声明；它们都不是运行时模块。外部编辑环境保留这两份声明的相对位置，在默认导出的配置对象前添加 JSDoc：
 
 ```js
 /** @satisfies {import("../../sdk/limen").Config} */

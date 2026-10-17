@@ -232,7 +232,7 @@ impl Gateway {
         let mut upstream_tracker = ChunkTracker::new(limits.max_json_nodes);
         let mut output = SseOutput {
             tracker: ChunkTracker::new(limits.max_json_nodes),
-            content: content::projector(provider, model, limits.max_json_nodes),
+            content: self.content_projector(provider, model, lifecycle)?,
             aggregate: (!client_stream)
                 .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events)),
         };

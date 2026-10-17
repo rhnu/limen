@@ -85,6 +85,15 @@ fn whitelist_rejects_body_and_dynamic_messages_before_queueing() {
             "secret-message"
         );
         tracing::info!(phase = "onFinish", "request finished");
+        tracing::info!(
+            phase = "onContent",
+            calls = 3_u64,
+            failed_calls = 1_u64,
+            interrupted_calls = 0_u64,
+            wall_ms = 0.5_f64,
+            body = "secret-body",
+            "native policy statistics"
+        );
     });
     drop(guards);
     let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
@@ -93,10 +102,15 @@ fn whitelist_rejects_body_and_dynamic_messages_before_queueing() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), 3);
     assert_eq!(records[0]["event"], "diagnostic");
     assert_eq!(records[0]["requestId"], "limen-r-test-1");
     assert_eq!(records[1]["event"], "requestFinished");
+    assert_eq!(records[2]["event"], "nativePolicyStatistics");
+    assert_eq!(records[2]["calls"], 3);
+    assert_eq!(records[2]["failedCalls"], 1);
+    assert_eq!(records[2]["interruptedCalls"], 0);
+    assert_eq!(records[2]["wallMs"], 0.5);
     assert_ne!(records[0]["logId"], records[1]["logId"]);
     assert_eq!(records[0]["level"], "info");
     assert!(
