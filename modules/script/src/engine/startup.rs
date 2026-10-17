@@ -186,7 +186,7 @@ async fn extract(
             if text.len() > options.json_limits.max_bytes {
                 return Err(ScriptError::new(ScriptErrorKind::Json));
             }
-            let config = serde_json::from_str(&text)
+            let config = limen_config::parse_json_str(&text, options.json_limits.max_depth)
                 .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
             let functions: Array = converted
                 .get("hooks")

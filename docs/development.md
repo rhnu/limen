@@ -45,6 +45,8 @@ cargo xtask test --isolated --list
 cargo xtask test --isolated
 # 统一正文阶段的真实增量交付与截断边界
 cargo xtask test --isolated http/content-transform
+# 脚本 JSON 深度边界与原生线程栈预算
+cargo xtask test --isolated runtime/json-depth-startup runtime/json-depth-hook runtime/stack-limit
 ```
 
 可在命令末尾传入 `--list` 返回的限定用例名；其他选项用 `cargo xtask test --help` 查询。监督进程负责外部超时、进程树终止和临时目录清理。不要将可能失控的 VM 用例直接放入常规测试进程。

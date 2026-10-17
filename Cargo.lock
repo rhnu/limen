@@ -1005,6 +1005,7 @@ name = "limen-script"
 version = "0.1.0"
 dependencies = [
  "http",
+ "limen-config",
  "rquickjs",
  "serde_json",
  "tempfile",

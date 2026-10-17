@@ -11,6 +11,7 @@ use limen_script::{
 use serde_json::{Value, json};
 
 pub(crate) mod environment;
+mod json_depth;
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -43,6 +44,9 @@ pub const CASES: &[&str] = &[
     "microtask-loop",
     "memory-limit",
     "startup-loop",
+    "json-depth-startup",
+    "json-depth-hook",
+    "stack-limit",
 ];
 
 pub async fn run(case: &str, root: PathBuf) -> TestResult {
@@ -51,6 +55,9 @@ pub async fn run(case: &str, root: PathBuf) -> TestResult {
         "environment" => environment::run(&fixture).await,
         "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&fixture, case).await,
         "startup-loop" => startup_loop(&fixture).await,
+        "json-depth-startup" => json_depth::startup(&fixture).await,
+        "json-depth-hook" => json_depth::hooks(&fixture).await,
+        "stack-limit" => json_depth::stack_limit(&fixture).await,
         _ => Err("unknown experiment".into()),
     }
 }

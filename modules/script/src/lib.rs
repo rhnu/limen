@@ -23,6 +23,12 @@ use tracing::Instrument;
 
 pub type HookId = u64;
 
+// QuickJS checks native stack consumption below each rquickjs entry, not the
+// owning thread's OS stack limit. Leave the host its own Rust/Tokio/JSON reserve
+// so a valid VM budget cannot run through the OS guard before QuickJS rejects it.
+const HOST_STACK_RESERVE: usize = 2 * 1024 * 1024;
+const MAX_STACK_LIMIT: usize = 8 * 1024 * 1024;
+
 /// Conservative limits; these are bounds, not measured performance promises.
 #[derive(Clone, Debug)]
 pub struct RuntimeOptions {
@@ -30,6 +36,7 @@ pub struct RuntimeOptions {
     pub execution_timeout: Duration,
     pub continuous_work_timeout: Duration,
     pub memory_limit: usize,
+    /// Native-stack budget for `QuickJS`; the owning thread adds a fixed host reserve.
     pub stack_limit: usize,
     pub queue_capacity: usize,
     pub pending_capacity: usize,
@@ -229,6 +236,7 @@ impl ScriptRuntime {
             let runtime_span = tracing::debug_span!("script_runtime_thread").or_current();
             std::thread::Builder::new()
                 .name("limen-javascript".into())
+                .stack_size(options.stack_limit + HOST_STACK_RESERVE)
                 .spawn(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let executor = tokio::runtime::Builder::new_current_thread()
@@ -416,7 +424,7 @@ fn valid_options(o: &RuntimeOptions) -> bool {
         && now.checked_add(o.execution_timeout).is_some()
         && now.checked_add(o.continuous_work_timeout).is_some()
         && o.memory_limit > 0
-        && o.stack_limit > 0
+        && (1..=MAX_STACK_LIMIT).contains(&o.stack_limit)
         && o.queue_capacity > 0
         && o.pending_capacity > 0
         && o.job_batch > 0

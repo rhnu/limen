@@ -5,6 +5,22 @@ use serde_json::json;
 use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
 use crate::{RuntimeOptions, RuntimeStatus, ScriptErrorKind, ScriptRuntime};
 
+#[test]
+fn stack_options_match_the_supported_service_budget() {
+    for stack_limit in [1, 8 * 1024 * 1024] {
+        assert!(crate::valid_options(&RuntimeOptions {
+            stack_limit,
+            ..RuntimeOptions::default()
+        }));
+    }
+    for stack_limit in [0, 8 * 1024 * 1024 + 1, usize::MAX] {
+        assert!(!crate::valid_options(&RuntimeOptions {
+            stack_limit,
+            ..RuntimeOptions::default()
+        }));
+    }
+}
+
 #[tokio::test]
 async fn sync_and_async_void_hooks_commit_and_preserve_pipeline_order() -> TestResult {
     let fixture = Fixture::new()?;

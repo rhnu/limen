@@ -347,7 +347,7 @@ fn output<'js>(
     if text.len() > options.json_limits.max_bytes {
         return Err(ScriptError::new(ScriptErrorKind::Json));
     }
-    let envelope = serde_json::from_str(&text)
+    let envelope = limen_config::parse_json_str(&text, options.json_limits.max_depth)
         .map_err(|error| ScriptError::with_source(ScriptErrorKind::Json, error))?;
     decode_output(envelope, options)
 }
