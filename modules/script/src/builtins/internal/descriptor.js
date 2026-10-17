@@ -1,4 +1,3 @@
-// This prelude stays private inside each registered ESM namespace.
 /**
  * @template {{name: string}} Options
  * @template {string} Kind
@@ -7,7 +6,7 @@
  * @param {readonly Exclude<keyof Options, "name">[]} keys
  * @returns {Readonly<{name: string, builtin: Readonly<{kind: Kind} & Omit<Options, "name">>}>}
  */
-function descriptor(options, kind, keys) {
+export function descriptor(options, kind, keys) {
   if (options === null || typeof options !== "object" || Array.isArray(options)
       || ![Object.prototype, null].includes(Object.getPrototypeOf(options))
       || Reflect.ownKeys(options).some(key => key !== "name" && !keys.some(allowed => allowed === key))) {

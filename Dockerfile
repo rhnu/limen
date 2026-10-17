@@ -9,6 +9,9 @@ COPY api/codegen/package.json ./api/codegen/package.json
 COPY patches ./patches
 RUN npm install --global "$(node -p "require('./package.json').packageManager")"
 RUN pnpm install --frozen-lockfile
+COPY modules/script/build.mjs ./modules/script/build.mjs
+COPY modules/script/src/builtins ./modules/script/src/builtins
+RUN pnpm build:scripts
 COPY api ./api
 COPY web ./web
 RUN pnpm api:generate && pnpm build:web
@@ -36,11 +39,13 @@ COPY src ./src
 COPY modules ./modules
 COPY xtask ./xtask
 COPY --from=frontend /build/web/dist ./web/dist
+COPY --from=frontend /build/modules/script/dist ./modules/script/dist
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /build/recipe.json ./recipe.json
 COPY --from=frontend /build/web/dist ./web/dist
+COPY --from=frontend /build/modules/script/dist ./modules/script/dist
 # Keep dependency artifacts in a layer: GHA cache does not export cache mounts.
 RUN cargo chef cook --release --locked --bin limen --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./

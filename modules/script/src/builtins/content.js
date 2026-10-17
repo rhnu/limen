@@ -1,3 +1,5 @@
+import { descriptor } from "./internal/descriptor.js";
+
 /** @typedef {import("../../../../sdk/limen").ContentEvent} ContentEvent */
 /** @typedef {import("../../../../sdk/limen").JsonObject} JsonObject */
 

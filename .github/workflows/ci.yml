@@ -35,8 +35,10 @@ jobs:
           cache: true
       - name: Install locked workspace tools
         run: pnpm install --frozen-lockfile
-      - name: Build embedded frontend
-        run: pnpm build:web
+      - name: Build embedded scripts and frontend
+        run: |
+          pnpm build:scripts
+          pnpm build:web
       - name: Install the repository toolchain
         run: rustup show
       - name: Cache Rust dependencies

@@ -4,10 +4,11 @@
 
 在仓库根目录运行命令。Rust 工具链由 [`rust-toolchain.toml`](../rust-toolchain.toml)选择；QuickJS 和 TLS 依赖会编译 C 代码，本机需要 C/C++ 构建工具与 CMake。Windows MSVC 目标使用 Visual Studio C++ Build Tools 和 Windows SDK；Linux 构建基线见 [`Dockerfile`](../Dockerfile)。
 
-安装 Node.js 24、根 `package.json` 指定版本的 pnpm、Rusteward 提供的 `cargo dev` 和 Markdown 检查器 `rumdl`。工程规则分别由 [`rusteward.toml`](../rusteward.toml)、[`Cargo.toml`](../Cargo.toml) 与 [`.rumdl.toml`](../.rumdl.toml)维护，工具版本与 CI 入口见 [工作流](../.github/workflows/ci.yml)。前端产物在 debug 和 release 构建中均直接嵌入二进制；首次 Rust 编译前先构建前端，运行时不需要 Node.js 或外部静态文件目录。
+安装 Node.js 24、根 `package.json` 指定版本的 pnpm、Rusteward 提供的 `cargo dev` 和 Markdown 检查器 `rumdl`。工程规则分别由 [`rusteward.toml`](../rusteward.toml)、[`Cargo.toml`](../Cargo.toml) 与 [`.rumdl.toml`](../.rumdl.toml)维护，工具版本与 CI 入口见 [工作流](../.github/workflows/ci.yml)。内置脚本与前端产物在 debug 和 release 构建中均直接嵌入二进制；首次 Rust 编译前先构建两者，运行时不需要 Node.js 或外部静态文件目录。
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm build:scripts
 pnpm build:web
 cargo build --locked --bin limen
 cargo run --locked -- --help
@@ -87,6 +88,8 @@ pnpm build:web
 
 ### 内置脚本能力
 
+公开模块的源入口位于 `modules/script/src/builtins/`，共享实现放在其 `internal/` 子目录，通过显式 ESM 导入引用。运行 `pnpm build:scripts` 使用现有 esbuild 生成 `modules/script/dist/`，该目录不提交；修改入口或私有依赖后须重新打包，再运行 Rust 检查。Rust 固定注册表嵌入打包入口，新增入口须同时登记公开模块名。CI 在 Rust 编译前打包；Docker 的 Node 构建阶段生成相同产物，并交给 cargo-chef 与最终 Rust 构建。
+
 请求级注入能力与公开 ESM 工具分开维护。新增上下文能力应在私有桥接装配中显式接入，明确适用阶段、每调用状态和候选输出；需要跨调用复用的 ECMAScript 内置函数在用户模块执行前捕获。JSON 编解码与调度器不承担具体能力的实现，能力本身不得提前提交请求状态。核心桥接 JS 与公开内置模块都参加脚本类型检查，运行行为继续由真实 QuickJS 测试验证。
 
 新增 SDK 工具先判断它是否参与管线执行。普通辅助函数通过内置模块导出；确定性管线策略使用 `builtin.kind` 的显式枚举，保留自定义 JS hook 作为独立 step。不要为某个工具另开全局命名空间、私有加载器或绕过网关校验的执行路径。模块注册、外部类型和运行时实现保持单一来源，不复制运行时 JS 到 `sdk/`、示例或 `local/`。
@@ -108,6 +111,6 @@ rumdl check --deny-config-warnings
 
 提交前检查暂存区，确认没有混入 `local/`、`config/`、`data/`、`logs/`、打包产物或任意位置的秘密。报告验证时区分编译与静态检查、常规测试、离线用例、隔离测试和部署验收；只报告实际执行的层次。
 
-CI 在 Rust 编译前构建内嵌前端，并运行客户端生成一致性、JavaScript 类型、前端格式与 lint、纯逻辑测试、Rust 构建与测试、Markdown 和容器构建检查；main 推送仍发布 GHCR 镜像并清理旧版本。重构期间，[工作流](../.github/workflows/ci.yml)中的部署 Secrets 检查与 OliveTin webhook 调用已一起注释，即使 Secrets 配置齐全也不会触发部署。[触发脚本](../.github/scripts/trigger-deployment.sh)随注释入口保留，目前不在 CI 中执行；只有用户明确要求恢复部署时才重新启用。
+CI 在 Rust 编译前构建内置脚本与内嵌前端，并运行客户端生成一致性、JavaScript 类型、前端格式与 lint、纯逻辑测试、Rust 构建与测试、Markdown 和容器构建检查；main 推送仍发布 GHCR 镜像并清理旧版本。重构期间，[工作流](../.github/workflows/ci.yml)中的部署 Secrets 检查与 OliveTin webhook 调用已一起注释，即使 Secrets 配置齐全也不会触发部署。[触发脚本](../.github/scripts/trigger-deployment.sh)随注释入口保留，目前不在 CI 中执行；只有用户明确要求恢复部署时才重新启用。
 
 此修改只停用仓库内 webhook。实施提交推送前还须停用仓库外跟踪 `latest` 的自动更新或固定 digest；不能把镜像发布成功当作部署被禁止的证据，也不自动恢复部署。外部环境操作的待办见[路线图](roadmap.md)。

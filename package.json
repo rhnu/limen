@@ -9,6 +9,7 @@
   "scripts": {
     "api:generate": "pnpm --filter @limen/api-client generate",
     "api:check": "pnpm --filter @limen/api-client check",
+    "build:scripts": "node modules/script/build.mjs",
     "build:examples": "node examples/libraries/build.mjs",
     "build:web": "pnpm --filter @limen/web build",
     "dev:web": "pnpm --filter @limen/web dev",

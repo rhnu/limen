@@ -1,3 +1,4 @@
+import { descriptor } from "./internal/descriptor.js";
 
 /** @param {import("limen:policies").CapCompletionTokensOptions} options */
 export function capCompletionTokens(options) {

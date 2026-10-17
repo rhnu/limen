@@ -29,6 +29,7 @@
 !xtask/src/**/*.rs
 # These scripts are embedded with include_str!/include_bytes!, not deployment configuration.
 !modules/script/src/**/*.js
+!modules/script/build.mjs
 
 # These remain excluded even if placed below an allowed source directory.
 **/local

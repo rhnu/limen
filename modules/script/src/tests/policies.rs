@@ -96,6 +96,9 @@ async fn embedded_modules_share_esm_cache_and_reserve_exact_names() -> TestResul
     stop(&runtime).await?;
     for name in [
         "limen:unknown",
+        "limen:descriptor",
+        "limen:internal/descriptor",
+        "limen:policies/internal/descriptor.js",
         "limen:policies/extra",
         "limen:content?query",
         "Limen:content",
@@ -140,6 +143,66 @@ async fn embedded_module_sources_and_count_share_startup_budgets() -> TestResult
             Ok((runtime, _)) => {
                 stop(&runtime).await?;
                 return Err("embedded source bypassed startup budgets".into());
+            },
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn bundled_private_dependencies_share_the_public_modules_byte_and_count_budget() -> TestResult
+{
+    let fixture = Fixture::new()?;
+    let source = r#"
+        import * as policies from "limen:policies";
+        import * as content from "limen:content";
+        const repeated = await import("limen:policies");
+        export default {
+          same: policies === repeated,
+          policy: policies.capCompletionTokens({name:"cap",max:1}).builtin.kind,
+          content: content.replaceText({name:"replace",search:"a",replacement:"b",maxBufferedChars:1}).builtin.kind
+        };
+    "#;
+    let path = fixture.write("config.js", source)?;
+    // Measure the embedded data, so build formatting can change without changing the contract.
+    let bytes = source.len()
+        + crate::builtins::find("limen:policies")
+            .ok_or("missing policies module")?
+            .source()
+            .len()
+        + crate::builtins::find("limen:content")
+            .ok_or("missing content module")?
+            .source()
+            .len();
+    let options = RuntimeOptions {
+        max_modules: 3,
+        max_source_bytes: bytes,
+        ..RuntimeOptions::default()
+    };
+    let (runtime, config) = ScriptRuntime::start(path.clone(), options.clone()).await?;
+    ensure(
+        config == json!({"same":true,"policy":"capCompletionTokens","content":"replaceText"}),
+        "private dependencies or cached imports changed public module accounting",
+    )?;
+    stop(&runtime).await?;
+    for options in [
+        RuntimeOptions {
+            max_source_bytes: bytes - 1,
+            ..options.clone()
+        },
+        RuntimeOptions {
+            max_modules: 2,
+            ..options
+        },
+    ] {
+        match ScriptRuntime::start(path.clone(), options).await {
+            Err(error) => ensure(
+                error.kind() == ScriptErrorKind::Module,
+                "bundle budget used the wrong failure",
+            )?,
+            Ok((runtime, _)) => {
+                stop(&runtime).await?;
+                return Err("bundled module escaped the shared source or count budget".into());
             },
         }
     }
