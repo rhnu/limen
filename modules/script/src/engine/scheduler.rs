@@ -6,14 +6,14 @@ use std::{
     time::Instant,
 };
 
-use rquickjs::{AsyncContext, Ctx, Object, Persistent, Promise, Value};
+use rquickjs::{AsyncContext, Ctx, Persistent, Promise, Value};
 use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{Budget, Hooks, Vm, conversion_error, fatal};
 use crate::{
     Cancellation, Command, HookId, HookOutput, HookReport, HookTimings, ObservationBatch,
-    RuntimeOptions, ScriptError, ScriptErrorKind, json::Bridge,
+    RuntimeOptions, ScriptError, ScriptErrorKind, bridge::Bridge,
 };
 
 /// Only settlement authority survives after the input becomes a private VM draft.
@@ -336,14 +336,13 @@ fn output<'js>(
         .map_err(|e| bridge.failure(ctx, e))?;
     let draft: Value = project.call((draft,)).map_err(|e| bridge.failure(ctx, e))?;
     let function = bridge
-        .convert
+        .encode
         .clone()
         .restore(ctx)
         .map_err(|e| bridge.failure(ctx, e))?;
-    let converted: Object = function
-        .call((draft, false))
+    let text: String = function
+        .call((draft,))
         .map_err(|e| conversion_error(bridge.failure(ctx, e)))?;
-    let text: String = converted.get("json").map_err(|e| bridge.failure(ctx, e))?;
     if text.len() > options.json_limits.max_bytes {
         return Err(ScriptError::new(ScriptErrorKind::Json));
     }

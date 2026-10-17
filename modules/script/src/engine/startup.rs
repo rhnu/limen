@@ -174,13 +174,13 @@ async fn extract(
                 .restore(&ctx)
                 .and_then(|m| m.get::<_, Value>("default"))
                 .map_err(|e| module_error(bridge.failure(&ctx, e)))?;
-            let convert = bridge
-                .convert
+            let extract = bridge
+                .extract
                 .clone()
                 .restore(&ctx)
                 .map_err(|e| bridge.failure(&ctx, e))?;
-            let converted: Object = convert
-                .call((default, true))
+            let converted: Object = extract
+                .call((default,))
                 .map_err(|e| conversion_error(bridge.failure(&ctx, e)))?;
             let text: String = converted.get("json").map_err(|e| bridge.failure(&ctx, e))?;
             if text.len() > options.json_limits.max_bytes {

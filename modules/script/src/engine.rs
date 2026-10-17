@@ -14,8 +14,9 @@ use serde_json::Value as Json;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::{
-    Command, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, host,
-    json::{self, Bridge},
+    Command, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind,
+    bridge::{self, Bridge},
+    host,
 };
 
 type Hooks = Vec<Persistent<Function<'static>>>;
@@ -111,8 +112,8 @@ pub(crate) async fn run(
     let bridge = match context
         .with(|ctx| {
             host::install(&ctx, options.json_limits.max_bytes)
-                .map_err(|error| json::failure(&ctx, error))?;
-            json::bridge(&ctx, &options)
+                .map_err(|error| bridge::failure(&ctx, error))?;
+            bridge::install(&ctx, &options)
         })
         .await
     {

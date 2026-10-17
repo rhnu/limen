@@ -432,3 +432,63 @@ async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -
     }
     stop(&runtime).await
 }
+
+#[tokio::test]
+async fn captured_intrinsics_survive_config_extraction_and_capability_projection() -> TestResult {
+    let fixture = Fixture::new()?;
+    let path = fixture.write(
+        "config.js",
+        include_str!("../../fixtures/context/intrinsics.js"),
+    )?;
+    let options = crate::RuntimeOptions {
+        observation_names: vec!["changed".to_owned()],
+        ..crate::RuntimeOptions::default()
+    };
+    let (runtime, config) = crate::ScriptRuntime::start(path, options).await?;
+    let id = hook(&config, "onRequest")?;
+    for phase in ["beforeSend", "onContent", "onFinish"] {
+        let input = draft(phase);
+        let output = runtime.invoke(call(id, 1, input.clone())).await.outcome?;
+        ensure(
+            output.observations.events == [0],
+            "captured observation operations failed",
+        )?;
+        ensure(
+            output.context["meta"] == input["meta"],
+            "readonly facts changed",
+        )?;
+        match phase {
+            "beforeSend" => {
+                ensure(
+                    output.context["headers"]
+                        == json!([{ "name": "x-example", "value": "isolated" }]),
+                    "captured header operations failed",
+                )?;
+                ensure(
+                    output.context["rejection"] == json!({ "status": 403 }),
+                    "captured rejection operations failed",
+                )?;
+                ensure(
+                    output.context["state"]["checked"] == true,
+                    "request state did not commit",
+                )?;
+            },
+            "onContent" => {
+                ensure(
+                    output.context["events"] == json!([{ "text": "captured" }]),
+                    "captured replacement operations failed",
+                )?;
+                ensure(
+                    output.context["state"]["checked"] == true,
+                    "content state did not commit",
+                )?;
+            },
+            "onFinish" => ensure(
+                output.context == input,
+                "observer capability changed final facts",
+            )?,
+            _ => unreachable!(),
+        }
+    }
+    stop(&runtime).await
+}

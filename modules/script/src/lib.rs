@@ -1,5 +1,6 @@
 //! Bounded JavaScript configuration and hook execution on one owning thread.
 
+mod bridge;
 mod builtins;
 mod context;
 mod engine;
