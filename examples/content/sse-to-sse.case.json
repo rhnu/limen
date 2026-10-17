@@ -1,0 +1,118 @@
+{
+  "name": "synthetic-text-sse-to-sse",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "synthetic-tool.sse"
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "done": true,
+      "events": [
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant",
+                "content": "Hell"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "o "
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "reader "
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "😀\n"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "content-demo",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

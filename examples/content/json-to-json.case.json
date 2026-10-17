@@ -1,0 +1,69 @@
+{
+  "name": "synthetic-text-json-to-json",
+  "request": {
+    "model": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello"
+      }
+    ],
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "content-demo",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "demo-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_public",
+                "type": "function",
+                "function": {
+                  "name": "limen_emit_text",
+                  "arguments": "{\"text\":\"Hello world \\ud83d\\ude00\\n\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "sent": true,
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "content-demo",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "Hello reader 😀\n"
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    }
+  }
+}

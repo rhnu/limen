@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{Error, Report, discover, header_map, read, run_case, schema::Case, stream};
 use crate::bootstrap::Bootstrap;
 
+mod content;
 mod observation_output;
 mod policies;
 mod protocol;

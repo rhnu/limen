@@ -12,6 +12,14 @@ cargo run --locked -- test --config examples/testing/server.toml --cases example
 
 该目录演示全部四种 JSON/SSE 组合。`--cases` 可指向一个 `.case.json` 文件或目录；目录只扫描本层文件，按文件名排序。每个用例创建新的服务和 VM 生命周期，不继承前一用例的闭包状态。
 
+统一正文策略示例使用同一套 `onContent` 策略处理四种传输组合，包含跨 delta 文本替换和合成文本工具解析：
+
+```sh
+cargo run --locked -- test --config examples/content/server.toml --cases examples/content
+```
+
+配置与素材见 [`examples/content/`](../../examples/content/)，策略选项见[正文策略工厂](scripting.md#正文策略工厂)。
+
 第三方库示例需先按[开发指引](../development.md#前端与-javascript)构建，再执行：
 
 ```sh
@@ -91,6 +99,8 @@ fixture 中的非标准 JSON 响应用于检查网关保留对象字段的行为
 这是 `expect` 对象的内容，需放入完整用例。截断流用例应声明错误、`done: false`，并可检查已输出事件；SSE 的 `event: error` 不计入 `response.events`，错误本身用 `expect.error` 断言。
 
 `stats` 的三个分组可单独声明。`usage` 完整相等比较；`hookCalls` 和 `timingPresence` 仅比较声明的阶段或字段，未知名称会拒绝用例。空的 `stats` 不构成有效断言。用量字段与耗时口径见[原生统计](scripting.md#原生用量与阶段耗时)，回归素材见 [`fixtures/gateway/statistics/`](../../fixtures/gateway/statistics/)。确定性时间算术由 Rust 单元测试检查，离线用例不对真实运行耗时设置脆弱的精确值或阈值。
+
+`stats.hookCalls.onContent` 统计语义事件回调次数，不是源 JSON 或 SSE 帧数量；一份源正文可产生多个 part 与 choice 生命周期事件。验证统一正文策略时同时检查最终正文、state 和失败 phase，避免只凭调用次数判断变换正确。当前 step 的同源语义批次失败时，state 和受控观测一起丢弃，前序已提交批次保留。
 
 失败分类可直接定位检查边界：`outbound.body` 指向请求策略，`response.events` 指向事件变换，`state` 指向提交，`error` 指向终态。fixture 使用合成数据；即使比较器隐藏值，也不要把真实 token、正文或 Cookie 保存进仓库。
 

@@ -4,6 +4,7 @@ use super::{Fixture, TestResult, call, ensure, hook, stop, wait_for};
 use crate::{RuntimeStatus, ScriptErrorKind};
 
 mod client;
+mod content;
 mod error_response;
 mod rejection;
 
@@ -23,7 +24,10 @@ fn draft(phase: &str) -> Value {
             value["contentType"] = json!("text/plain");
             value["error"] = json!({"code": "upstream_failed", "status": 502});
         },
-        "onUpstreamEvent" | "onStreamEvent" => value["event"] = json!({"text": "synthetic"}),
+        "onContent" | "onUpstreamEvent" | "onStreamEvent" => {
+            value["event"] = json!({"text": "synthetic"});
+            value["sse"] = Value::Null;
+        },
         "onError" | "onFinish" => {
             value["outcome"] = json!("success");
             value["stats"] = json!({"outputBytes": 0});
@@ -295,7 +299,7 @@ async fn stream() -> TestResult {
         .start(include_str!("../../fixtures/context/stream.js"))
         .await?;
     let id = hook(&config, "onRequest")?;
-    for phase in ["onUpstreamEvent", "onStreamEvent"] {
+    for phase in ["onContent", "onUpstreamEvent", "onStreamEvent"] {
         for (operation, expected) in [
             ("edit", json!([{"text":"initial edited"}])),
             ("replace", json!([{"text":"replacement"}])),
@@ -402,7 +406,7 @@ async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -
         .await?;
     let id = hook(&config, "onRequest")?;
     let envelope = json!({"event":"annotation","id":"frame-1","retry":"1500"});
-    for phase in ["onUpstreamEvent", "onStreamEvent"] {
+    for phase in ["onContent", "onUpstreamEvent", "onStreamEvent"] {
         let input =
             json!({"meta":{"phase":phase,"operation":"read"},"state":{},"event":{},"sse":envelope});
         let output = runtime.invoke(call(id, 1, input)).await.into_context()?;

@@ -15,7 +15,7 @@ fn options(capacity: usize) -> RuntimeOptions {
 
 fn context(phase: &str, mode: &str) -> Value {
     let mut context = json!({"meta": {"phase": phase, "mode": mode}, "state": {}});
-    if matches!(phase, "onUpstreamEvent" | "onStreamEvent") {
+    if matches!(phase, "onContent" | "onUpstreamEvent" | "onStreamEvent") {
         context["event"] = json!({});
     }
     context
@@ -47,6 +47,7 @@ async fn sync_async_and_observer_phases_export_private_bounded_batches() -> Test
         "beforeSend",
         "afterReceive",
         "onResponse",
+        "onContent",
         "onUpstreamEvent",
         "onStreamEvent",
         "onErrorResponse",

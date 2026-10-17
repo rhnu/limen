@@ -6,20 +6,24 @@
 
 表中各 hook 阶段内部均按 provider → model 正序执行：
 
-| 上游实际格式 | 客户端原始 stream | 正文处理顺序                                                       |
-| ------------ | ----------------- | ------------------------------------------------------------------ |
-| JSON         | `false`           | 完整 JSON → 别名 → `onResponse` → JSON                             |
-| JSON         | `true`            | 完整 JSON → 别名 → `onResponse` → 转 chunk → `onStreamEvent` → SSE |
-| SSE          | `false`           | 解码 chunk → `onUpstreamEvent` → 聚合 → 别名 → `onResponse` → JSON |
-| SSE          | `true`            | 解码 chunk → `onUpstreamEvent` → 别名 → `onStreamEvent` → SSE      |
+| 上游实际格式 | 客户端原始 stream | 正文处理顺序                                                                     |
+| ------------ | ----------------- | -------------------------------------------------------------------------------- |
+| JSON         | `false`           | 完整 JSON → 别名 → `onResponse` → `onContent` → JSON                             |
+| JSON         | `true`            | 完整 JSON → 别名 → `onResponse` → `onContent` → 转 chunk → `onStreamEvent` → SSE |
+| SSE          | `false`           | 解码 chunk → `onUpstreamEvent` → `onContent` → 聚合 → 别名 → `onResponse` → JSON |
+| SSE          | `true`            | 解码 chunk → `onUpstreamEvent` → `onContent` → 别名 → `onStreamEvent` → SSE      |
 
 `onResponse` 不参与 SSE → SSE，`onUpstreamEvent` 不参与 JSON 上游，`onStreamEvent` 只在向客户端输出 SSE 时执行。别名只替换已有 `model` 字段；响应 hook 之后不再强制覆盖，因此脚本可明确设置对外模型名。
+
+`onContent` 将源正文中的已知内容投影为语义事件，一轮管线覆盖四条路径。JSON 合成 chunk 和 SSE 聚合后的完整 JSON 不会再次触发它；纯用量、标注或未知元数据可能没有内容事件。逐事件结构、批次提交和有界策略见[统一正文变换](scripting.md#统一正文变换)。原始 `onResponse`、`onUpstreamEvent`、`onStreamEvent` 继续处理各自编码边界的开放对象。
 
 所有路径都先执行 `afterReceive`。上游成功响应接受的媒体类型为 `application/json` 与 `text/event-stream`，不区分大小写且允许参数；缺失、其他媒体类型、204/205 或无法解析的正文会失败，不根据内容猜格式。上游 HTTP 失败走下面的错误响应路径。
 
 ## 同形传递与跨形转换
 
 JSON → JSON 要求正文为合法 JSON 对象，保留扩展字段，不强制完整 Chat response schema。SSE 分帧与 Chat 解释独立；SSE → SSE 保留原始事件的命名、ID、retry、注释与未知 JSON 扩展。数据未变化时保留原始载荷，别名或 hook 改写时只重编码 data；改写后的字节不保证相同。
+
+`onContent` 的同形渲染以私有源布局为模板，只修改已知内容叶子，保留其他字段，不借用跨形转换的字段白名单。语义投影并不扩大跨形转换能力；改写后的内容遇到依赖旧位置的非空标注、logprobs 或 offset 时保守拒绝，包括在后续帧才出现的位置元数据。
 
 原生 SSE 的 `max_event_bytes` 按收到的完整帧计算；改写后的帧按实际编码字节检查，不用规范化 JSON 的大小替代原帧大小。JSON 解析在进入下一层前限制嵌套，支持配置允许的最大深度 128；节点数与安全数字检查仍作用于解析后的 JSON 树。
 
@@ -31,7 +35,7 @@ JSON ↔ SSE 转换按字段语义处理文本、内容块、`refusal`、字符�
 
 JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆分的文本在 UTF-8 边界切分，内容块数组按块拆分；不能安全拆分且超出事件上限的数据明确失败。SSE → JSON 受累计输入事件数、累计字节和完整输出 JSON 限制，不缓存完整事件历史。
 
-可运行的四路径例子在 [`examples/testing/`](../../examples/testing/)，工具、扩展和截断回归素材在 [`fixtures/gateway/transport/`](../../fixtures/gateway/transport/)。
+可运行的四路径例子在 [`examples/testing/`](../../examples/testing/)，统一正文策略例子在 [`examples/content/`](../../examples/content/)，工具、扩展和截断回归素材在 [`fixtures/gateway/transport/`](../../fixtures/gateway/transport/)。
 
 ## SSE 完成与失败
 
@@ -40,6 +44,8 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
 完成后仍可接收标注、音频到期时间、usage 和相同 finish reason 的统计尾事件，无需附带特定供应商的 usage 形状。它们不重新打开生成状态。继续增加正文、refusal、工具、推理或音频数据，以及改变既定 finish reason，仍然失败。未知扩展可同形保留，但不能据此推断 choice 已完成。hook 改写后同样检查下游生成状态；原生上游完成事实独立保留。
 
 上游必须提供由空行结束的 `data: [DONE]`；仅有 finish_reason 或直接 EOF 都算截断。网关在第一个有效 `[DONE]` 立即停止读取，忽略其后字节。注释、多行 data、UTF-8 BOM 和 CR/LF/CRLF 均受有界分帧处理。命名事件保留，数据仍按 Chat 解释；原生 Messages/Gemini 流不属于支持范围。
+
+语义 `part_end` 在 `choice_end` 之前提供缓冲尾部的输出机会；choice 结束后不能重新生成。`response_end` 只有在有效 `[DONE]` 和 choice 完成校验后才产生，EOF、失败、超时和取消都不会触发成功刷新；只读 `onFinish` 不能补写正文。
 
 注释和无 data 帧向 SSE 下游转发，JSON 下游聚合时忽略。首个存活帧会提交 HTTP 状态，后续错误只能流内表达；它们不触发业务事件 hook、不增加生成计数，也不延长总请求期限。
 

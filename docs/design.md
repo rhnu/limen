@@ -4,17 +4,17 @@
 
 ## 职责与依赖方向
 
-| 部分              | 职责                                                         |
-| ----------------- | ------------------------------------------------------------ |
-| 根包 `src/`       | CLI、启动、HTTP 服务、请求生命周期、上游调用、离线管线与诊断 |
-| `modules/config`  | 服务配置解析、业务配置验证、共享 JSON 和 URL 边界            |
-| `modules/script`  | 本地 ESM 加载、QuickJS 所有权、hook 调度及 JS/JSON 桥接      |
-| `modules/chat`    | 有界 SSE 分帧、Chat 事件解释、完成状态和字段级 JSON/SSE 转换 |
-| `modules/storage` | SQLite schema、记录、保留清理和有界只读查询                  |
-| `web/`            | 同源只读管理界面、浏览器凭据存储和 hash 导航                 |
-| `sdk/`            | 业务脚本的编辑类型契约、纯 ESM 策略库及类型契约检查          |
-| `api/`            | 管理 API 的 OpenAPI 契约及独立客户端生成工具                 |
-| `xtask`           | 受父进程监督的隔离测试与进程树清理                           |
+| 部分              | 职责                                                                   |
+| ----------------- | ---------------------------------------------------------------------- |
+| 根包 `src/`       | CLI、启动、HTTP 服务、请求生命周期、上游调用、离线管线与诊断           |
+| `modules/config`  | 服务配置解析、业务配置验证、共享 JSON 和 URL 边界                      |
+| `modules/script`  | 本地 ESM 加载、QuickJS 所有权、hook 调度及 JS/JSON 桥接                |
+| `modules/chat`    | 有界 SSE 分帧、Chat 事件与正文语义投影、完成状态和字段级 JSON/SSE 转换 |
+| `modules/storage` | SQLite schema、记录、保留清理和有界只读查询                            |
+| `web/`            | 同源只读管理界面、浏览器凭据存储和 hash 导航                           |
+| `sdk/`            | 业务脚本的编辑类型契约、纯 ESM 策略库及类型契约检查                    |
+| `api/`            | 管理 API 的 OpenAPI 契约及独立客户端生成工具                           |
+| `xtask`           | 受父进程监督的隔离测试与进程树清理                                     |
 
 主应用组合四个职责库；库不初始化进程日志或决定进程退出。依赖和 lint 在 workspace 根集中管理，工程规则见 [`AGENTS.md`](../AGENTS.md)。
 
@@ -24,7 +24,7 @@
 认证与输入校验 → onRequest → 路由一次 → defaults 合并
   → provider / model beforeSend → 单次上游请求
   → 固定上游状态与媒体类型 → provider / model afterReceive
-  → 有界 JSON / SSE 分帧 → Chat 协议解释 → 业务正文 hook
+  → 有界 JSON / SSE 分帧 → Chat 协议解释 → 原始正文 hook → onContent
   → 同形保留或字段级 JSON/SSE 转换 → 下游响应
   → 有界终结处理：未发响应的失败经 onErrorResponse → 错误响应
   → 失败时 onError，随后 onFinish
@@ -44,6 +44,10 @@ Chat 解释层独立于分帧和业务 hook，区分生成增量、累计用量�
 
 JSON → JSON 保持开放对象契约。SSE → SSE 不以跨形转换的字段白名单限制可传递数据。跨形转换依字段语义处理文本、内容块、推理、工具、logprobs、音频与累计 usage；传输专用字段有显式处置规则。没有已知合并语义的扩展在同形保留，跨形明确拒绝，不能通用深合并或静默丢弃。JSON 合成 SSE 只保证数据表达，不恢复真实 token 时序。
 
+`onContent` 是四种传输路径共用的一轮正文变换：完整 JSON 在 `onResponse` 后投影，原生 SSE 在 `onUpstreamEvent` 后、聚合或 `onStreamEvent` 前投影。SSE 聚合后的 `onResponse` 保留完整对象边界，不重新执行正文语义策略。语义事件围绕已知的文本、推理、refusal 与工具字符串叶子表达 part 开始、增量、结束及 choice/response 结束，不承担所有供应商协议的通用中间模型。原始正文和源布局只由 Rust 保留，同形渲染只修改已知叶子；未知字段不用经过 JSON → chunk → JSON 的白名单往返。原始 hook 继续承担开放对象、未知结构及编码适配。精确事件契约见[统一正文变换](features/scripting.md#统一正文变换)。
+
+语义投影与每个 step 的输出生命周期分别有界跟踪，不缓存完整流或工具参数历史。后续 step 删除或改变部件，不会改变前序 step 的历史输出视图。源投影与所有 step 保留的标识、类型和结束原因合计受 `max_json_nodes` 记录数与 `max_output_bytes` 保守字节预算限制，不能通过增加 step 放大请求状态容量。`part_end` 先于 `choice_end`，允许策略及时刷新缓冲；已完成 choice 不能重新生成。`response_end` 只来自合法完整 JSON 或同时通过 `[DONE]` 与 choice 完成检查的 SSE，用于最终状态校验，不再生成部件；EOF、失败、超时和取消不能触发成功刷新。内容改写前后出现依赖内容位置的非空标注、logprobs 或 offset 会保守拒绝，不保留失效位置。
+
 HTTP 读取结束、协议终止、choice 完成和用量质量分别记录。Chat 流成功仍要求有效 `[DONE]` 与全部已观察生成 choice 完成；finish_reason 不覆盖网络错误或残帧。SSE 注释可作为下游存活信号，发送后 HTTP 状态已经提交；心跳不计入生成内容，也不延长总期限。原生累计 usage 取最新有效快照而不求和，正常增长不判冲突；计数回退与非法计数影响观测质量。
 
 协议解释不以供应商名分支，差异按事件与字段的语义表达。范围内的行为测试覆盖分帧、字段合并、hook 提交、离线组合与受监督的合成 HTTP；真实供应商与 Docker 运行验收各自独立。
@@ -53,6 +57,8 @@ HTTP 读取结束、协议终止、choice 完成和用量质量分别记录。Ch
 每个服务生命周期只加载一次业务模块，保留其闭包和 hook。QuickJS 的 VM、上下文、Promise、函数与持久句柄全部由同一个专用线程创建、使用和销毁；跨线程只传 owned JSON、ID、取消信号和终态。
 
 每次 hook 收到私有草稿。只有函数或 Promise 成功结束、返回值满足契约、草稿通过校验且调用仍有效，Rust 才提交结果。失败不回滚已完成的前序 hook，也不能回滚 JS 闭包或全局变量的副作用。请求状态必须放在 `ctx.state`，不能依靠共享闭包隔离请求。
+
+`onContent` 以同一个源正文在一个 step 内的全部语义回调为事务：回调顺序传递暂存 state，事件、state 与观测在完整语义输出合法、渲染成功且 JSON、展开与编码预算都通过后一起提交。当前 step 后续回调或渲染失败会丢弃整个批次；前序已提交 step 和源帧不回滚。取消与超时同样撤销当前批次提交资格。
 
 取消与超时会撤销结果的提交资格；停止等待 Promise 不代表它的 JS 工作已经停止。同步执行预算、连续微任务预算、内存限制和调度容量分别约束 VM 工作。运行时退役是服务故障，应用停止接入并退出，由进程管理器决定重启。
 

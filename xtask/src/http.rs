@@ -1,5 +1,6 @@
 //! Local HTTP experiments with synthetic upstreams and parent-owned temporary files.
 
+mod content;
 mod fixture;
 mod lifecycle;
 mod logging;
@@ -22,6 +23,7 @@ pub const CASES: &[&str] = &[
     "retirement",
     "resources",
     "stream-boundary",
+    "content-transform",
     "statistics",
     "management",
     "persistence",
@@ -39,6 +41,7 @@ pub async fn run(case: &str, executable: &Path, directory: &Path) -> Result<()> 
         "retirement" => lifecycle::retirement(&mut laboratory).await,
         "resources" => lifecycle::resources(&mut laboratory).await,
         "stream-boundary" => transport::run(&mut laboratory).await,
+        "content-transform" => content::run(&mut laboratory).await,
         "statistics" => statistics::run(&mut laboratory).await,
         "management" => management::run(&mut laboratory).await,
         "persistence" => management::persistence(&mut laboratory).await,

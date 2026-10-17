@@ -45,7 +45,7 @@
     return value !== null && typeof value === "object" && !isProxy(value)
       && (proto(value) === plain || proto(value) === null);
   }
-  const stages = ["beforeSend", "afterReceive", "onResponse", "onUpstreamEvent", "onStreamEvent", "onErrorResponse"];
+  const stages = ["beforeSend", "afterReceive", "onResponse", "onContent", "onUpstreamEvent", "onStreamEvent", "onErrorResponse"];
   function convert(root, capture) {
     const hooks = setProto([], null);
     const slots = new WeakMapType();

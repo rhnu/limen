@@ -116,6 +116,38 @@ fn error_response_hook_types_report_safe_schema_paths() {
 }
 
 #[test]
+fn content_hooks_register_as_the_only_pipeline_phase_and_coexist_with_transport_hooks() {
+    let mut value = basic();
+    value["providers"]["primary"]["pipeline"] = json!([{"name": "content", "onContent": 1}]);
+    value["models"]["chat"]["pipeline"] = json!([{
+        "name": "content", "onContent": 2, "onResponse": 3,
+        "onUpstreamEvent": 4, "onStreamEvent": 5
+    }]);
+    let config = parse(value).unwrap();
+    assert_eq!(config.providers["primary"].pipeline[0].on_content, Some(1));
+    let model = &config.models["chat"].pipeline[0];
+    assert_eq!(model.on_content, Some(2));
+    assert_eq!(model.on_response, Some(3));
+    assert_eq!(model.on_upstream_event, Some(4));
+    assert_eq!(model.on_stream_event, Some(5));
+}
+
+#[test]
+fn content_hook_types_report_safe_schema_paths() {
+    for invalid in [Value::Null, json!("private-function"), json!({}), json!(-1)] {
+        for (layer, name) in [("providers", "primary"), ("models", "chat")] {
+            let mut value = basic();
+            value[layer][name]["pipeline"] =
+                json!([{"name": "private-step", "onContent": invalid}]);
+            let error = parse(value).err().unwrap();
+            assert_eq!(error.kind, ConfigErrorKind::Schema);
+            assert_eq!(error.field, format!("{layer}.*.pipeline.*.onContent"));
+            assert!(!format!("{error:?}").contains("private-"));
+        }
+    }
+}
+
+#[test]
 fn rejects_unsafe_or_repaired_endpoints() {
     for endpoint in [
         "ftp://example.invalid/v1",

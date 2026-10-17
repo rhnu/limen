@@ -1,0 +1,14 @@
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"text\":\"Hell","name":"limen_emit_text"},"id":"call_public","type":"function"}],"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"o wor"}}]},"finish_reason":null}]}
+
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ld \\ud8"}}]},"finish_reason":null}]}
+
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"3d\\u"}}]},"finish_reason":null}]}
+
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"de00\\n\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"content-demo","object":"chat.completion.chunk","created":1,"model":"demo-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

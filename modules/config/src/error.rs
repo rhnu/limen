@@ -290,6 +290,7 @@ fn schema_name(key: &str) -> &str {
         | "beforeSend"
         | "afterReceive"
         | "onResponse"
+        | "onContent"
         | "onUpstreamEvent"
         | "onStreamEvent" => key,
         _ => "*",

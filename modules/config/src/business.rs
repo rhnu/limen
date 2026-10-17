@@ -71,6 +71,8 @@ pub struct PipelineStep {
     #[serde(default, deserialize_with = "present_option")]
     pub on_response: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
+    pub on_content: Option<HookId>,
+    #[serde(default, deserialize_with = "present_option")]
     pub on_upstream_event: Option<HookId>,
     #[serde(default, deserialize_with = "present_option")]
     pub on_stream_event: Option<HookId>,
@@ -281,6 +283,7 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
             step.before_send,
             step.after_receive,
             step.on_response,
+            step.on_content,
             step.on_upstream_event,
             step.on_stream_event,
             step.on_error_response,

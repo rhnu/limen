@@ -10,17 +10,18 @@
 
 全局 `onRequest` 在路由之前执行。路由后，每个阶段都遍历 provider.pipeline，再遍历 model.pipeline，均按数组正序；step 名称在所属 pipeline 内必须唯一，每个 step 至少有一个 hook。是否进入响应或事件阶段取决于[四种传输路径](transport.md#四种传输路径)。
 
-| Hook              | 触发点                            | 可修改内容                                          |
-| ----------------- | --------------------------------- | --------------------------------------------------- |
-| `onRequest`       | 认证、正文校验后，路由前          | `body`、`state`；可 `reject()`                      |
-| `beforeSend`      | defaults 合并后，发送前           | `body`、`url`、`headers`、`state`；可 `reject()`    |
-| `afterReceive`    | 收到上游头后，读正文前            | `status`、响应 `headers`、`state`                   |
-| `onUpstreamEvent` | 每个真实上游 SSE JSON 数据事件    | `event`、事件替换、`state`                          |
-| `onResponse`      | 完整 JSON，包括 SSE 聚合结果      | `body`、`state`                                     |
-| `onStreamEvent`   | 每个即将发给客户端的 chunk        | `event`、事件替换、`state`                          |
-| `onErrorResponse` | 失败已确定、错误响应尚未发出      | `status`、`body`、`contentType`、`headers`、`state` |
-| `onError`         | 请求失败或取消后                  | 只读观察                                            |
-| `onFinish`        | 每个终态，失败时位于 `onError` 后 | 只读观察                                            |
+| Hook              | 触发点                             | 可修改内容                                          |
+| ----------------- | ---------------------------------- | --------------------------------------------------- |
+| `onRequest`       | 认证、正文校验后，路由前           | `body`、`state`；可 `reject()`                      |
+| `beforeSend`      | defaults 合并后，发送前            | `body`、`url`、`headers`、`state`；可 `reject()`    |
+| `afterReceive`    | 收到上游头后，读正文前             | `status`、响应 `headers`、`state`                   |
+| `onUpstreamEvent` | 每个真实上游 SSE JSON 数据事件     | `event`、事件替换、`state`                          |
+| `onResponse`      | 完整 JSON，包括 SSE 聚合结果       | `body`、`state`                                     |
+| `onContent`       | 正文中的语义事件，覆盖四种传输路径 | `event`、事件替换、`state`                          |
+| `onStreamEvent`   | 每个即将发给客户端的 chunk         | `event`、事件替换、`state`                          |
+| `onErrorResponse` | 失败已确定、错误响应尚未发出       | `status`、`body`、`contentType`、`headers`、`state` |
+| `onError`         | 请求失败或取消后                   | 只读观察                                            |
+| `onFinish`        | 每个终态，失败时位于 `onError` 后  | 只读观察                                            |
 
 所有 hook 必须返回 `undefined` 或最终 resolve 为 `undefined` 的原生 Promise。通过修改 `ctx` 工作，不返回替代正文、事件、上下文或错误对象；`return ctx.body` 和 `return null` 都违反契约。
 
@@ -38,7 +39,7 @@ const limitOutput = {
 // 将 limitOutput 放入所需 provider 或 model 的 pipeline。
 ```
 
-`body` 与 `event` 可直接修改或整体替换。`state` 引用固定，初始为 `{}`，其 JSON 字段可修改；不允许添加任意顶层上下文字段。每次调用成功后才提交通过校验的草稿，throw、reject 的 Promise、非法返回值或非法草稿都不会提交当前调用的修改。前序已提交的修改仍保留。
+`body` 与 `event` 可直接修改或整体替换。`state` 引用固定，初始为 `{}`，其 JSON 字段可修改；不允许添加任意顶层上下文字段。调用成功且草稿通过校验后才有提交资格，throw、reject 的 Promise、非法返回值或非法草稿都不会提交当前调用的修改。`onContent` 还遵守下面的源正文批次提交规则。前序已提交的修改仍保留。
 
 `beforeSend` 修改 `body.model` 或 `url` 只改变这次实际发送，不重新路由。不要用模块级可变变量保存请求数据：多个请求的 Promise 可交错完成，闭包副作用也不会因 hook 失败或取消回滚。
 
@@ -177,15 +178,66 @@ const observeLimit = {
 };
 ```
 
-事件先进入当前调用的私有缓冲，只有 hook 成功、草稿满足网关阶段校验并提交时才生效。有效的 `reject()` 也会提交事件；throw、Promise 拒绝、非法草稿、取消和超时丢弃当前批次，包括其溢出计数。后续 hook 或请求失败不撤销前序已提交事件。`onError`、`onFinish` 可以记录事件，其余观察数据仍然只读；观察失败不覆盖主终态，也不保证后续观察能执行。停止等待 Promise 不会停止其 JS 工作，但晚到批次没有提交资格。
+事件先进入当前调用的私有缓冲，只有 hook 成功、草稿满足网关阶段校验并提交时才生效。`onContent` 的观测与 state 一起等待整个源正文在当前 step 的语义批次通过校验。有效的 `reject()` 也会提交事件；throw、Promise 拒绝、非法草稿、取消和超时丢弃当前批次，包括其溢出计数。后续 hook 或请求失败不撤销前序已提交事件。`onError`、`onFinish` 可以记录事件，其余观察数据仍然只读；观察失败不覆盖主终态，也不保证后续观察能执行。停止等待 Promise 不会停止其 JS 工作，但晚到批次没有提交资格。
 
 同一调用中已接受的事件名去重。`max_observations_per_hook` 默认 8，范围 1–64；`max_observations_per_request` 默认 64，范围 1–4096，覆盖主流程与终结观察。请求配额按每次 hook 提交的唯一事件次数计算，同组聚合仍消耗配额。超额项丢弃并累计 `dropped`，不改变业务结果；观测私有 envelope 同时受整个 hook 的 JSON 与 VM 预算约束。
 
 终结后按事件名、phase、step 聚合次数，通过 `tracing` 输出有界的 `script observation` 元数据及必要的溢出计数，关联信息由 Rust 添加。接口不接受自由文本、任意标签、数值或 payload；注册名只应表达批准的非敏感事件。诊断进入滚动文件与 stderr，受日志过滤、队列容量和输出健康影响；usage 事实独立存入数据库。事件不是审计持久化或外部通知保证。离线测试可以[断言完整观测结果](testing.md#断言结果)。
 
-## 流事件替换
+## 统一正文变换
 
-事件 hook 默认继续发送修改后的 `ctx.event`；调用 `ctx.replaceEvents(events)` 可丢弃、替换或按顺序拆分事件，每次调用最多一次：
+修改文本或工具参数等已知正文内容时，使用 pipeline step 的 `onContent`。同一套策略覆盖 JSON → JSON、JSON → SSE、SSE → JSON 和 SSE → SSE。完整 JSON 先执行 `onResponse`，再投影语义事件；原生 SSE 先执行 `onUpstreamEvent`，再投影，变换结果随后聚合或进入 `onStreamEvent`。SSE 聚合后的 `onResponse` 仍可改写完整原始对象，但不会再次执行 `onContent`。完整顺序见[四种传输路径](transport.md#四种传输路径)。
+
+每个语义事件依次调用 `onContent(ctx)`。`ctx.event` 是下表中的普通 JSON 对象，可直接编辑或整体替换；`ctx.replaceEvents(array)` 每次回调最多调用一次，允许输出零到多个事件，默认输出编辑后的单个事件。替换结果按顺序进入下一个 step，不重新调用当前 step。`ctx.state` 可存有界的跨事件解析状态，引用固定。`ctx.sse` 是源 SSE 的只读 `event`、`id`、`retry` 信封；完整 JSON 和最终 `response_end` 的信封为 `null`。
+
+| `type`         | 字段与含义                                                                                                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `part_start`   | `choice`、`part`、`kind`；kind 为 `text`、`reasoning`、`refusal` 或 `tool`。tool 时必须有 `tool: { index, type, id?, name? }`，type 为 `function`、`custom` 或 `legacy`                                    |
+| `part_delta`   | `choice`、`part`、字符串 `text`；工具元数据可带 `tool: { id?, name?, type? }`。名称与 ID 可分段；尚未收到参数时允许明确为 function/custom。工具的 text 是原始参数或输入字符串片段，不承诺每片都是完整 JSON |
+| `part_end`     | `choice`、`part`；有上游结束原因时带字符串 `finishReason`，用于在 choice 关闭前输出缓冲尾部                                                                                                                |
+| `choice_end`   | `choice`、字符串 `finishReason`；之后不能继续向该 choice 生成内容                                                                                                                                          |
+| `response_end` | 全部源正文成功完成；没有额外字段                                                                                                                                                                           |
+
+`choice` 是非负整数，`part` 是当前 choice 内非空的稳定标识。不要解析或自行依赖生成的 part 名称格式。事件只允许对应的已知字段；delta 只能位于 start 与 end 之间，同一个 part 不能重复开始或结束。完整 JSON 在正文边界关闭 part；没有 finish reason 时不伪造 `choice_end`。需要保留片段尾部的策略应在 `part_end` 输出，不能等到 `choice_end` 或 `response_end` 再向已经结束的 choice 追加内容。
+
+一次源正文是一个完整 JSON 对象或一个源 SSE 数据载荷。同一个 step 对它产生的多个语义回调顺序执行，后一次可读到前一次暂存的 state；全部事件合法、生命周期合法、渲染后正文及展开和编码预算均通过后，才一起提交 state 和受控观测。后面的回调或渲染失败会丢弃当前 step 整批修改，前序已提交的 step 和源帧保持有效。JS 闭包副作用仍无法回滚。
+
+`response_end` 只在完整 JSON 合法完成，或 SSE 同时满足有效 `[DONE]` 与 choice 完成检查后发出。它允许更新 state 与记录观测，不能生成新的正文部件或代替 part 的收尾。EOF、读取错误、超时和取消不会产生成功结束通知，也不会帮策略刷新缓冲。`onFinish` 继续只读观察，不能用于补发内容。
+
+每个 step 保留独立的输出生命周期，源投影与所有 step 的保留状态合计受 `max_json_nodes` 记录数和 `max_output_bytes` 保守字节预算限制；标识、工具类型、choice 及结束原因都会计入。完整源载荷的事件展开与输出另受原有累计预算约束，串联策略不会重置预算。建议只在 `ctx.state` 保存必要的解析状态；需要完整字符串时使用下述显式有界映射。
+
+投影覆盖已知的文本、推理、refusal 和 function/custom/legacy 工具字符串叶子，不是覆盖所有供应商协议的通用模型。源布局与未知字段由 Rust 私有保留；同形变换只改写已理解的叶子，不经过 JSON → chunk → JSON 的转换白名单往返。未知内容块和附加字段可原样保留，不能通过语义事件任意构造它们；结构适配继续使用底层原始 hook。修改内容可能使标注、logprobs 或 offset 失去对应关系，因此同一响应中较早、当前或后续帧出现非空位置元数据都会与内容改写冲突并保守拒绝，不能把旧位置当成新正文的有效标注。
+
+### 正文策略工厂
+
+[`sdk/content/index.js`](../../sdk/content/index.js) 提供纯 ESM 工厂，返回普通 pipeline step。使用例子：
+
+```js
+import { replaceText } from "../../sdk/content/index.js";
+
+const pipeline = [replaceText({
+  name: "replace-brand",
+  search: "old-name",
+  replacement: "new-name",
+  maxBufferedChars: 64,
+})];
+```
+
+路径适用于仓库内 `examples/content/config.js`；把 pipeline 放入所需 provider 或 model，并按部署位置调整导入路径。策略将请求数据放在 `ctx.state`，同一个 step 可供多个请求复用。完整选项与编辑类型见 [`sdk/content/index.d.ts`](../../sdk/content/index.d.ts)。
+
+- `replaceText({ name, search, replacement, maxBufferedChars, maxParts?, stateKey? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
+- `mapPartText({ name, kinds, maxBufferedChars, transform, maxParts?, stateKey? })` 缓冲所选 text/reasoning/refusal/tool part 的字符串，在 `part_end` 调用同步 `transform(text, info)`，返回替换字符串。`info` 只读，包含 choice、part、kind 和可选 finishReason。工具 ID/名称元数据仍及时传递，参数文字等待映射完成；全文正则或工具参数 JSON 编辑可以使用这一模式。每个 part 的保留文本受必填 UTF-16 长度上限约束，超限即失败；输出另受网关预算约束。该模式会延迟正文交付，流中断时不会调用映射函数或成功刷新缓冲。
+- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts?, stateKey? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不缓存完整参数字符串；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
+
+工厂的 `maxParts` 默认 64；可选 `stateKey` 用于隔离多个策略实例，不要让不同策略共享同一键。`syntheticTextTool` 的 `maxPendingEvents` 默认 64；`maxBufferedChars` 限制尚未判定工具身份时暂存事件的 JSON 字符串长度与工具元数据，必须至少覆盖工具名长度，不限制完整回答长度。所有输出仍受网关事件、JSON 和字节预算约束。
+
+`syntheticTextTool` 在请求使用 legacy `functions`/`function_call`、`response_format`、非 1 的 `n`、`parallel_tool_calls: true`、非缺省/`auto` 的 `tool_choice`、非 function 工具或工具名冲突时拒绝 422。工具内容语法错误会失败；`length` 或 `content_filter` 允许在合法但未完成的 JSON 前缀处关闭，保留已经收到的文本和原结束原因，不补造后续字符。工厂不会在上游不遵循工具要求时重试或故障转移。
+
+可运行配置与四路径用例见 [`examples/content/`](../../examples/content/)；执行入口见[离线测试](testing.md#运行示例)。
+
+## 原始流事件替换
+
+`onUpstreamEvent` 和 `onStreamEvent` 直接处理原始 Chat chunk，与完整对象的 `onResponse` 一起保留对未知字段和编码结构的适配能力。它们是独立能力。原始事件 hook 默认继续发送修改后的 `ctx.event`；调用 `ctx.replaceEvents(events)` 可丢弃、替换或按顺序拆分事件，每次调用最多一次：
 
 ```js
 const dropEmpty = {

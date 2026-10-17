@@ -7,7 +7,7 @@ Limen 是供个人与私网使用的 Chat Completions 网关。Rust 负责 HTTP�
 | 目标                                      | 文档                                     |
 | ----------------------------------------- | ---------------------------------------- |
 | 配置监听、认证、provider 与模型别名       | [配置与接入](features/configuration.md)  |
-| 编写 hook、使用策略库与观测、接入第三方库 | [JavaScript 脚本](features/scripting.md) |
+| 编写 hook、统一正文变换、使用策略库与观测 | [JavaScript 脚本](features/scripting.md) |
 | 理解 JSON/SSE 转换、流结束和错误          | [响应与流协议](features/transport.md)    |
 | 用合成上游验证自己的配置与脚本            | [离线测试](features/testing.md)          |
 | 在浏览器或 API 查询请求、用量与日志       | [记录与管理界面](features/management.md) |

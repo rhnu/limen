@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 const MAX_SAFE_COUNT: u64 = 9_007_199_254_740_991;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Observations {
     limit: usize,
     accepted: usize,
@@ -11,6 +11,7 @@ pub(super) struct Observations {
     entries: Vec<Entry>,
 }
 
+#[derive(Clone)]
 struct Entry {
     event: u8,
     phase: &'static str,

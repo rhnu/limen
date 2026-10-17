@@ -102,10 +102,10 @@
     if (meta === null || typeof meta !== "object" || isArray(meta)) fail();
     const phase = read(meta, "phase");
     if (phase !== "onRequest" && phase !== "beforeSend" && phase !== "afterReceive"
-        && phase !== "onResponse" && phase !== "onUpstreamEvent" && phase !== "onStreamEvent"
+        && phase !== "onResponse" && phase !== "onContent" && phase !== "onUpstreamEvent" && phase !== "onStreamEvent"
         && phase !== "onErrorResponse" && phase !== "onError" && phase !== "onFinish") fail();
     const observer = phase === "onError" || phase === "onFinish";
-    const stream = phase === "onUpstreamEvent" || phase === "onStreamEvent";
+    const eventHook = phase === "onContent" || phase === "onUpstreamEvent" || phase === "onStreamEvent";
     const state = read(root, "state");
     if (state === null || typeof state !== "object" || isArray(state)) fail();
     const keys = ownKeys(root);
@@ -126,7 +126,7 @@
       }
       observationEvents[observationEvents.length] = id;
     }) });
-    if (stream && (!descriptor(root, "event") || descriptor(root, "events") || descriptor(root, "replaceEvents"))) fail();
+    if (eventHook && (!descriptor(root, "event") || descriptor(root, "events") || descriptor(root, "replaceEvents"))) fail();
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       let value = read(root, key), writable = false;
@@ -139,7 +139,7 @@
         value = freeze({ headers: headerDraft(read(client, "headers"), false, true).api });
       } else if (key === "body" && (phase === "onRequest" || phase === "beforeSend" || phase === "onResponse" || phase === "onErrorResponse")) {
         writable = true;
-      } else if (key === "event" && stream) {
+      } else if (key === "event" && eventHook) {
         writable = true;
       } else if ((key === "url" && phase === "beforeSend")
           || (key === "status" && (phase === "afterReceive" || phase === "onErrorResponse"))
@@ -160,7 +160,7 @@
       });
     }
     define(root, "observe", { value: observe, enumerable: false, writable: false, configurable: false });
-    if (stream) {
+    if (eventHook) {
       define(root, "replaceEvents", {
         value: freeze(function (replacement) {
           if (replaced || !isArray(replacement) || replacement.length > maxEvents) fail();
@@ -171,7 +171,7 @@
       });
     }
     seal(root);
-    weakSet(prepared, root, { keys, headers, client, stream, observations() {
+    weakSet(prepared, root, { keys, headers, client, eventHook, observations() {
       const events = [];
       for (let i = 0; i < observationEvents.length; i++) {
         define(events, i, { value: observationEvents[i], enumerable: true, writable: true, configurable: true });
@@ -191,12 +191,12 @@
     const output = create(null);
     for (let i = 0; i < info.keys.length; i++) {
       const key = info.keys[i];
-      if (info.stream && key === "event") continue;
+      if (info.eventHook && key === "event") continue;
       output[key] = key === "headers" ? info.headers.snapshot() : key === "client" ? info.client : read(root, key);
     }
     const rejection = info.rejection();
     if (rejection) output.rejection = rejection;
-    if (info.stream) {
+    if (info.eventHook) {
       const events = info.events();
       // Recheck at commit: an async hook may retain and grow the replacement array.
       if (events.length > maxEvents) fail();

@@ -111,6 +111,7 @@ impl ExpectedStats {
                     | "onResponse"
                     | "onUpstreamEvent"
                     | "onStreamEvent"
+                    | "onContent"
             )
         }) && self.timing_presence.keys().all(|key| {
             matches!(

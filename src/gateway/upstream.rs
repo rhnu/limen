@@ -5,8 +5,12 @@ use limen_chat::{Aggregator, ChunkTracker, Event, Frame, FrameDecoder, JsonChunk
 use limen_config::{Model, Provider, ResourceLimits, validate_json};
 use serde_json::{Value, json};
 
+mod stream;
+use stream::SseOutput;
+
 use super::{
     Gateway,
+    content::{self, ContentInput},
     error::{ErrorCode, Failure, FailureResponse, validate_response_status},
     events::{EventBudget, EventConsumer},
     json,
@@ -69,7 +73,12 @@ impl Gateway {
             Some(self.receive_json(&mut response, lifecycle).await?)
         };
         if let Some(body) = body {
-            let body = self.response_body(provider, model, body, lifecycle).await?;
+            let mut body = self.response_body(provider, model, body, lifecycle).await?;
+            // SSE content was already transformed before aggregation. A complete
+            // JSON source enters the same semantic stage exactly once here.
+            if media == "json" {
+                body = self.content_json(provider, model, body, lifecycle).await?;
+            }
             if client_stream {
                 json::size(
                     &body,
@@ -221,9 +230,12 @@ impl Gateway {
         // Tracking is bounded independently of aggregation event count: one event
         // may legally contain multiple choices, and passthrough never aggregates.
         let mut upstream_tracker = ChunkTracker::new(limits.max_json_nodes);
-        let mut downstream_tracker = ChunkTracker::new(limits.max_json_nodes);
-        let mut aggregate = (!client_stream)
-            .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events));
+        let mut output = SseOutput {
+            tracker: ChunkTracker::new(limits.max_json_nodes),
+            content: content::projector(provider, model, limits.max_json_nodes),
+            aggregate: (!client_stream)
+                .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events)),
+        };
         'upstream: while let Some(chunk) = read_chunk(response, lifecycle).await? {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
@@ -263,39 +275,16 @@ impl Gateway {
                             .map_err(|source| protocol(source, "upstream_sse"))?;
                         lifecycle.statistics.timings.first_chunk(Instant::now());
                         lifecycle.statistics.usage.observe(event.get("usage"));
-                        let mut budget = EventBudget::new();
-                        let events = self
-                            .event_hooks(
-                                provider,
-                                model,
-                                event,
-                                EventConsumer::Upstream {
-                                    frame: Some(&frame),
-                                },
-                                &mut budget,
-                                lifecycle,
-                            )
-                            .await?;
-                        for event in events {
-                            if let Some(aggregate) = &mut aggregate {
-                                aggregate
-                                    .push(event)
-                                    .map_err(|source| protocol(source, "sse_to_json"))?;
-                            } else {
-                                self.send_stream_event(
-                                    provider,
-                                    model,
-                                    event,
-                                    true,
-                                    Some(&frame),
-                                    &mut budget,
-                                    &mut downstream_tracker,
-                                    lifecycle,
-                                    delivery,
-                                )
-                                .await?;
-                            }
-                        }
+                        self.content_stream_event(
+                            provider,
+                            model,
+                            event,
+                            &frame,
+                            &mut output,
+                            lifecycle,
+                            delivery,
+                        )
+                        .await?;
                     },
                 }
             }
@@ -304,10 +293,15 @@ impl Gateway {
         }
         let terminator = protocol::finish_stream(decoder, upstream_tracker, terminator)?;
         lifecycle.statistics.upstream_completed = true;
-        if let Some(aggregate) = aggregate {
+        if let Some(content) = &mut output.content {
+            self.content_end(provider, model, content, lifecycle)
+                .await?;
+        }
+        if let Some(aggregate) = output.aggregate {
             return finish_aggregate(aggregate, limits).map(Some);
         }
-        downstream_tracker
+        output
+            .tracker
             .finish()
             .map_err(|source| hook_protocol(source, "onStreamEvent"))?;
         lifecycle.phase = "response";
@@ -320,7 +314,7 @@ impl Gateway {
         clippy::too_many_arguments,
         reason = "A stream event borrows both semantic trackers and the shared request lifetime"
     )]
-    async fn send_stream_event(
+    pub(super) async fn send_stream_event(
         &self,
         provider: &Provider,
         model: &Model,

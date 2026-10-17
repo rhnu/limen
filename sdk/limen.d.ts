@@ -14,7 +14,7 @@ export type DeepReadonly<T> = {
 };
 
 export type Phase = "onRequest" | "beforeSend" | "afterReceive" | "onResponse"
-  | "onUpstreamEvent" | "onStreamEvent" | "onErrorResponse" | "onError" | "onFinish";
+  | "onUpstreamEvent" | "onStreamEvent" | "onContent" | "onErrorResponse" | "onError" | "onFinish";
 export type UpstreamContentType = "json" | "sse" | "other";
 
 /** Null values mean that routing or receipt of upstream headers has not happened. */
@@ -173,6 +173,28 @@ export interface EventContext<P extends "onUpstreamEvent" | "onStreamEvent", Sta
 export type UpstreamEventContext<State extends JsonObject = JsonObject> = EventContext<"onUpstreamEvent", State>;
 export type StreamEventContext<State extends JsonObject = JsonObject> = EventContext<"onStreamEvent", State>;
 
+/** Semantic lifecycle shared by complete JSON and SSE responses. Tool text is raw arguments. */
+export type ContentEvent =
+  | { type: "part_start"; choice: number; part: string; kind: "text" | "reasoning" | "refusal" }
+  | { type: "part_start"; choice: number; part: string; kind: "tool"; tool: {
+    index: number; type: "function" | "custom" | "legacy"; id?: string; name?: string;
+  } }
+  | { type: "part_delta"; choice: number; part: string; text: string; tool?: { id?: string; name?: string; type?: "function" | "custom" } }
+  | { type: "part_end"; choice: number; part: string; finishReason?: string }
+  | { type: "choice_end"; choice: number; finishReason: string }
+  | { type: "response_end" };
+
+export interface ContentContext<State extends JsonObject = JsonObject> extends ObservationContext {
+  readonly client: ClientContext;
+  readonly meta: ReceivedMeta<"onContent">;
+  readonly state: State;
+  event: ContentEvent;
+  /** Source envelope only; null for complete JSON. Never use it to select business semantics. */
+  readonly sse: DeepReadonly<{ event: string; id: string | null; retry: string | null }> | null;
+  /** At most once per invocation; each result enters the remaining content steps in order. */
+  readonly replaceEvents: (events: ContentEvent[]) => void;
+}
+
 /** Runs before an error response is sent; routing and upstream receipt may be absent. */
 export interface ErrorResponseContext<State extends JsonObject = JsonObject> extends ObservationContext {
   readonly client: ClientContext;
@@ -283,6 +305,7 @@ interface PipelineHooks<State extends JsonObject> {
   onResponse: Hook<ResponseContext<State>>;
   onUpstreamEvent: Hook<UpstreamEventContext<State>>;
   onStreamEvent: Hook<StreamEventContext<State>>;
+  onContent: Hook<ContentContext<State>>;
   onErrorResponse: Hook<ErrorResponseContext<State>>;
 }
 type AtLeastOne<T> = Partial<T> & { [Key in keyof T]: Pick<T, Key> }[keyof T];

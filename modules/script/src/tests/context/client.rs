@@ -23,6 +23,7 @@ async fn readonly_client_headers_preserve_values_and_owned_snapshot() -> TestRes
         "beforeSend",
         "afterReceive",
         "onResponse",
+        "onContent",
         "onUpstreamEvent",
         "onStreamEvent",
         "onErrorResponse",

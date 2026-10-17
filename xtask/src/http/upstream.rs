@@ -21,7 +21,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
 use tokio::{
     net::TcpListener,
-    sync::{Mutex, watch},
+    sync::{Mutex, Notify, watch},
     task::{JoinHandle, JoinSet},
     time::{Instant, Sleep, sleep},
 };
@@ -41,6 +41,7 @@ pub struct Controls {
     pub media: &'static str,
     pub raw: Option<Vec<u8>>,
     pub split_at: Option<usize>,
+    pub split_gate: Option<Arc<Notify>>,
     pub delay: bool,
     errors: Vec<anyhow::Error>,
 }
@@ -56,6 +57,7 @@ impl Default for Controls {
             media: "application/json",
             raw: None,
             split_at: None,
+            split_gate: None,
             delay: false,
             errors: Vec::new(),
         }
@@ -232,11 +234,19 @@ async fn respond(
     } else {
         None
     };
+    let gate = tail
+        .as_ref()
+        .and_then(|_| controls.split_gate.clone())
+        .map(|gate| {
+            Box::pin(async move { gate.notified().await })
+                as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
     builder
         .body(ResponseBody {
             first: Some(first),
             tail,
             pause: None,
+            gate,
         })
         .context("construct synthetic upstream response")
 }
@@ -246,6 +256,7 @@ struct ResponseBody {
     first: Option<Bytes>,
     tail: Option<Bytes>,
     pause: Option<Pin<Box<Sleep>>>,
+    gate: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 impl Body for ResponseBody {
@@ -257,13 +268,17 @@ impl Body for ResponseBody {
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
         if let Some(first) = self.first.take() {
-            if self.tail.is_some() {
+            if self.tail.is_some() && self.gate.is_none() {
                 self.pause = Some(Box::pin(sleep(Duration::from_millis(50))));
             }
             return Poll::Ready(Some(Ok(Frame::data(first))));
         }
         if let Some(pause) = &mut self.pause {
             ready!(pause.as_mut().poll(cx));
+        }
+        if let Some(gate) = &mut self.gate {
+            ready!(gate.as_mut().poll(cx));
+            self.gate = None;
         }
         Poll::Ready(self.tail.take().map(|tail| Ok(Frame::data(tail))))
     }

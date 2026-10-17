@@ -104,7 +104,7 @@ impl EventBudget {
         Ok(())
     }
 
-    fn charge(
+    pub(super) fn charge(
         &mut self,
         events: usize,
         bytes: usize,

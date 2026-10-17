@@ -116,6 +116,7 @@ async fn rejection_arguments_and_reserved_fields_are_enforced() -> TestResult {
         "beforeSend",
         "afterReceive",
         "onResponse",
+        "onContent",
         "onUpstreamEvent",
         "onStreamEvent",
         "onError",
