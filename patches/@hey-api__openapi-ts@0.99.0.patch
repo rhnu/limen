@@ -1,0 +1,100 @@
+diff --git a/dist/clients/core/params.ts b/dist/clients/core/params.ts
+index df5a1212bf4a7117abbfcb94f417932874882e09..b344ddb4c700b1d6af11424d80f5c737133ee656 100644
+--- a/dist/clients/core/params.ts
++++ b/dist/clients/core/params.ts
+@@ -52,7 +52,7 @@ type KeyMap = Map<
+   string,
+   | {
+       in: Slot;
+-      map?: string;
++      map?: string | undefined;
+     }
+   | {
+       in?: never;
+diff --git a/dist/clients/core/pathSerializer.ts b/dist/clients/core/pathSerializer.ts
+index 96d81736e1197b28f3bbc4778f591fdefcc69b99..8301bbcd4d8b037f108a2db2f3dbd0cc4b834a2e 100644
+--- a/dist/clients/core/pathSerializer.ts
++++ b/dist/clients/core/pathSerializer.ts
+@@ -1,7 +1,7 @@
+ interface SerializeOptions<T> extends SerializePrimitiveOptions, SerializerOptions<T> {}
+ 
+ interface SerializePrimitiveOptions {
+-  allowReserved?: boolean;
++  allowReserved?: boolean | undefined;
+   name: string;
+ }
+ 
+diff --git a/dist/clients/core/serverSentEvents.ts b/dist/clients/core/serverSentEvents.ts
+index 16c6fbb780a3a399ac7d882e405bd24c82e57c7d..08b6916677d6726eac425a99e5fc2da6b9f7a1db 100644
+--- a/dist/clients/core/serverSentEvents.ts
++++ b/dist/clients/core/serverSentEvents.ts
+@@ -1,6 +1,6 @@
+ import type { Config } from './types';
+ 
+-export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'method'> &
++export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'body' | 'method'> &
+   Pick<Config, 'method' | 'responseTransformer' | 'responseValidator'> & {
+     /**
+      * Fetch API implementation. You can use this option to provide a custom
+@@ -64,8 +64,8 @@ export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'method
+ 
+ export interface StreamEvent<TData = unknown> {
+   data: TData;
+-  event?: string;
+-  id?: string;
++  event?: string | undefined;
++  id?: string | undefined;
+   retry?: number;
+ }
+ 
+@@ -117,7 +117,7 @@ export function createSseClient<TData = unknown>({
+         const requestInit: RequestInit = {
+           redirect: 'follow',
+           ...options,
+-          body: options.serializedBody,
++          ...(options.serializedBody !== undefined && { body: options.serializedBody }),
+           headers,
+           signal,
+         };
+diff --git a/dist/clients/core/utils.ts b/dist/clients/core/utils.ts
+index 03943f53e6f7958a3711c4d249721d94e311217b..e7307da2759e8b4408620f3a9d9abcb061d4cbfe 100644
+--- a/dist/clients/core/utils.ts
++++ b/dist/clients/core/utils.ts
+@@ -87,9 +87,9 @@ export const getUrl = ({
+   querySerializer,
+   url: _url,
+ }: {
+-  baseUrl?: string;
+-  path?: Record<string, unknown>;
+-  query?: Record<string, unknown>;
++  baseUrl?: string | undefined;
++  path?: Record<string, unknown> | undefined;
++  query?: Record<string, unknown> | undefined;
+   querySerializer: QuerySerializer;
+   url: string;
+ }): string => {
+diff --git a/dist/clients/fetch/client.ts b/dist/clients/fetch/client.ts
+index 013dc139d25f37c5a19b0deb0fb7108e245d2a6e..887440aa6739021152d35e66bf609674e4924864 100644
+--- a/dist/clients/fetch/client.ts
++++ b/dist/clients/fetch/client.ts
+@@ -227,7 +227,6 @@ export const createClient = (config: Config = {}): Client => {
+     const { opts, url } = await beforeRequest(options);
+     return createSseClient({
+       ...opts,
+-      body: opts.body as BodyInit | null | undefined,
+       method,
+       onRequest: async (url, init) => {
+         let request = new Request(url, init);
+diff --git a/dist/clients/fetch/types.ts b/dist/clients/fetch/types.ts
+index 3b344b1d6507f426b642ec7cbdaf7cab0ba3cc9c..fe194844c06c11d77e088e15e0d0751b722dd12e 100644
+--- a/dist/clients/fetch/types.ts
++++ b/dist/clients/fetch/types.ts
+@@ -92,7 +92,7 @@ export interface ResolvedRequestOptions<
+   Url extends string = string,
+ > extends RequestOptions<unknown, TResponseStyle, ThrowOnError, Url> {
+   headers: Headers;
+-  serializedBody?: string;
++  serializedBody?: string | undefined;
+ }
+ 
+ export type RequestResult<

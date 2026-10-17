@@ -229,7 +229,6 @@ export const createClient = (config: Config = {}): Client => {
     const { opts, url } = await beforeRequest(options);
     return createSseClient({
       ...opts,
-      body: opts.body as BodyInit | null | undefined,
       method,
       onRequest: async (url, init) => {
         let request = new Request(url, init);

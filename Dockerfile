@@ -6,6 +6,7 @@ WORKDIR /build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json ./web/package.json
 COPY api/codegen/package.json ./api/codegen/package.json
+COPY patches ./patches
 RUN npm install --global "$(node -p "require('./package.json').packageManager")"
 RUN pnpm install --frozen-lockfile
 COPY api ./api

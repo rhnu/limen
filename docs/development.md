@@ -59,6 +59,8 @@ pnpm dev:web
 
 [`api/admin.openapi.json`](../api/admin.openapi.json)描述已有管理端点；修改后运行 `pnpm api:generate` 更新生成客户端。生成器单独使用 TypeScript 6，因为 Hey API 需要其 JavaScript 编译器 API；根脚本和前端仍使用 TypeScript 7。`api:check` 在临时目录重新生成并比较产物，只验证生成一致性，不代表后端响应行为通过。
 
+Hey API 0.99.0 的 Fetch 客户端模板通过 [`pnpm patch`](https://pnpm.io/cli/patch) 修补，以满足可选属性精确检查；补丁由 `pnpm-workspace.yaml` 的 `patchedDependencies` 登记，保存在 [`patches/`](../patches/)，安装时自动应用。修补依据见[上游讨论](https://github.com/hey-api/hey-api/pull/3157#issuecomment-6041890924)。升级生成器时先检查上游是否已修复，再重建或移除补丁并重新生成、执行下列检查；不要直接修补生成目录。Docker 在冻结安装前也必须复制补丁，并保留 `.dockerignore` 的对应放行。
+
 ```sh
 pnpm api:check
 pnpm build:examples
@@ -69,7 +71,7 @@ pnpm test:web
 pnpm build:web
 ```
 
-需要格式化前端时运行 `pnpm format:web`。Oxlint 的显式配置启用 React Hooks、可访问性、导入、Promise、Vitest 及类型感知检查，警告和失效的禁用注释都会导致失败；Oxfmt 统一负责格式。生成目录由生成器维护，不手工格式化或修补，仍参与 TypeScript 和生成一致性检查。前端增加索引可空、返回路径、未使用声明等检查；`exactOptionalPropertyTypes` 尚未启用，当前 Hey API 生成的客户端源码不满足该规则，不能用 lint ignore 或 `skipLibCheck` 绕过导入源码的编译。
+需要格式化前端时运行 `pnpm format:web`。Oxlint 的显式配置启用 React Hooks、可访问性、导入、Promise、Vitest 及类型感知检查，警告和失效的禁用注释都会导致失败；Oxfmt 统一负责格式。生成目录由生成器维护，不手工格式化或修补，仍参与 TypeScript 和生成一致性检查。前端启用 `exactOptionalPropertyTypes`、索引可空、返回路径和未使用声明等检查；缺省可选字段时省略属性，只有契约明确允许时才传 `undefined`，不能用 lint ignore 或 `skipLibCheck` 绕过导入源码的编译。
 
 路由层维护 hash 路由、懒加载、错误边界和 URL 参数；Valibot 将筛选输入解析为规范化状态。查询定义集中管理查询键、API 参数和取消信号，页面组合查询与呈现，不另建 loader 数据缓存。会话层维护凭据和恢复验证，退出时取消请求并清空查询数据；游标状态独立于展示组件，最多保留 100 页。新增能力应沿这些职责接入，避免在页面中重新解析同一参数或存储一份服务端状态。
 

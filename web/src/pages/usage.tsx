@@ -114,7 +114,8 @@ export function Usage() {
                 <Failure error={result.error} reset={() => void result.refetch()} />
             ) : (
                 summary &&
-                totals && (
+                totals &&
+                chart && (
                     <>
                         <div className="stats">
                             <div>

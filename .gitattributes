@@ -5,5 +5,7 @@
 *.pdf binary
 # SSE records end with an empty line, including the final record.
 *.sse whitespace=-blank-at-eof
+# Unified diff context markers include a space for empty source lines.
+patches/*.patch whitespace=-blank-at-eol
 *.bat text eol=crlf
 *.cmd text eol=crlf

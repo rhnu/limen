@@ -123,6 +123,53 @@ describe("management query options", () => {
         );
     });
 
+    it("omits empty optional filters and preserves selected values on first pages", async () => {
+        vi.mocked(api.usage).mockRejectedValue(stopped);
+        vi.mocked(api.requests).mockRejectedValue(stopped);
+        vi.mocked(api.logs).mockRejectedValue(stopped);
+        await expect(
+            client().fetchQuery(
+                queries.usage(
+                    1,
+                    parseSearch(usageSearchSchema, new URLSearchParams("model=&provider=")).filters,
+                ),
+            ),
+        ).rejects.toBe(stopped);
+        await expect(
+            client().fetchQuery(
+                queries.requests(
+                    1,
+                    parseSearch(
+                        requestsSearchSchema,
+                        new URLSearchParams("model=selected&provider=&state=&outcome=cancelled"),
+                    ).filters,
+                ),
+            ),
+        ).rejects.toBe(stopped);
+        await expect(
+            client().fetchQuery(
+                queries.logs(
+                    1,
+                    parseSearch(
+                        logsSearchSchema,
+                        new URLSearchParams("fileId=&minLevel=warn&requestId=request"),
+                    ).filters,
+                ),
+            ),
+        ).rejects.toBe(stopped);
+        expect(vi.mocked(api.usage).mock.lastCall?.[0]).toStrictEqual({ groupBy: "day" });
+        expect(vi.mocked(api.requests).mock.lastCall?.[0]).toStrictEqual({
+            model: "selected",
+            outcome: "cancelled",
+            limit: 50,
+        });
+        expect(vi.mocked(api.logs).mock.lastCall?.[0]).toStrictEqual({
+            minLevel: "warn",
+            requestId: "request",
+            limit: 100,
+        });
+    });
+
     it("never calls the API for invalid filters, even if explicitly refetched", async () => {
         const invalid = parseSearch(
             usageSearchSchema,

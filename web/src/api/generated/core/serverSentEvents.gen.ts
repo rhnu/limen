@@ -2,7 +2,7 @@
 
 import type { Config } from './types.gen';
 
-export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'method'> &
+export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'body' | 'method'> &
   Pick<Config, 'method' | 'responseTransformer' | 'responseValidator'> & {
     /**
      * Fetch API implementation. You can use this option to provide a custom
@@ -66,8 +66,8 @@ export type ServerSentEventsOptions<TData = unknown> = Omit<RequestInit, 'method
 
 export interface StreamEvent<TData = unknown> {
   data: TData;
-  event?: string;
-  id?: string;
+  event?: string | undefined;
+  id?: string | undefined;
   retry?: number;
 }
 
@@ -119,7 +119,7 @@ export function createSseClient<TData = unknown>({
         const requestInit: RequestInit = {
           redirect: 'follow',
           ...options,
-          body: options.serializedBody,
+          ...(options.serializedBody !== undefined && { body: options.serializedBody }),
           headers,
           signal,
         };

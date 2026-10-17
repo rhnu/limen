@@ -23,6 +23,19 @@ function requireFilters<T>(filters: T | null): T {
 const identity = (filters: Record<string, string | undefined> | null) =>
     filters === null ? null : serializeSearch(filters).toString();
 
+function windowQuery({
+    from,
+    to,
+    model,
+    provider,
+}: Pick<UsageSearch, "from" | "to" | "model" | "provider">) {
+    return {
+        ...dateQuery(from, to),
+        ...(model === undefined ? {} : { model }),
+        ...(provider === undefined ? {} : { provider }),
+    };
+}
+
 type ConfigView =
     | { section: "server"; data: ServerConfig }
     | { section: "models"; data: ModelConfig[]; nextCursor: string | null }
@@ -62,8 +75,8 @@ export const queries = {
         queryOptions({
             queryKey: [epoch, "usage", identity(filters)],
             queryFn: ({ signal }) => {
-                const { from, to, ...rest } = requireFilters(filters);
-                return api.usage({ ...rest, ...dateQuery(from, to) }, signal);
+                const current = requireFilters(filters);
+                return api.usage({ ...windowQuery(current), groupBy: current.groupBy }, signal);
             },
             enabled: filters !== null,
         }),
@@ -71,9 +84,18 @@ export const queries = {
         queryOptions({
             queryKey: [epoch, "requests", identity(filters), cursor ?? null],
             queryFn: ({ signal }) => {
-                const { from, to, ...rest } = requireFilters(filters);
+                const current = requireFilters(filters);
                 return api.requests(
-                    cursor ? { cursor, limit: 50 } : { ...rest, ...dateQuery(from, to), limit: 50 },
+                    cursor
+                        ? { cursor, limit: 50 }
+                        : {
+                              ...windowQuery(current),
+                              ...(current.state === undefined ? {} : { state: current.state }),
+                              ...(current.outcome === undefined
+                                  ? {}
+                                  : { outcome: current.outcome }),
+                              limit: 50,
+                          },
                     signal,
                 );
             },
@@ -100,7 +122,18 @@ export const queries = {
             queryFn: ({ signal }) => {
                 const current = requireFilters(filters);
                 return api.logs(
-                    cursor ? { cursor, limit: 100 } : { ...current, limit: 100 },
+                    cursor
+                        ? { cursor, limit: 100 }
+                        : {
+                              ...(current.fileId === undefined ? {} : { fileId: current.fileId }),
+                              ...(current.minLevel === undefined
+                                  ? {}
+                                  : { minLevel: current.minLevel }),
+                              ...(current.requestId === undefined
+                                  ? {}
+                                  : { requestId: current.requestId }),
+                              limit: 100,
+                          },
                     signal,
                 );
             },

@@ -24,7 +24,9 @@ type Options = {
     throwOnError: false;
 };
 async function call<T>(
-    invoke: (options: Options) => Promise<{ data?: T; error?: unknown; response?: Response }>,
+    invoke: (
+        options: Options,
+    ) => Promise<{ data: T | undefined; error?: unknown; response?: Response }>,
     signal?: AbortSignal,
     candidate?: { key: string; epoch: number },
 ): Promise<T> {
@@ -65,15 +67,15 @@ export const validateKey = (key: string, epoch: number) =>
     call((options) => sdk.getStatus(options), undefined, { key, epoch });
 export const api = {
     status: (signal?: AbortSignal) => call((options) => sdk.getStatus(options), signal),
-    usage: (query: GetUsageData["query"], signal?: AbortSignal) =>
+    usage: (query: GetUsageData["query"] = {}, signal?: AbortSignal) =>
         call((options) => sdk.getUsage({ ...options, query }), signal),
-    requests: (query: GetRequestsData["query"], signal?: AbortSignal) =>
+    requests: (query: GetRequestsData["query"] = {}, signal?: AbortSignal) =>
         call((options) => sdk.getRequests({ ...options, query }), signal),
     request: (requestId: string, signal?: AbortSignal) =>
         call((options) => sdk.getRequest({ ...options, path: { requestId } }), signal),
     files: (signal?: AbortSignal) => call((options) => sdk.getLogFiles(options), signal),
-    logs: (query: GetLogsData["query"], signal?: AbortSignal) =>
+    logs: (query: GetLogsData["query"] = {}, signal?: AbortSignal) =>
         call((options) => sdk.getLogs({ ...options, query }), signal),
-    config: (query: GetConfigData["query"], signal?: AbortSignal) =>
+    config: (query: GetConfigData["query"] = {}, signal?: AbortSignal) =>
         call((options) => sdk.getConfig({ ...options, query }), signal),
 };

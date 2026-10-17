@@ -54,7 +54,7 @@ type KeyMap = Map<
   string,
   | {
       in: Slot;
-      map?: string;
+      map?: string | undefined;
     }
   | {
       in?: never;

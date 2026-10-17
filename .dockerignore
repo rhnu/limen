@@ -9,6 +9,7 @@
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
+!patches/*.patch
 !api/admin.openapi.json
 !api/codegen/package.json
 !api/codegen/openapi-ts.config.ts
