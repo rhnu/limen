@@ -17,8 +17,20 @@ use crate::{
     RequestRecord, Result, StorageOptions, UsageQuery, UsageSummary, database, query,
 };
 
-#[derive(Clone)]
+/// Owns startup and bounded shutdown of the shared storage workers.
 pub struct Storage {
+    inner: Arc<Inner>,
+}
+
+/// Read operations and health, without write or lifecycle authority.
+#[derive(Clone)]
+pub struct StorageReader {
+    inner: Arc<Inner>,
+}
+
+/// Confirmed record writes and health, without query or lifecycle authority.
+#[derive(Clone)]
+pub struct StorageWriter {
     inner: Arc<Inner>,
 }
 
@@ -215,6 +227,50 @@ impl Storage {
 
     pub fn health(&self) -> Health { self.inner.state.health() }
 
+    /// Shares only read operations; a disabled reader rejects queries as unavailable.
+    pub fn reader(&self) -> StorageReader {
+        StorageReader {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Shares only record write operations.
+    pub fn writer(&self) -> StorageWriter {
+        StorageWriter {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Stops admission, drains queued commands and waits only until the supplied deadline.
+    ///
+    /// # Errors
+    /// Returns timeout while a worker still owns its connection and the shared instance lock.
+    pub async fn shutdown(&self, deadline: Instant) -> Result<()> {
+        self.inner.state.stop.store(true, Ordering::Release);
+        {
+            let mut health = self
+                .inner
+                .state
+                .health
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            health.state = HealthState::Stopping;
+        }
+        loop {
+            if self.inner.state.writer_done.load(Ordering::Acquire)
+                && self.inner.state.reader_done.load(Ordering::Acquire)
+            {
+                return Ok(());
+            }
+            database::check_deadline(deadline)?;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
+
+impl StorageWriter {
+    pub fn health(&self) -> Health { self.inner.state.health() }
+
     /// Confirms a pending row before generation starts.
     ///
     /// # Errors
@@ -268,6 +324,10 @@ impl Storage {
         confirmation.confirmed = true;
         result
     }
+}
+
+impl StorageReader {
+    pub fn health(&self) -> Health { self.inner.state.health() }
 
     /// Reads a bounded page, retaining the permit until the database work really completes.
     ///
@@ -353,32 +413,6 @@ impl Storage {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(Error::Worker),
             Err(_) => Err(Error::Timeout),
-        }
-    }
-
-    /// Stops admission, drains queued commands and waits only until the supplied deadline.
-    ///
-    /// # Errors
-    /// Returns timeout while a worker still owns its connection and the shared instance lock.
-    pub async fn shutdown(&self, deadline: Instant) -> Result<()> {
-        self.inner.state.stop.store(true, Ordering::Release);
-        {
-            let mut health = self
-                .inner
-                .state
-                .health
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            health.state = HealthState::Stopping;
-        }
-        loop {
-            if self.inner.state.writer_done.load(Ordering::Acquire)
-                && self.inner.state.reader_done.load(Ordering::Acquire)
-            {
-                return Ok(());
-            }
-            database::check_deadline(deadline)?;
-            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 }

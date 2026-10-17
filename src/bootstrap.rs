@@ -5,21 +5,28 @@ use std::{
     time::{Duration, Instant},
 };
 
-use limen_config::{BusinessConfig, ConfigError, ServerConfig, load_server};
-use limen_script::{JsonLimits, RuntimeOptions, RuntimeStatus, ScriptError, ScriptRuntime};
+use limen_config::{BusinessConfig, ConfigError, ConfigErrorKind, ServerConfig, load_server};
+use limen_script::{
+    JsonLimits, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind, ScriptRuntime,
+};
 use limen_storage::{Storage, StorageOptions};
 use tracing::Instrument;
 
-/// Both commands retain the same runtime and validated configuration until shutdown.
-pub struct Bootstrap {
+/// Configuration and the one owning VM, shared by check and offline entry points.
+pub struct Loaded {
     pub server: ServerConfig,
-    pub business: BusinessConfig,
+    pub business: Arc<BusinessConfig>,
     pub(crate) plans: Arc<crate::gateway::ExecutionPlans>,
     pub runtime: ScriptRuntime,
+}
+
+/// Serving always owns persistence and logging; a loaded configuration alone does not.
+pub struct ServeResources {
+    pub loaded: Loaded,
     pub run_id: String,
     pub started_at: String,
-    pub storage: Option<Storage>,
-    pub logging: Option<crate::telemetry::Logging>,
+    pub storage: Storage,
+    pub logging: crate::telemetry::Logging,
 }
 
 #[derive(thiserror::Error)]
@@ -52,6 +59,8 @@ pub enum Error {
     LogShutdown,
     #[error("cannot initialize async executor")]
     Executor(#[source] std::io::Error),
+    #[error("cannot initialize upstream client")]
+    UpstreamClient(#[source] reqwest::Error),
     #[error("HTTP service failed")]
     Http(#[from] crate::server::Error),
     #[error("configuration failed and runtime cleanup also failed")]
@@ -82,6 +91,7 @@ impl Error {
             Self::StartupWorker(_) => "startup",
             Self::Executor(_) => "executor",
             Self::Http(source) => source.phase(),
+            Self::UpstreamClient(_) => "http_startup",
             Self::Cleanup { primary, .. } => primary.phase(),
         }
     }
@@ -118,7 +128,8 @@ impl fmt::Display for Diagnostic<'_> {
                 primary.diagnostic(),
                 cleanup.diagnostic()
             ),
-            Error::StartupBudget
+            Error::UpstreamClient(_)
+            | Error::StartupBudget
             | Error::ShutdownState { .. }
             | Error::StartupWorker(_)
             | Error::LogShutdown => fmt::Display::fmt(self.0, formatter),
@@ -126,91 +137,11 @@ impl fmt::Display for Diagnostic<'_> {
     }
 }
 
-impl Bootstrap {
-    /// Resolve the script relative to the selected server file, independent of later cwd changes.
-    pub async fn load(path: Option<&Path>, command: &'static str) -> Result<Self, Error> {
+impl Loaded {
+    /// Resolve the script relative to the selected server file.
+    pub async fn load(path: Option<&Path>) -> Result<Self, Error> {
         let (path, server) = Self::settings(path)?;
-        let deadline = Instant::now() + Duration::from_millis(server.limits.startup_ms);
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let resources = if command == "serve" {
-            let options = StorageOptions {
-                dir: server.storage.dir.clone(),
-                run_id: run_id.clone(),
-                retention_days: server.storage.retention_days,
-                max_records: server.storage.max_records,
-                max_db_bytes: server.storage.max_db_bytes,
-                generation_concurrency: server.limits.concurrency,
-                management_concurrency: server
-                    .auth
-                    .manager_key
-                    .as_ref()
-                    .map(|_| server.management.concurrency),
-            };
-            let log_config = server.log.clone();
-            let log_run = run_id.clone();
-            let storage = tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                tokio::task::spawn_blocking(move || Storage::open(options, deadline)),
-            )
-            .await
-            .map_err(Error::StartupTimeout)???;
-            let logging = match tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                tokio::task::spawn_blocking(move || {
-                    crate::telemetry::initialize(&log_config, &log_run)
-                }),
-            )
-            .await
-            .map_err(Error::StartupTimeout)
-            .and_then(|result| result.map_err(Error::from))
-            .and_then(|result| result.map_err(Error::Logging))
-            {
-                Ok(logging) => logging,
-                Err(error) => {
-                    let stopped = storage
-                        .shutdown(Instant::now() + Duration::from_millis(server.limits.shutdown_ms))
-                        .await
-                        .map_err(Error::Storage);
-                    return Err(with_cleanup(error, stopped));
-                },
-            };
-            Some((storage, logging))
-        } else {
-            None
-        };
-        let shutdown_ms = server.limits.shutdown_ms;
-        let result = Self::start_until(&path, server, deadline, run_id)
-            .instrument(tracing::info_span!(
-                "configuration",
-                command,
-                file = "config.js"
-            ))
-            .await;
-        match result {
-            Ok(mut loaded) => {
-                if let Some((storage, logging)) = resources {
-                    loaded.storage = Some(storage);
-                    loaded.logging = Some(logging);
-                }
-                Ok(loaded)
-            },
-            Err(error) => {
-                if let Some((storage, logging)) = resources {
-                    let stopped = storage
-                        .shutdown(Instant::now() + Duration::from_millis(shutdown_ms))
-                        .await
-                        .map_err(Error::Storage);
-                    let error = with_cleanup(error, stopped);
-                    let flushed = if logging.shutdown() {
-                        Ok(())
-                    } else {
-                        Err(Error::LogShutdown)
-                    };
-                    return Err(with_cleanup(error, flushed));
-                }
-                Err(error)
-            },
-        }
+        Self::start(&path, server).await
     }
 
     pub(crate) fn settings(
@@ -225,14 +156,13 @@ impl Bootstrap {
 
     pub(crate) async fn start(path: &Path, server: ServerConfig) -> Result<Self, Error> {
         let deadline = Instant::now() + Duration::from_millis(server.limits.startup_ms);
-        Self::start_until(path, server, deadline, uuid::Uuid::new_v4().to_string()).await
+        Self::start_until(path, server, deadline).await
     }
 
     async fn start_until(
         path: &Path,
         server: ServerConfig,
         deadline: Instant,
-        run_id: String,
     ) -> Result<Self, Error> {
         tracing::debug!(phase = "script_startup", "evaluating local configuration");
         let script = path
@@ -290,14 +220,9 @@ impl Bootstrap {
                 );
                 Ok(Self {
                     server,
-                    business,
+                    business: Arc::new(business),
                     plans,
                     runtime,
-                    run_id,
-                    started_at: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    storage: None,
-                    logging: None,
                 })
             },
             Err(primary) => Err(with_cleanup(
@@ -308,28 +233,108 @@ impl Bootstrap {
     }
 
     pub async fn shutdown(&self) -> Result<(), Error> {
+        stop(&self.runtime, self.server.limits.shutdown_ms).await
+    }
+}
+
+impl ServeResources {
+    /// Storage, logging and configuration share one absolute startup deadline.
+    pub async fn load(path: Option<&Path>) -> Result<Self, Error> {
+        let (path, server) = Loaded::settings(path)?;
+        let deadline = Instant::now() + Duration::from_millis(server.limits.startup_ms);
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let options = StorageOptions {
+            dir: server.storage.dir.clone(),
+            run_id: run_id.clone(),
+            retention_days: server.storage.retention_days,
+            max_records: server.storage.max_records,
+            max_db_bytes: server.storage.max_db_bytes,
+            generation_concurrency: server.limits.concurrency,
+            management_concurrency: server
+                .auth
+                .manager_key
+                .as_ref()
+                .map(|_| server.management.concurrency),
+        };
+        let storage = tokio::time::timeout_at(
+            deadline.into(),
+            tokio::task::spawn_blocking(move || Storage::open(options, deadline)),
+        )
+        .await
+        .map_err(Error::StartupTimeout)???;
+        let log_config = server.log.clone();
+        let log_run = run_id.clone();
+        let logging = match tokio::time::timeout_at(
+            deadline.into(),
+            tokio::task::spawn_blocking(move || {
+                crate::telemetry::initialize(&log_config, &log_run)
+            }),
+        )
+        .await
+        .map_err(Error::StartupTimeout)
+        .and_then(|result| result.map_err(Error::from))
+        .and_then(|result| result.map_err(Error::Logging))
+        {
+            Ok(logging) => logging,
+            Err(error) => {
+                let stopped = storage
+                    .shutdown(Instant::now() + Duration::from_millis(server.limits.shutdown_ms))
+                    .await
+                    .map_err(Error::Storage);
+                return Err(with_cleanup(error, stopped));
+            },
+        };
+        let shutdown_ms = server.limits.shutdown_ms;
+        let result = Loaded::start_until(&path, server, deadline)
+            .instrument(tracing::info_span!(
+                "configuration",
+                command = "serve",
+                file = "config.js"
+            ))
+            .await;
+        match result {
+            Ok(loaded) => Ok(Self {
+                loaded,
+                storage,
+                logging,
+                run_id,
+                started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            }),
+            Err(error) => {
+                let stopped = storage
+                    .shutdown(Instant::now() + Duration::from_millis(shutdown_ms))
+                    .await
+                    .map_err(Error::Storage);
+                let error = with_cleanup(error, stopped);
+                let flushed = if logging.shutdown() {
+                    Ok(())
+                } else {
+                    Err(Error::LogShutdown)
+                };
+                Err(with_cleanup(error, flushed))
+            },
+        }
+    }
+
+    pub async fn shutdown(&self) -> Result<(), Error> {
         async {
             let started = Instant::now();
-            let storage = if let Some(storage) = &self.storage {
-                storage
-                    .shutdown(
-                        Instant::now() + Duration::from_millis(self.server.limits.shutdown_ms),
-                    )
-                    .await
-                    .map_err(Error::Storage)
-            } else {
-                Ok(())
-            };
-            let vm = stop(&self.runtime, self.server.limits.shutdown_ms).await;
+            let storage = self
+                .storage
+                .shutdown(
+                    Instant::now() + Duration::from_millis(self.loaded.server.limits.shutdown_ms),
+                )
+                .await
+                .map_err(Error::Storage);
+            let vm = self.loaded.shutdown().await;
             tracing::info!(
                 elapsed_ms = started.elapsed().as_millis(),
                 "configuration runtime stopped"
             );
-            if let Err(error) = storage {
-                return Err(with_cleanup(error, vm));
+            match storage {
+                Err(error) => Err(with_cleanup(error, vm)),
+                Ok(()) => vm,
             }
-            vm?;
-            Ok(())
         }
         .instrument(tracing::info_span!("runtime_shutdown"))
         .await
@@ -383,6 +388,44 @@ fn runtime_options(server: &ServerConfig) -> RuntimeOptions {
             max_nodes: limits.max_json_nodes,
             max_bytes: limits.max_output_bytes,
         },
+    }
+}
+
+/// Report each failure once, after all cleanup results are available.
+pub fn report_failure(error: &Error, command: &'static str, phase: &'static str) {
+    let enabled = if expected_rejection(error) {
+        tracing::enabled!(tracing::Level::WARN)
+    } else {
+        tracing::enabled!(tracing::Level::ERROR)
+    };
+    if crate::telemetry::initialized() && enabled {
+        record_failure(error, command, phase);
+    } else {
+        eprintln!("limen: {}", error.diagnostic());
+    }
+}
+
+fn record_failure(error: &Error, command: &'static str, phase: &'static str) {
+    if expected_rejection(error) {
+        tracing::warn!(command, phase, "configuration rejected");
+    } else {
+        tracing::error!(command, phase, "configuration operation failed");
+    }
+}
+
+fn expected_rejection(error: &Error) -> bool {
+    match error {
+        Error::Config { source, .. } => source.kind != ConfigErrorKind::Io,
+        Error::Script(source) => matches!(
+            source.kind(),
+            ScriptErrorKind::InvalidOptions
+                | ScriptErrorKind::Module
+                | ScriptErrorKind::JavaScript
+                | ScriptErrorKind::Json
+                | ScriptErrorKind::Contract
+                | ScriptErrorKind::UnknownHook
+        ),
+        _ => false,
     }
 }
 

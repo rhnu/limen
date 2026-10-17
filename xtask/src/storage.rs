@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Result, bail, ensure};
 use limen_storage::{
     Error, FinalRecord, HealthState, Outcome, PendingRecord, RecordState, Storage, StorageOptions,
+    StorageReader,
 };
 use tokio::sync::Semaphore;
 
@@ -75,7 +76,7 @@ async fn open(directory: &Path) -> Result<Storage> {
     Ok(tokio::task::spawn_blocking(move || Storage::open(options, deadline())).await??)
 }
 
-async fn get(storage: &Storage, id: &str) -> Result<Option<limen_storage::RequestRecord>> {
+async fn get(storage: &StorageReader, id: &str) -> Result<Option<limen_storage::RequestRecord>> {
     Ok(storage
         .get(
             id.into(),
@@ -94,13 +95,20 @@ async fn recovery_lock(directory: &Path) -> Result<()> {
         "second instance acquired the lock"
     );
     storage
+        .writer()
         .begin(pending("pending", now()?), deadline())
         .await?;
-    storage.begin(pending("done", now()?), deadline()).await?;
-    storage.finish(terminal("done")?, deadline()).await?;
+    storage
+        .writer()
+        .begin(pending("done", now()?), deadline())
+        .await?;
+    storage
+        .writer()
+        .finish(terminal("done")?, deadline())
+        .await?;
     storage.shutdown(deadline()).await?;
     let reopened = open(directory).await?;
-    let pending = get(&reopened, "pending")
+    let pending = get(&reopened.reader(), "pending")
         .await?
         .ok_or_else(|| anyhow::anyhow!("missing recovered request"))?;
     ensure!(
@@ -110,7 +118,7 @@ async fn recovery_lock(directory: &Path) -> Result<()> {
             && pending.input_tokens.is_none(),
         "recovery fabricated a terminal fact"
     );
-    let done = get(&reopened, "done")
+    let done = get(&reopened.reader(), "done")
         .await?
         .ok_or_else(|| anyhow::anyhow!("missing finalized request"))?;
     ensure!(
@@ -124,18 +132,25 @@ async fn recovery_lock(directory: &Path) -> Result<()> {
 async fn retention_capacity(directory: &Path) -> Result<()> {
     let storage = open(directory).await?;
     storage
+        .writer()
         .begin(pending("old", now()? - 91 * 86_400_000), deadline())
         .await?;
-    storage.finish(terminal("old")?, deadline()).await?;
-    storage.begin(pending("recent", now()?), deadline()).await?;
+    storage
+        .writer()
+        .finish(terminal("old")?, deadline())
+        .await?;
+    storage
+        .writer()
+        .begin(pending("recent", now()?), deadline())
+        .await?;
     storage.shutdown(deadline()).await?;
     let reopened = open(directory).await?;
     ensure!(
-        get(&reopened, "old").await?.is_none(),
+        get(&reopened.reader(), "old").await?.is_none(),
         "startup age cleanup retained expired row"
     );
     ensure!(
-        get(&reopened, "recent").await?.is_some(),
+        get(&reopened.reader(), "recent").await?.is_some(),
         "startup cleanup lost recent request"
     );
     reopened.shutdown(deadline()).await?;
@@ -159,9 +174,13 @@ async fn retention_capacity(directory: &Path) -> Result<()> {
 
 async fn failure_deadline(directory: &Path) -> Result<()> {
     let storage = open(directory).await?;
-    storage.begin(pending("one", now()?), deadline()).await?;
+    storage
+        .writer()
+        .begin(pending("one", now()?), deadline())
+        .await?;
     ensure!(
         storage
+            .writer()
             .begin(pending("one", now()?), deadline())
             .await
             .is_err(),
@@ -173,12 +192,18 @@ async fn failure_deadline(directory: &Path) -> Result<()> {
     );
     ensure!(
         matches!(
-            storage.begin(pending("denied", now()?), deadline()).await,
+            storage
+                .writer()
+                .begin(pending("denied", now()?), deadline())
+                .await,
             Err(Error::Unavailable)
         ),
         "failed storage admitted a new generation"
     );
-    storage.finish(terminal("one")?, deadline()).await?;
+    storage
+        .writer()
+        .finish(terminal("one")?, deadline())
+        .await?;
     ensure!(
         storage.health().state == HealthState::Failed,
         "successful terminal write reset failed health"
@@ -192,6 +217,7 @@ async fn failure_deadline(directory: &Path) -> Result<()> {
     ensure!(
         matches!(
             reopened
+                .writer()
                 .begin(pending("expired", now()?), Instant::now())
                 .await,
             Err(Error::Timeout)
@@ -218,10 +244,16 @@ async fn failure_deadline(directory: &Path) -> Result<()> {
 
 async fn read_cancellation(directory: &Path) -> Result<()> {
     let storage = open(directory).await?;
-    storage.begin(pending("one", now()?), deadline()).await?;
+    storage
+        .writer()
+        .begin(pending("one", now()?), deadline())
+        .await?;
     let semaphore = Arc::new(Semaphore::new(1));
     let permit = Arc::clone(&semaphore).acquire_owned().await?;
-    let result = storage.get("one".into(), Instant::now(), permit).await;
+    let result = storage
+        .reader()
+        .get("one".into(), Instant::now(), permit)
+        .await;
     ensure!(
         matches!(result, Err(Error::Timeout)),
         "expired read succeeded"
@@ -235,7 +267,10 @@ async fn read_cancellation(directory: &Path) -> Result<()> {
         storage.health().state == HealthState::Ready,
         "read timeout poisoned write health"
     );
-    let record = storage.get("one".into(), deadline(), permit).await?;
+    let record = storage
+        .reader()
+        .get("one".into(), deadline(), permit)
+        .await?;
     ensure!(record.is_some(), "query after read cancellation failed");
     storage.shutdown(deadline()).await?;
     Ok(())

@@ -108,8 +108,7 @@ impl Gateway {
                 call_id: self.next_call(),
                 hook_id: hook,
                 context,
-                deadline: deadline
-                    .min(Instant::now() + Duration::from_millis(self.server.limits.hook_ms)),
+                deadline: deadline.min(Instant::now() + Duration::from_millis(self.limits.hook_ms)),
                 cancellation: Cancellation::new(),
             })
             .await;
@@ -137,7 +136,7 @@ impl Gateway {
             .transpose()
             .map_err(|source| invalid().with_source(source))?;
         let (body, content_encoding) = match draft.body {
-            Some(value) if value.len() <= self.server.limits.max_output_bytes => {
+            Some(value) if value.len() <= self.limits.max_output_bytes => {
                 (value.into_bytes(), Vec::new())
             },
             None => (

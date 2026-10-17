@@ -13,7 +13,7 @@ Limen 是供个人与私网使用的 Chat Completions 网关。Rust 负责 HTTP�
 | 在浏览器或 API 查询请求、用量与日志       | [记录与管理界面](features/management.md) |
 | 部署 Docker、设置资源限制、查看日志和排错 | [部署与运维](features/deployment.md)     |
 
-从源码使用前，先按[开发指引](development.md#准备与构建)构建内嵌前端；然后从仓库根目录检查随附示例：
+从源码使用前，先按[开发指引](development.md#准备与构建)构建内置脚本与内嵌前端；然后从仓库根目录检查随附示例：
 
 ```sh
 cargo run --locked -- check --config examples/basic/server.toml

@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use limen_storage::{FinalRecord, Outcome, PendingRecord, Storage, UsageQuality};
+use limen_storage::{FinalRecord, Outcome, PendingRecord, StorageWriter, UsageQuality};
 
 use super::{
     Gateway,
@@ -12,13 +12,13 @@ use super::{
 };
 
 /// The offline runner selects an in-memory recorder explicitly; production always uses SQLite.
-pub(super) enum RecordSink {
-    Persistent(Storage),
+pub(crate) enum RecordSink {
+    Persistent(StorageWriter),
     Memory(Arc<Mutex<MemoryRecord>>),
 }
 
 #[derive(Default)]
-pub(super) struct MemoryRecord {
+pub(crate) struct MemoryRecord {
     pub pending: Option<PendingRecord>,
     pub terminal: Option<FinalRecord>,
     pub fail_begin: bool,
@@ -28,7 +28,7 @@ pub(super) struct MemoryRecord {
 }
 
 #[cfg(test)]
-pub(super) struct BeginGate {
+pub(crate) struct BeginGate {
     pub entered: Arc<tokio::sync::Notify>,
     pub release: tokio::sync::oneshot::Receiver<()>,
 }
@@ -117,7 +117,7 @@ impl Gateway {
         lifecycle.phase = "storage_begin";
         let deadline = lifecycle
             .deadline
-            .min(Instant::now() + Duration::from_millis(self.server.storage.operation_ms));
+            .min(Instant::now() + Duration::from_millis(self.storage_operation_ms));
         self.records
             .begin(
                 PendingRecord {

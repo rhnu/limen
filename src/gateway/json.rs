@@ -47,7 +47,7 @@ fn write<W: Write>(
 }
 
 /// Encode once, rejecting overflow before growing the outgoing buffer beyond its budget.
-pub(super) fn encode(
+pub(crate) fn encode(
     value: &Value,
     limit: usize,
     code: ErrorCode,

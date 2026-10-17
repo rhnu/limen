@@ -145,7 +145,7 @@ impl Gateway {
         };
         let mut remaining = provider_steps.len() + model_steps.len();
         if remaining == 0 {
-            consumer.consume(&events, budget, &self.server.limits)?;
+            consumer.consume(&events, budget, &self.limits)?;
         }
         for step in provider_steps.iter().chain(model_steps) {
             let hook = step.executor;
@@ -182,18 +182,18 @@ impl Gateway {
                 let bytes = produced.iter().try_fold(0_usize, |sum, event| {
                     let size = validate_event_payload(
                         event,
-                        &self.server.limits,
+                        &self.limits,
                         ErrorCode::HookFailed,
                         phase_name,
                     )?;
                     sum.checked_add(size)
                         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, phase_name))
                 })?;
-                budget.charge(produced.len(), bytes, &self.server.limits, phase_name)?;
+                budget.charge(produced.len(), bytes, &self.limits, phase_name)?;
                 // Earlier steps may still transform these events. The final step's
                 // whole batch must satisfy its consumer before any of its effects commit.
                 if final_hook {
-                    consumer.consume(&produced, budget, &self.server.limits)?;
+                    consumer.consume(&produced, budget, &self.limits)?;
                 }
                 commit_effects(lifecycle, output.effects);
                 next.extend(produced);

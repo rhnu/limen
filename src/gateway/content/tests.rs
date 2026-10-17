@@ -4,15 +4,15 @@ use limen_script::Cancellation;
 use serde_json::json;
 
 use super::{super::observations::Observations, *};
-use crate::{bootstrap::Bootstrap, gateway::FixtureResponse};
+use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
-async fn configured() -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
+async fn configured() -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
     configured_with(r"export default {
         providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'replace',builtin:{kind:'replaceText',search:'ab',replacement:'ZZ',maxBufferedChars:1}}]}},
         models:{chat:{provider:'p',upstream:'native'}}};").await
 }
 
-async fn configured_with(script: &str) -> (tempfile::TempDir, Bootstrap, Arc<Gateway>) {
+async fn configured_with(script: &str) -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("server.toml");
     fs::write(
@@ -22,8 +22,8 @@ async fn configured_with(script: &str) -> (tempfile::TempDir, Bootstrap, Arc<Gat
     .unwrap();
     fs::write(directory.path().join("config.js"), script).unwrap();
     let (path, settings) = limen_config::load_server(Some(&path)).unwrap();
-    let loaded = Bootstrap::start(&path, settings).await.unwrap();
-    let (gateway, _) = Gateway::offline(
+    let loaded = Loaded::start(&path, settings).await.unwrap();
+    let (gateway, _) = crate::offline::generation(
         &loaded,
         FixtureResponse {
             status: 200,
@@ -46,11 +46,7 @@ fn chunk(text: &str) -> Value { json!({"choices":[{"index":0,"delta":{"content":
 #[tokio::test(flavor = "current_thread")]
 async fn failed_native_render_discards_candidate_and_preserves_previous_prefix() {
     let (_directory, loaded, mut gateway) = configured().await;
-    Arc::get_mut(&mut gateway)
-        .unwrap()
-        .server
-        .limits
-        .max_event_bytes = 256;
+    Arc::get_mut(&mut gateway).unwrap().limits.max_event_bytes = 256;
     let route = gateway.plans.route(&gateway.business, "chat").unwrap();
     let mut lifecycle = lifecycle();
     lifecycle.state = json!({"previous":{"text":"retained"}})
@@ -152,7 +148,7 @@ async fn native_occurrences_have_independent_state_and_share_retained_capacity()
         panic!("expected native");
     };
     let native_bytes = native.retained_bytes();
-    let mut limits = gateway.server.limits.clone();
+    let mut limits = gateway.limits.clone();
     limits.max_output_bytes = native_bytes;
     assert_eq!(
         first.capacity(None, &limits).unwrap_err().code,

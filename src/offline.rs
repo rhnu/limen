@@ -21,7 +21,7 @@ use schema::{Case, Headers};
 use serde_json::{Value, json};
 
 use crate::{
-    bootstrap::Bootstrap,
+    bootstrap::Loaded,
     gateway::{FixtureResponse, Gateway, Trace},
 };
 
@@ -83,7 +83,7 @@ pub(crate) async fn run(config: Option<&Path>, cases: &Path) -> ExitCode {
             // Sources can contain fixture bodies, paths, credentials or queries.
             eprintln!("Offline tests failed: {error}");
             if let Error::Configuration(source) = error {
-                crate::telemetry::report_failure(&source, "test", source.phase());
+                crate::bootstrap::report_failure(&source, "test", source.phase());
             }
             ExitCode::FAILURE
         },
@@ -91,12 +91,12 @@ pub(crate) async fn run(config: Option<&Path>, cases: &Path) -> ExitCode {
 }
 
 async fn run_all(config: Option<&Path>, cases: &Path) -> Result<bool, Error> {
-    let (config, settings) = Bootstrap::settings(config)?;
+    let (config, settings) = Loaded::settings(config)?;
     let paths = discover(cases)?;
     let mut passed = 0;
     for (index, path) in paths.iter().enumerate() {
         // Each case is a new service lifetime: no closure state leaks between cases.
-        let loaded = Bootstrap::start(&config, settings.clone()).await?;
+        let loaded = Loaded::start(&config, settings.clone()).await?;
         let result = run_case(&loaded, path).await;
         let cleanup = loaded.shutdown().await;
         let report = match (result, cleanup) {
@@ -173,7 +173,7 @@ fn read(path: &Path, limit: usize) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, Error> {
+pub(crate) async fn run_case(loaded: &Loaded, path: &Path) -> Result<Report, Error> {
     let limits = &loaded.server.limits;
     let bytes = read(path, limits.max_source_bytes)?;
     let value = limen_config::parse_json_slice(&bytes, limen_config::MAX_JSON_DEPTH)?;
@@ -225,11 +225,11 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
         body,
     };
     let request = client_request(&case, &loaded.server.auth.api_key)?;
-    let (gateway, trace) = Gateway::offline(loaded, upstream);
+    let (application, trace) = application(loaded, upstream);
     let budget = Duration::from_millis(limits.request_ms + limits.cleanup_ms + limits.shutdown_ms);
     let cancellation = Cancellation::new();
     let work = async {
-        let response = Arc::clone(&gateway)
+        let response = Arc::clone(&application)
             .handle(request, cancellation.clone())
             .await;
         let status = response.status().as_u16();
@@ -239,7 +239,7 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
             limits.max_aggregate_bytes.max(limits.max_output_bytes),
         )
         .await;
-        gateway.drain().await;
+        application.drain().await;
         let bytes = collected?;
         let trace = trace.lock().await;
         compare(case, status, &headers, &bytes, &trace, limits)
@@ -253,7 +253,12 @@ pub(crate) async fn run_case(loaded: &Bootstrap, path: &Path) -> Result<Report, 
         phase: "execution",
         source,
     };
-    match tokio::time::timeout(Duration::from_millis(limits.shutdown_ms), gateway.drain()).await {
+    match tokio::time::timeout(
+        Duration::from_millis(limits.shutdown_ms),
+        application.drain(),
+    )
+    .await
+    {
         Ok(()) => Err(primary),
         Err(source) => Err(Error::Cleanup {
             primary: Box::new(primary),
@@ -524,3 +529,55 @@ fn stream(bytes: &[u8], limits: &ResourceLimits) -> Result<(Vec<Value>, bool), E
 
 #[cfg(test)]
 mod tests;
+
+/// The offline entry point replaces only transport and persistence implementations.
+pub(crate) fn generation(
+    loaded: &Loaded,
+    response: FixtureResponse,
+) -> (Arc<Gateway>, Arc<tokio::sync::Mutex<crate::gateway::Trace>>) {
+    let (transport, trace) = crate::gateway::Transport::fixture(response);
+    let server = &loaded.server;
+    let gateway = Gateway::new(
+        crate::gateway::GenerationConfig {
+            limits: server.limits.clone(),
+            client_headers: server.script_context.client_headers.clone(),
+            observation_names: server.observability.events.clone(),
+            storage_operation_ms: server.storage.operation_ms,
+            business: Arc::clone(&loaded.business),
+            plans: Arc::clone(&loaded.plans),
+        },
+        crate::gateway::GenerationServices {
+            runtime: loaded.runtime.clone(),
+            transport,
+            records: crate::gateway::RecordSink::memory(),
+            shutdown: Cancellation::new(),
+            run_id: uuid::Uuid::nil().to_string(),
+        },
+    );
+    (gateway, trace)
+}
+
+pub(crate) fn application(
+    loaded: &Loaded,
+    response: FixtureResponse,
+) -> (
+    Arc<crate::app::Application>,
+    Arc<tokio::sync::Mutex<crate::gateway::Trace>>,
+) {
+    let (generation, trace) = generation(loaded, response);
+    let server = &loaded.server;
+    (
+        crate::app::Application::new(
+            server.auth.clone(),
+            crate::gateway::models_json(&loaded.business),
+            crate::app::ApplicationSettings {
+                body_timeout: Duration::from_millis(server.limits.request_ms),
+                max_output_bytes: server.limits.max_output_bytes,
+            },
+            uuid::Uuid::nil().to_string(),
+            generation,
+            None,
+        ),
+        trace,
+    )
+}

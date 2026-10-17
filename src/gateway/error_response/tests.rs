@@ -9,8 +9,8 @@ use limen_script::Cancellation;
 use serde_json::{Value, json};
 
 use crate::{
-    bootstrap::Bootstrap,
-    gateway::{FixtureResponse, Gateway, Trace},
+    bootstrap::Loaded,
+    gateway::{FixtureResponse, Trace},
 };
 
 struct Output {
@@ -54,10 +54,10 @@ async fn run(policy: &str, incoming: FixtureResponse, stream: bool, limit: usize
     )
     .unwrap();
     let (path, settings) = load_server(Some(&server)).unwrap();
-    let mut loaded = Bootstrap::start(&path, settings).await.unwrap();
+    let mut loaded = Loaded::start(&path, settings).await.unwrap();
     loaded.server.limits.max_output_bytes = limit;
     loaded.server.limits.hook_ms = 50;
-    let (gateway, trace) = Gateway::offline(&loaded, incoming);
+    let (gateway, trace) = crate::offline::generation(&loaded, incoming);
     let request = Request::builder()
         .method("POST")
         .uri("/v1/chat/completions")
@@ -68,7 +68,7 @@ async fn run(policy: &str, incoming: FixtureResponse, stream: bool, limit: usize
         ))
         .unwrap();
     let response = Arc::clone(&gateway)
-        .handle(request, Cancellation::new())
+        .handle_generation(request, "limen-r-test-1".into(), Cancellation::new())
         .await;
     let status = response.status().as_u16();
     let headers = response.headers().clone();

@@ -7,13 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use limen_config::{ConfigErrorKind, LogConfig, LogLevel};
-use limen_script::ScriptErrorKind;
+use limen_config::{LogConfig, LogLevel};
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::bootstrap::Error;
 
 mod encoding;
 pub mod reader;
@@ -103,43 +100,7 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// Report each failure once, after all cleanup results are available.
-pub fn report_failure(error: &Error, command: &'static str, phase: &'static str) {
-    let enabled = if expected_rejection(error) {
-        tracing::enabled!(tracing::Level::WARN)
-    } else {
-        tracing::enabled!(tracing::Level::ERROR)
-    };
-    if INITIALIZED.load(Ordering::Acquire) && enabled {
-        record_failure(error, command, phase);
-    } else {
-        eprintln!("limen: {}", error.diagnostic());
-    }
-}
-
-fn record_failure(error: &Error, command: &'static str, phase: &'static str) {
-    if expected_rejection(error) {
-        tracing::warn!(command, phase, "configuration rejected");
-    } else {
-        tracing::error!(command, phase, "configuration operation failed");
-    }
-}
-
-fn expected_rejection(error: &Error) -> bool {
-    match error {
-        Error::Config { source, .. } => source.kind != ConfigErrorKind::Io,
-        Error::Script(source) => matches!(
-            source.kind(),
-            ScriptErrorKind::InvalidOptions
-                | ScriptErrorKind::Module
-                | ScriptErrorKind::JavaScript
-                | ScriptErrorKind::Json
-                | ScriptErrorKind::Contract
-                | ScriptErrorKind::UnknownHook
-        ),
-        _ => false,
-    }
-}
+pub(crate) fn initialized() -> bool { INITIALIZED.load(Ordering::Acquire) }
 
 #[cfg(test)]
 mod tests;

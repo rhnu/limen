@@ -7,7 +7,7 @@ use limen_config::{ResourceLimits, load_server};
 use serde_json::{Value, json};
 
 use super::{Error, Report, discover, header_map, read, run_case, schema::Case, stream};
-use crate::bootstrap::Bootstrap;
+use crate::bootstrap::Loaded;
 
 mod content;
 mod observation_output;
@@ -25,7 +25,7 @@ fn fixtures(group: &str) -> PathBuf {
 /// Every case has a fresh VM; cleanup happens before either errors or mismatches are asserted.
 async fn execute(server: &Path, case: &Path) -> Result<Report, Error> {
     let (path, settings) = load_server(Some(server)).expect("valid test server settings");
-    let loaded = Bootstrap::start(&path, settings)
+    let loaded = Loaded::start(&path, settings)
         .await
         .expect("fixture configuration starts");
     let result = run_case(&loaded, case).await;
@@ -320,7 +320,7 @@ fn excessive_header_values_return_an_error_instead_of_panicking() {
 async fn same_runtime_keeps_failed_and_concurrent_request_states_separate() {
     let directory = fixtures("pipeline");
     let (path, settings) = load_server(Some(&directory.join("server.toml"))).unwrap();
-    let loaded = Bootstrap::start(&path, settings).await.unwrap();
+    let loaded = Loaded::start(&path, settings).await.unwrap();
     let failed = run_case(&loaded, &directory.join("failed-throw.case.json")).await;
     let first_path = directory.join("concurrent-first.case.json");
     let second_path = directory.join("concurrent-second.case.json");
@@ -351,7 +351,7 @@ async fn observer_cleanup_runs_once_without_recursion_and_shares_its_budget() {
         ("finish-wait", "after-finish-wait"),
     ] {
         let (path, settings) = load_server(Some(&directory.join("server.toml"))).unwrap();
-        let loaded = Bootstrap::start(&path, settings).await.unwrap();
+        let loaded = Loaded::start(&path, settings).await.unwrap();
         let first = run_case(&loaded, &directory.join(format!("{initial}.case.json"))).await;
         let second = run_case(&loaded, &directory.join(format!("{after}.case.json"))).await;
         let cleanup = loaded.shutdown().await;
@@ -422,7 +422,7 @@ async fn case_json_and_body_file_limits_apply_before_request_execution() {
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let (config, settings) =
             load_server(Some(&fixtures("policy").join("server.toml"))).unwrap();
-        let mut loaded = Bootstrap::start(&config, settings).await.unwrap();
+        let mut loaded = Loaded::start(&config, settings).await.unwrap();
         match limit {
             "source" => loaded.server.limits.max_source_bytes = 16,
             "depth" => loaded.server.limits.max_json_depth = 1,

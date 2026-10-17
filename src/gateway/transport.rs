@@ -1,6 +1,6 @@
 //! The single upstream boundary, shared by live requests and offline fixtures.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use http::HeaderMap;
 use serde_json::{Value, json};
@@ -35,7 +35,7 @@ pub(crate) struct Trace {
     pub observations: Value,
 }
 
-pub(super) enum Transport {
+pub(crate) enum Transport {
     Http {
         pooled_client: reqwest::Client,
         unpooled_client: reqwest::Client,
@@ -50,9 +50,9 @@ pub(super) enum Transport {
 impl Transport {
     pub fn http(origins: BTreeSet<String>) -> Result<Self, reqwest::Error> {
         Ok(Self::Http {
-            pooled_client: super::upstream_client(1)?,
+            pooled_client: upstream_client(1)?,
             // Script-selected origins reuse connector state without retaining idle connections.
-            unpooled_client: super::upstream_client(0)?,
+            unpooled_client: upstream_client(0)?,
             origins,
         })
     }
@@ -68,7 +68,7 @@ impl Transport {
         )
     }
 
-    pub async fn send(
+    pub(super) async fn send(
         &self,
         url: String,
         headers: HeaderMap,
@@ -113,7 +113,7 @@ impl Transport {
         }
     }
 
-    pub async fn complete(
+    pub(super) async fn complete(
         &self,
         lifecycle: &Lifecycle,
         failure: Option<&Failure>,
@@ -130,7 +130,7 @@ impl Transport {
         }
     }
 
-    pub async fn observation_failed(&self) {
+    pub(super) async fn observation_failed(&self) {
         if let Self::Fixture { trace, .. } = self {
             trace.lock().await.observation_failed = true;
         }
@@ -175,4 +175,14 @@ impl Incoming {
             },
         }
     }
+}
+
+fn upstream_client(max_idle: usize) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .pool_max_idle_per_host(max_idle)
+        .pool_idle_timeout(Duration::from_secs(30))
+        .build()
 }

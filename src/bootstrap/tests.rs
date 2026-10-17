@@ -4,7 +4,7 @@ use limen_config::{BusinessConfig, ResourceLimits};
 use limen_script::{RuntimeStatus, ScriptError, ScriptErrorKind};
 use serde_json::json;
 
-use super::{Error, shutdown_status, with_cleanup};
+use super::{Error, expected_rejection, shutdown_status, with_cleanup};
 
 #[test]
 fn native_configuration_failures_keep_typed_cause_and_safe_diagnostic() {
@@ -121,4 +121,48 @@ fn executor_source_remains_typed_while_reports_hide_its_payload() {
             .contains("secret-executor-payload")
     );
     assert!(!format!("{error:?}").contains("secret-executor-payload"));
+}
+
+#[test]
+fn upstream_client_startup_keeps_source_and_hides_builder_payload() {
+    let source = reqwest::Client::builder()
+        .user_agent("invalid\nprivate-client-secret")
+        .build()
+        .unwrap_err();
+    let error = Error::UpstreamClient(source);
+    assert_eq!(error.phase(), "http_startup");
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<reqwest::Error>()
+            .is_some()
+    );
+    assert!(
+        !error
+            .diagnostic()
+            .to_string()
+            .contains("private-client-secret")
+    );
+    assert!(!format!("{error:?}").contains("private-client-secret"));
+}
+
+#[test]
+fn rejection_and_operational_failure_have_distinct_severity() {
+    let source = BusinessConfig::from_value(json!({}), &ResourceLimits::default())
+        .err()
+        .unwrap();
+    assert!(expected_rejection(&Error::Config {
+        file: "config.js",
+        source: Box::new(source)
+    }));
+    assert!(expected_rejection(&Error::Script(ScriptError::new(
+        ScriptErrorKind::Contract
+    ))));
+    assert!(!expected_rejection(&Error::Script(ScriptError::new(
+        ScriptErrorKind::MemoryLimit
+    ))));
+    assert!(!expected_rejection(&Error::Executor(
+        io::ErrorKind::Other.into()
+    )));
 }

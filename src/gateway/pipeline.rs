@@ -29,7 +29,7 @@ impl Gateway {
         request: Request<axum::body::Body>,
         lifecycle: &mut Lifecycle,
     ) -> Result<Value, Failure> {
-        if !self.ready() {
+        if !self.accepting() {
             return Err(Failure::new(ErrorCode::Unavailable, "admission"));
         }
         if !request
@@ -42,15 +42,12 @@ impl Gateway {
         }
         lifecycle.phase = "request_body";
         let decode = lifecycle.statistics.timings.measure(WaitKind::Decode);
-        lifecycle.client = logic::client_context(
-            request.headers(),
-            &self.server.script_context.client_headers,
-        )?;
-        let bytes = to_bytes(request.into_body(), self.server.limits.max_body_bytes)
+        lifecycle.client = logic::client_context(request.headers(), &self.client_headers)?;
+        let bytes = to_bytes(request.into_body(), self.limits.max_body_bytes)
             .await
             .map_err(Failure::body)?;
         lifecycle.input_bytes = bytes.len();
-        let (body, stream) = logic::parse_request(&bytes, &self.server.limits)?;
+        let (body, stream) = logic::parse_request(&bytes, &self.limits)?;
         drop(decode);
         lifecycle.client_stream = Some(stream);
         Ok(body)
@@ -96,7 +93,7 @@ impl Gateway {
         let (body, url, mut headers) = self.before_send(&route, body, lifecycle).await?;
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
-        let bytes = protocol::encode_request(&body, &mut headers, &self.server.limits)?;
+        let bytes = protocol::encode_request(&body, &mut headers, &self.limits)?;
         lifecycle.outbound_bytes = bytes.len();
         lifecycle.final_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         lifecycle.target = Some(logic::safe_target(&url));
@@ -197,9 +194,9 @@ impl Gateway {
     ) -> Result<(), Failure> {
         value
             .validate(limen_script::JsonLimits {
-                max_depth: self.server.limits.max_json_depth,
-                max_nodes: self.server.limits.max_json_nodes,
-                max_bytes: self.server.limits.max_output_bytes,
+                max_depth: self.limits.max_json_depth,
+                max_nodes: self.limits.max_json_nodes,
+                max_bytes: self.limits.max_output_bytes,
             })
             .map_err(|source| hook_invalid(phase, step).with_source(source))?;
         Ok(())

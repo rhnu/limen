@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use limen_config::{ResourceLimits, load_server};
 
 use super::{Report, Value, execute, fs, json, run_case};
-use crate::bootstrap::Bootstrap;
+use crate::bootstrap::Loaded;
 
 enum Input<'a> {
     Sse(&'a str),
@@ -49,7 +49,7 @@ async fn run(
     fs::write(&path, serde_json::to_vec(&case).unwrap()).unwrap();
     if let Some(limits) = limits {
         let (path, settings) = load_server(Some(&server)).unwrap();
-        let mut loaded = Bootstrap::start(&path, settings).await.unwrap();
+        let mut loaded = Loaded::start(&path, settings).await.unwrap();
         loaded.server.limits = limits;
         let report = run_case(&loaded, &directory.path().join("input.case.json")).await;
         assert!(loaded.shutdown().await.is_ok());

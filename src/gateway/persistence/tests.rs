@@ -8,17 +8,17 @@ use limen_script::Cancellation;
 use serde_json::json;
 
 use super::*;
-use crate::{bootstrap::Bootstrap, gateway::FixtureResponse};
+use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
 const KEY: &str = "synthetic-client-secret-0123456789";
 
-async fn configured(policy: &str) -> (tempfile::TempDir, Bootstrap) {
+async fn configured(policy: &str) -> (tempfile::TempDir, Loaded) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("server.toml");
     fs::write(&path, format!("[auth]\napi_key='{KEY}'\n")).unwrap();
     fs::write(directory.path().join("config.js"),format!("const c={{providers:{{p:{{endpoint:'https://synthetic.invalid/chat'}}}},models:{{chat:{{provider:'p',upstream:'native'}}}}}}; {policy} export default c;")).unwrap();
     let (path, settings) = limen_config::load_server(Some(&path)).unwrap();
-    let loaded = Bootstrap::start(&path, settings).await.unwrap();
+    let loaded = Loaded::start(&path, settings).await.unwrap();
     (directory, loaded)
 }
 
@@ -62,9 +62,13 @@ async fn native_usage_is_recorded_for_all_four_transport_shapes() {
     for upstream in [false, true] {
         for client in [false, true] {
             let (_directory, loaded) = configured("").await;
-            let (gateway, _trace) = Gateway::offline(&loaded, incoming(upstream));
+            let (gateway, _trace) = crate::offline::generation(&loaded, incoming(upstream));
             let response = Arc::clone(&gateway)
-                .handle(request(client), Cancellation::new())
+                .handle_generation(
+                    request(client),
+                    "limen-r-test-1".into(),
+                    Cancellation::new(),
+                )
                 .await;
             assert_eq!(response.status(), 200);
             to_bytes(response.into_body(), 4096).await.unwrap();
@@ -76,6 +80,8 @@ async fn native_usage_is_recorded_for_all_four_transport_shapes() {
                 let state = state.lock().unwrap();
                 let pending = state.pending.as_ref().unwrap();
                 let record = state.terminal.as_ref().unwrap();
+                assert_eq!(pending.request_id, "limen-r-test-1");
+                assert_eq!(record.request_id, "limen-r-test-1");
                 assert_eq!(pending.client_stream, client);
                 assert_eq!(record.input_tokens, Some(3));
                 assert_eq!(record.output_tokens, Some(0));
@@ -92,13 +98,13 @@ async fn native_usage_is_recorded_for_all_four_transport_shapes() {
 #[tokio::test]
 async fn initial_write_failure_sends_no_upstream_or_observer_hooks() {
     let (_directory,loaded)=configured("c.onRequest=()=>{throw Error('must not run')}; c.onFinish=()=>{throw Error('must not run')};").await;
-    let (gateway, trace) = Gateway::offline(&loaded, incoming(false));
+    let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
     let RecordSink::Memory(state) = &gateway.records else {
         panic!("offline recorder")
     };
     state.lock().unwrap().fail_begin = true;
     let response = Arc::clone(&gateway)
-        .handle(request(false), Cancellation::new())
+        .handle_generation(request(false), "limen-r-test-1".into(), Cancellation::new())
         .await;
     assert_eq!(response.status(), 503);
     let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
@@ -116,13 +122,13 @@ async fn initial_write_failure_sends_no_upstream_or_observer_hooks() {
 #[tokio::test]
 async fn terminal_failure_preserves_success_and_unknown_record() {
     let (_directory, loaded) = configured("").await;
-    let (gateway, trace) = Gateway::offline(&loaded, incoming(false));
+    let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
     let RecordSink::Memory(state) = &gateway.records else {
         panic!("offline recorder")
     };
     state.lock().unwrap().fail_finish = true;
     let response = Arc::clone(&gateway)
-        .handle(request(false), Cancellation::new())
+        .handle_generation(request(false), "limen-r-test-1".into(), Cancellation::new())
         .await;
     assert_eq!(response.status(), 200);
     to_bytes(response.into_body(), 4096).await.unwrap();
@@ -138,7 +144,7 @@ async fn cancellation_during_begin_keeps_confirmation_and_records_cancelled_with
     for shutdown in [false, true] {
         let (_directory, loaded) =
             configured("c.onRequest=ctx=>{ctx.state.requestHookRan=true};").await;
-        let (gateway, trace) = Gateway::offline(&loaded, incoming(false));
+        let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
         let RecordSink::Memory(state) = &gateway.records else {
             panic!("offline recorder")
         };
@@ -151,8 +157,11 @@ async fn cancellation_during_begin_keeps_confirmation_and_records_cancelled_with
         let cancel = Cancellation::new();
         let handle_gateway = Arc::clone(&gateway);
         let handle_cancel = cancel.clone();
-        let handle =
-            tokio::spawn(async move { handle_gateway.handle(request(false), handle_cancel).await });
+        let handle = tokio::spawn(async move {
+            handle_gateway
+                .handle_generation(request(false), "limen-r-test-1".into(), handle_cancel)
+                .await
+        });
         tokio::time::timeout(Duration::from_secs(1), entered.notified())
             .await
             .unwrap();
@@ -197,7 +206,7 @@ async fn cancellation_during_begin_keeps_confirmation_and_records_cancelled_with
 async fn unconfirmed_begin_still_obeys_the_storage_operation_budget() {
     let (_directory, mut loaded) = configured("").await;
     loaded.server.storage.operation_ms = 50;
-    let (gateway, trace) = Gateway::offline(&loaded, incoming(false));
+    let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
     let RecordSink::Memory(state) = &gateway.records else {
         panic!("offline recorder")
     };
@@ -208,7 +217,11 @@ async fn unconfirmed_begin_still_obeys_the_storage_operation_budget() {
     });
     let response = tokio::time::timeout(
         Duration::from_secs(1),
-        Arc::clone(&gateway).handle(request(false), Cancellation::new()),
+        Arc::clone(&gateway).handle_generation(
+            request(false),
+            "limen-r-test-1".into(),
+            Cancellation::new(),
+        ),
     )
     .await
     .unwrap();
@@ -226,6 +239,33 @@ async fn unconfirmed_begin_still_obeys_the_storage_operation_budget() {
         assert!(state.pending.is_some());
         assert!(state.terminal.is_none());
     }
+    assert!(trace.lock().await.sent.is_none());
+    loaded.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn drained_gateway_stops_admission_and_keeps_the_supplied_response_id() {
+    let (_directory, loaded) = configured("").await;
+    let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
+    assert!(gateway.accepting());
+    gateway.drain().await;
+    assert!(!gateway.accepting());
+    let response = Arc::clone(&gateway)
+        .handle_generation(
+            request(false),
+            "external-generation-id".into(),
+            Cancellation::new(),
+        )
+        .await;
+    assert_eq!(response.status(), 503);
+    assert_eq!(
+        response.headers()["x-limen-request-id"],
+        "external-generation-id"
+    );
+    let RecordSink::Memory(state) = &gateway.records else {
+        panic!("offline recorder");
+    };
+    assert!(state.lock().unwrap().pending.is_none());
     assert!(trace.lock().await.sent.is_none());
     loaded.shutdown().await.unwrap();
 }

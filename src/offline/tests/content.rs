@@ -9,10 +9,7 @@ use limen_script::Cancellation;
 use serde_json::{Value, json};
 
 use super::{fs, group};
-use crate::{
-    bootstrap::Bootstrap,
-    gateway::{FixtureResponse, Gateway},
-};
+use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
 struct Outcome {
     status: u16,
@@ -36,8 +33,8 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
     )
     .unwrap();
     fs::write(directory.path().join("config.js"), config).unwrap();
-    let (path, settings) = Bootstrap::settings(Some(&server)).unwrap();
-    let loaded = Bootstrap::start(&path, settings).await.unwrap();
+    let (path, settings) = Loaded::settings(Some(&server)).unwrap();
+    let loaded = Loaded::start(&path, settings).await.unwrap();
     let mut headers = HeaderMap::new();
     headers.insert(
         "content-type",
@@ -51,7 +48,7 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
         || serde_json::to_vec(&source).unwrap(),
         |text| text.as_bytes().to_vec(),
     );
-    let (gateway, trace) = Gateway::offline(
+    let (gateway, trace) = crate::offline::application(
         &loaded,
         FixtureResponse {
             status: 200,

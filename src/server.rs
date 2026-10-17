@@ -10,7 +10,7 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{bootstrap::Bootstrap, gateway::Gateway};
+use crate::app::Application;
 
 #[derive(thiserror::Error)]
 pub enum Error {
@@ -18,16 +18,12 @@ pub enum Error {
     Bind(#[source] std::io::Error),
     #[error("HTTP accept failed")]
     Accept(#[source] std::io::Error),
-    #[error("cannot initialize upstream client")]
-    Client(#[source] reqwest::Error),
     #[error("cannot wait for shutdown signal")]
     Signal(#[source] std::io::Error),
     #[error("JavaScript runtime retired")]
     Retired(#[source] ScriptError),
     #[error("JavaScript runtime stopped unexpectedly")]
     RuntimeStopped,
-    #[error("persistent service resources are missing")]
-    Resources,
     #[error("HTTP connection task failed")]
     Task(#[source] tokio::task::JoinError),
     #[error("HTTP shutdown budget exceeded")]
@@ -48,7 +44,7 @@ impl Error {
 
     pub fn phase(&self) -> &'static str {
         match self {
-            Self::Bind(_) | Self::Client(_) | Self::Resources => "http_startup",
+            Self::Bind(_) => "http_startup",
             Self::Accept(_) | Self::Task(_) => "http_transport",
             Self::Signal(_) | Self::ShutdownTimeout(_) => "http_shutdown",
             Self::Retired(_) | Self::RuntimeStopped => "script_runtime",
@@ -86,33 +82,39 @@ impl fmt::Display for Diagnostic<'_> {
                 primary.diagnostic(),
                 cleanup.diagnostic()
             ),
-            Error::Client(_)
-            | Error::RuntimeStopped
-            | Error::ShutdownTimeout(_)
-            | Error::Resources => fmt::Display::fmt(self.0, formatter),
+            Error::RuntimeStopped | Error::ShutdownTimeout(_) => {
+                fmt::Display::fmt(self.0, formatter)
+            },
         }
     }
 }
 
-/// Bound transport tasks separately from request admission inside the gateway.
-pub async fn serve(loaded: &Bootstrap) -> Result<(), Error> {
-    let shutdown = Cancellation::new();
-    let storage = loaded.storage.as_ref().ok_or(Error::Resources)?.clone();
-    let logging = loaded.logging.as_ref().ok_or(Error::Resources)?;
-    let gateway =
-        Gateway::new(loaded, shutdown.clone(), storage, logging).map_err(Error::Client)?;
-    let mut status = loaded.runtime.status_changes();
+pub(crate) struct HttpSettings {
+    pub listen: std::net::SocketAddr,
+    pub connection_limit: usize,
+    pub header_timeout: Duration,
+    pub transport_budget: Duration,
+    pub shutdown_timeout: Duration,
+}
+
+/// Bound connection drivers independently of generation and management operations.
+pub(crate) async fn serve(
+    settings: HttpSettings,
+    application: Arc<Application>,
+    shutdown: Cancellation,
+    mut status: watch::Receiver<RuntimeStatus>,
+) -> Result<(), Error> {
     runtime_ready(&status.borrow())?;
-    let listener = TcpListener::bind(loaded.server.listen)
+    let listener = TcpListener::bind(settings.listen)
         .await
         .map_err(Error::Bind)?;
-    let connection_limit = loaded.server.limits.concurrency + loaded.server.limits.queue_capacity;
-    let header_timeout = Duration::from_millis(loaded.server.limits.request_ms);
-    let transport_budget = header_timeout + Duration::from_millis(loaded.server.limits.cleanup_ms);
+    let connection_limit = settings.connection_limit;
+    let header_timeout = settings.header_timeout;
+    let transport_budget = settings.transport_budget;
     let signal = shutdown_signal();
     tokio::pin!(signal);
     let mut connections = JoinSet::new();
-    tracing::info!(listen = %loaded.server.listen, connection_limit, "HTTP listener started");
+    tracing::info!(listen = %settings.listen, connection_limit, "HTTP listener started");
     let primary = loop {
         tokio::select! {
             biased;
@@ -133,7 +135,7 @@ pub async fn serve(loaded: &Bootstrap) -> Result<(), Error> {
             accepted = listener.accept(), if connections.len() < connection_limit => {
                 match accepted {
                     Ok((stream, _peer)) => {
-                        connections.spawn(connection(stream, Arc::clone(&gateway), shutdown.clone(), header_timeout, transport_budget));
+                        connections.spawn(connection(stream, Arc::clone(&application), shutdown.clone(), header_timeout, transport_budget));
                     },
                     Err(source) => break Err(Error::Accept(source)),
                 }
@@ -146,19 +148,16 @@ pub async fn serve(loaded: &Bootstrap) -> Result<(), Error> {
         connections = connections.len(),
         "HTTP listener stopped; cancelling requests"
     );
-    let cleanup = tokio::time::timeout(
-        Duration::from_millis(loaded.server.limits.shutdown_ms),
-        async {
-            let mut failure = None;
-            while let Some(joined) = connections.join_next().await {
-                if let Err(source) = joined {
-                    failure.get_or_insert(Error::Task(source));
-                }
+    let cleanup = tokio::time::timeout(settings.shutdown_timeout, async {
+        let mut failure = None;
+        while let Some(joined) = connections.join_next().await {
+            if let Err(source) = joined {
+                failure.get_or_insert(Error::Task(source));
             }
-            gateway.drain().await;
-            failure.map_or(Ok(()), Err)
-        },
-    )
+        }
+        application.drain().await;
+        failure.map_or(Ok(()), Err)
+    })
     .await
     .map_err(Error::ShutdownTimeout)
     .and_then(std::convert::identity);
@@ -194,7 +193,7 @@ impl Drop for CancelOnDrop {
 
 async fn connection(
     stream: TcpStream,
-    gateway: Arc<Gateway>,
+    application: Arc<Application>,
     shutdown: Cancellation,
     header_timeout: Duration,
     transport_budget: Duration,
@@ -204,9 +203,9 @@ async fn connection(
     let (deadline_tx, mut deadlines) = watch::channel(None);
     let service = service_fn(move |request: hyper::Request<Incoming>| {
         deadline_tx.send_replace(Some(tokio::time::Instant::now() + transport_budget));
-        let gateway = Arc::clone(&gateway);
+        let application = Arc::clone(&application);
         let cancel = cancel.clone();
-        async move { Ok::<_, Infallible>(gateway.handle(request.map(Body::new), cancel).await) }
+        async move { Ok::<_, Infallible>(application.handle(request.map(Body::new), cancel).await) }
     });
     let mut builder = http1::Builder::new();
     builder

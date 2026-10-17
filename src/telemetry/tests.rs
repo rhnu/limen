@@ -3,15 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use limen_config::{BusinessConfig, ResourceLimits};
-use limen_script::{ScriptError, ScriptErrorKind};
 use serde_json::json;
 use tracing_subscriber::layer::SubscriberExt;
 
 use super::{
-    Error, MAX_RECORD_BYTES,
+    MAX_RECORD_BYTES,
     encoding::{Encoder, Fields},
-    expected_rejection,
     writer::LogLayer,
 };
 
@@ -25,26 +22,6 @@ impl io::Write for Capture {
     }
 
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
-}
-
-#[test]
-fn rejection_and_operational_failure_have_distinct_severity() {
-    let source = BusinessConfig::from_value(json!({}), &ResourceLimits::default())
-        .err()
-        .unwrap();
-    assert!(expected_rejection(&Error::Config {
-        file: "config.js",
-        source: Box::new(source)
-    }));
-    assert!(expected_rejection(&Error::Script(ScriptError::new(
-        ScriptErrorKind::Contract
-    ))));
-    assert!(!expected_rejection(&Error::Script(ScriptError::new(
-        ScriptErrorKind::MemoryLimit
-    ))));
-    assert!(!expected_rejection(&Error::Executor(
-        io::ErrorKind::Other.into()
-    )));
 }
 
 #[test]

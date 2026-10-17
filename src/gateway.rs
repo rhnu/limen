@@ -1,5 +1,4 @@
 mod content;
-mod dispatch;
 mod error;
 mod error_response;
 mod events;
@@ -31,10 +30,13 @@ use axum::{
     http::{HeaderValue, Request, header},
     response::Response,
 };
-use error::{ErrorCode, Failure};
+pub(crate) use error::{ErrorCode, Failure};
+pub(crate) use json::encode as encode_json;
 use lifecycle::Lifecycle;
-use limen_config::{BusinessConfig, ServerConfig};
+use limen_config::{BusinessConfig, ResourceLimits};
 use limen_script::{Cancellation, RuntimeStatus, ScriptRuntime};
+pub(crate) use logic::{authorize, models_json, safe_target};
+pub(crate) use persistence::RecordSink;
 pub(crate) use plan::{Error as PlanError, ExecutionPlans};
 use response::Delivery;
 use tokio::{
@@ -42,137 +44,74 @@ use tokio::{
     task::JoinSet,
 };
 use tracing::Instrument;
-pub(crate) use transport::{FixtureResponse, Trace};
+pub(crate) use transport::{FixtureResponse, Trace, Transport};
 pub(crate) use upstream::media_kind;
 
-use crate::bootstrap::Bootstrap;
+/// Only generation configuration enters the request engine.
+pub(crate) struct GenerationConfig {
+    pub limits: ResourceLimits,
+    pub client_headers: Vec<String>,
+    pub observation_names: Vec<String>,
+    pub storage_operation_ms: u64,
+    pub business: Arc<BusinessConfig>,
+    pub plans: Arc<ExecutionPlans>,
+}
 
-/// Owns the connection pool and the bounded, tracked request lifetimes.
-pub struct Gateway {
-    server: ServerConfig,
-    business: BusinessConfig,
+pub(crate) struct GenerationServices {
+    pub runtime: ScriptRuntime,
+    pub transport: Transport,
+    pub records: RecordSink,
+    pub shutdown: Cancellation,
+    pub run_id: String,
+}
+
+/// Owns bounded generation lifetimes and their upstream and persistence operations.
+pub(crate) struct Gateway {
+    limits: ResourceLimits,
+    client_headers: Vec<String>,
+    observation_names: Vec<String>,
+    storage_operation_ms: u64,
+    business: Arc<BusinessConfig>,
     plans: Arc<ExecutionPlans>,
     runtime: ScriptRuntime,
-    transport: transport::Transport,
+    transport: Transport,
     shutdown: Cancellation,
     permits: Arc<Semaphore>,
     tasks: Mutex<JoinSet<()>>,
-    requests: AtomicU64,
     calls: AtomicU64,
     run_id: String,
-    managers: AtomicU64,
-    records: persistence::RecordSink,
-    admin: Option<crate::admin::Admin>,
+    records: RecordSink,
 }
 
 impl Gateway {
-    pub fn new(
-        loaded: &Bootstrap,
-        shutdown: Cancellation,
-        storage: limen_storage::Storage,
-        logging: &crate::telemetry::Logging,
-    ) -> Result<Arc<Self>, reqwest::Error> {
-        // Generation is sent once. Disable even protocol-level retries and redirects.
-        let pooled_origins = loaded
-            .business
-            .providers
-            .values()
-            .map(|provider| logic::safe_target(&provider.endpoint))
-            .collect();
-        let transport = transport::Transport::http(pooled_origins)?;
-        let admin = loaded
-            .server
-            .auth
-            .manager_key
-            .as_ref()
-            .map(|_| crate::admin::Admin::new(loaded, storage.clone(), logging));
-        Ok(Self::with_transport(
-            loaded,
-            shutdown,
-            transport,
-            persistence::RecordSink::Persistent(storage),
-            admin,
-        ))
-    }
-
-    pub(crate) fn offline(
-        loaded: &Bootstrap,
-        response: FixtureResponse,
-    ) -> (Arc<Self>, Arc<Mutex<Trace>>) {
-        let (transport, trace) = transport::Transport::fixture(response);
-        (
-            Self::with_transport(
-                loaded,
-                Cancellation::new(),
-                transport,
-                persistence::RecordSink::memory(),
-                None,
-            ),
-            trace,
-        )
-    }
-
-    fn with_transport(
-        loaded: &Bootstrap,
-        shutdown: Cancellation,
-        transport: transport::Transport,
-        records: persistence::RecordSink,
-        admin: Option<crate::admin::Admin>,
-    ) -> Arc<Self> {
+    pub(crate) fn new(config: GenerationConfig, services: GenerationServices) -> Arc<Self> {
+        let permits = Arc::new(Semaphore::new(config.limits.concurrency));
         Arc::new(Self {
-            server: loaded.server.clone(),
-            business: loaded.business.clone(),
-            plans: Arc::clone(&loaded.plans),
-            runtime: loaded.runtime.clone(),
-            transport,
-            shutdown,
-            permits: Arc::new(Semaphore::new(loaded.server.limits.concurrency)),
+            limits: config.limits,
+            client_headers: config.client_headers,
+            observation_names: config.observation_names,
+            storage_operation_ms: config.storage_operation_ms,
+            business: config.business,
+            plans: config.plans,
+            runtime: services.runtime,
+            transport: services.transport,
+            shutdown: services.shutdown,
+            permits,
             tasks: Mutex::new(JoinSet::new()),
-            requests: AtomicU64::new(1),
             calls: AtomicU64::new(1),
-            // Synthetic transport has a deterministic namespace for exact fixture assertions.
-            run_id: if matches!(&records, persistence::RecordSink::Memory(_)) {
-                uuid::Uuid::nil().to_string()
-            } else {
-                loaded.run_id.clone()
-            },
-            managers: AtomicU64::new(1),
-            records,
-            admin,
+            run_id: services.run_id,
+            records: services.records,
         })
     }
 
     /// The worker survives a dropped HTTP future only long enough to record its terminal
     /// outcome and run bounded observations. Its permit covers that cleanup as well.
-    pub async fn handle(
+    pub(crate) async fn handle_generation(
         self: Arc<Self>,
         request: Request<Body>,
+        request_id: String,
         connection_cancel: Cancellation,
     ) -> Response {
-        let manager =
-            request.uri().path() == "/admin/v1" || request.uri().path().starts_with("/admin/v1/");
-        let counter = if manager {
-            &self.managers
-        } else {
-            &self.requests
-        };
-        let namespace = if manager { "m" } else { "r" };
-        let request_id = format!(
-            "limen-{namespace}-{}-{}",
-            self.run_id,
-            counter.fetch_add(1, Ordering::Relaxed)
-        );
-        let request = match self.dispatch(request, &request_id).await {
-            dispatch::Dispatch::Generation(request) => request,
-            dispatch::Dispatch::Response(mut response) => {
-                if manager {
-                    response
-                        .headers_mut()
-                        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-                }
-                return response;
-            },
-        };
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return error_response(&Failure::new(ErrorCode::Busy, "admission"), &request_id);
         };
@@ -216,7 +155,7 @@ impl Gateway {
             },
             result = receive => result.unwrap_or_else(|_| error_response(&Failure::new(ErrorCode::Internal, "request_task"), &request_id)),
         };
-        // Streaming bodies carry their own cancellation guard beyond handle().
+        // Streaming bodies carry their own cancellation guard beyond handle_generation().
         cancel_on_drop.0.take();
         response
     }
@@ -235,16 +174,14 @@ impl Gateway {
         let result = self
             .request_active(lifecycle, &worker_connection_cancel)
             .and(result);
-        let cleanup_deadline =
-            Instant::now() + Duration::from_millis(self.server.limits.cleanup_ms);
+        let cleanup_deadline = Instant::now() + Duration::from_millis(self.limits.cleanup_ms);
         lifecycle
             .statistics
             .freeze(lifecycle.started, Instant::now());
         let record = persistence::terminal(lifecycle, result.as_ref().err());
         let persist = async {
             if let Some(record) = record {
-                let deadline =
-                    Instant::now() + Duration::from_millis(self.server.storage.operation_ms);
+                let deadline = Instant::now() + Duration::from_millis(self.storage_operation_ms);
                 if let Err(error) = self.records.finish(record, deadline).await {
                     tracing::error!(
                         phase = "storage_finish",
@@ -282,13 +219,9 @@ impl Gateway {
                 self.observe(lifecycle, terminal.as_ref().err(), cleanup_deadline)
                     .await;
             }
-            lifecycle.record(&terminal, &self.server.observability.events);
+            lifecycle.record(&terminal, &self.observation_names);
             self.transport
-                .complete(
-                    lifecycle,
-                    terminal.as_ref().err(),
-                    &self.server.observability.events,
-                )
+                .complete(lifecycle, terminal.as_ref().err(), &self.observation_names)
                 .await;
         };
         tokio::join!(persist, cleanup);
@@ -344,45 +277,34 @@ impl Gateway {
     }
 
     /// Shutdown stops admission before draining all tracked requests and observations.
-    pub async fn drain(&self) {
+    pub(crate) async fn drain(&self) {
         self.permits.close();
         let mut tasks = self.tasks.lock().await;
         while let Some(result) = tasks.join_next().await {
             report_task(result);
-        }
-        if let Some(admin) = &self.admin {
-            admin.drain().await;
         }
     }
 
     fn next_call(&self) -> u64 { self.calls.fetch_add(1, Ordering::Relaxed) }
 
     fn lifecycle(&self, id: String, cancellation: Cancellation) -> Lifecycle {
-        let mut lifecycle = Lifecycle::new(id, cancellation, self.server.limits.request_ms);
+        let mut lifecycle = Lifecycle::new(id, cancellation, self.limits.request_ms);
         lifecycle.observations =
-            observations::Observations::new(self.server.limits.max_observations_per_request);
+            observations::Observations::new(self.limits.max_observations_per_request);
         lifecycle
     }
 
-    fn ready(&self) -> bool {
-        !self.shutdown.is_cancelled() && matches!(self.runtime.status(), RuntimeStatus::Ready)
+    pub(crate) fn accepting(&self) -> bool {
+        !self.permits.is_closed()
+            && !self.shutdown.is_cancelled()
+            && matches!(self.runtime.status(), RuntimeStatus::Ready)
     }
 
     fn hook_deadline(&self, lifecycle: &Lifecycle) -> Instant {
         lifecycle
             .deadline
-            .min(Instant::now() + Duration::from_millis(self.server.limits.hook_ms))
+            .min(Instant::now() + Duration::from_millis(self.limits.hook_ms))
     }
-}
-
-fn upstream_client(max_idle: usize) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .no_proxy()
-        .pool_max_idle_per_host(max_idle)
-        .pool_idle_timeout(Duration::from_secs(30))
-        .build()
 }
 
 struct CancelOnDrop(Option<Cancellation>);
@@ -405,7 +327,7 @@ fn report_task(result: Result<(), tokio::task::JoinError>) {
     }
 }
 
-fn error_response(failure: &Failure, request_id: &str) -> Response {
+pub(crate) fn error_response(failure: &Failure, request_id: &str) -> Response {
     error_response_with_headers(failure, request_id, http::HeaderMap::new())
 }
 
@@ -438,7 +360,7 @@ fn error_response_with_headers(
     )
 }
 
-fn json_response(
+pub(crate) fn json_response(
     status: u16,
     mut headers: http::HeaderMap,
     body: Vec<u8>,

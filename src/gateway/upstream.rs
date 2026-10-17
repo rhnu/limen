@@ -74,13 +74,13 @@ impl Gateway {
             if client_stream {
                 json::size(
                     &body,
-                    self.server.limits.max_output_bytes,
+                    self.limits.max_output_bytes,
                     ErrorCode::HookFailed,
                     "response",
                 )?;
-                let chunks = JsonChunks::new(body, self.server.limits.max_event_bytes)
+                let chunks = JsonChunks::new(body, self.limits.max_event_bytes)
                     .map_err(|source| protocol(source, "json_to_sse"))?;
-                let mut tracker = ChunkTracker::new(self.server.limits.max_json_nodes);
+                let mut tracker = ChunkTracker::new(self.limits.max_json_nodes);
                 for event in chunks {
                     let event = event.map_err(|source| protocol(source, "json_to_sse"))?;
                     let mut budget = EventBudget::new();
@@ -108,7 +108,7 @@ impl Gateway {
             lifecycle.step = None;
             let bytes = json::encode(
                 &body,
-                self.server.limits.max_output_bytes,
+                self.limits.max_output_bytes,
                 ErrorCode::HookFailed,
                 "response",
             )?;
@@ -170,8 +170,8 @@ impl Gateway {
         )?;
         validate_json(
             &body,
-            self.server.limits.max_json_depth,
-            self.server.limits.max_json_nodes,
+            self.limits.max_json_depth,
+            self.limits.max_json_nodes,
         )
         .map_err(|source| {
             Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source)
@@ -191,13 +191,7 @@ impl Gateway {
     ) -> Result<Vec<u8>, Failure> {
         let mut bytes = Vec::new();
         while let Some(chunk) = read_chunk(response, lifecycle).await? {
-            if chunk.len()
-                > self
-                    .server
-                    .limits
-                    .max_output_bytes
-                    .saturating_sub(bytes.len())
-            {
+            if chunk.len() > self.limits.max_output_bytes.saturating_sub(bytes.len()) {
                 return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
             }
             bytes.extend_from_slice(&chunk);
@@ -214,7 +208,7 @@ impl Gateway {
         delivery: &mut Delivery,
         client_stream: bool,
     ) -> Result<Option<Value>, Failure> {
-        let limits = &self.server.limits;
+        let limits = &self.limits;
         let mut decoder = FrameDecoder::new(limits.max_event_bytes);
         let mut terminator = None;
         // Tracking is bounded independently of aggregation event count: one event
@@ -319,8 +313,8 @@ impl Gateway {
             // JSON boundary; their final encoded bytes are checked by the consumer.
             validate_json(
                 &event,
-                self.server.limits.max_json_depth,
-                self.server.limits.max_json_nodes,
+                self.limits.max_json_depth,
+                self.limits.max_json_nodes,
             )
             .map_err(|source| {
                 Failure::new(ErrorCode::UpstreamProtocol, "onStreamEvent").with_source(source)
@@ -336,7 +330,7 @@ impl Gateway {
             EventConsumer::Stream {
                 tracker,
                 frames: &mut frames,
-                max_event_bytes: self.server.limits.max_event_bytes,
+                max_event_bytes: self.limits.max_event_bytes,
                 frame,
                 stream_started: lifecycle.output_bytes > 0,
             },

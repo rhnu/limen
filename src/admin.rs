@@ -12,29 +12,43 @@ use axum::{
     http::{HeaderValue, Method, Request, header},
     response::Response,
 };
-use limen_config::{BusinessConfig, ServerConfig};
-use limen_script::{RuntimeStatus, ScriptRuntime};
-use limen_storage::{HealthState, Storage};
+pub(crate) use config::AdminConfigSnapshot;
+use limen_script::RuntimeStatus;
+use limen_storage::{HealthState, StorageReader};
 use serde_json::{Value, json};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 use crate::{
-    bootstrap::Bootstrap,
+    routes::AdminRoute,
     telemetry::{
-        Logging, LoggingHealth,
+        LoggingHealth,
         reader::{LogReader, ReadError},
     },
 };
 
 const MAX_RESPONSE: usize = 1024 * 1024;
 
-pub struct Admin {
-    server: ServerConfig,
-    business: BusinessConfig,
-    runtime: ScriptRuntime,
+pub(crate) struct ManagementSettings {
+    pub concurrency: usize,
+    pub timeout: Duration,
+}
+
+pub(crate) struct AdminServices {
+    pub run_id: String,
+    pub started_at: String,
+    pub runtime_status: watch::Receiver<RuntimeStatus>,
+    pub storage: StorageReader,
+    pub logging: LoggingHealth,
+    pub logs: LogReader,
+}
+
+pub(crate) struct Admin {
+    settings: ManagementSettings,
+    configuration: AdminConfigSnapshot,
+    runtime_status: watch::Receiver<RuntimeStatus>,
     run_id: String,
     started_at: String,
-    storage: Storage,
+    storage: StorageReader,
     logging: LoggingHealth,
     logs: LogReader,
     permits: Arc<Semaphore>,
@@ -82,7 +96,7 @@ impl Admin {
         if let Ok(_all) = self
             .permits
             .acquire_many(
-                u32::try_from(self.server.management.concurrency)
+                u32::try_from(self.settings.concurrency)
                     .expect("validated management concurrency fits u32"),
             )
             .await
@@ -91,26 +105,37 @@ impl Admin {
         }
     }
 
-    pub fn new(loaded: &Bootstrap, storage: Storage, logging: &Logging) -> Self {
+    pub(crate) fn new(
+        settings: ManagementSettings,
+        configuration: AdminConfigSnapshot,
+        services: AdminServices,
+    ) -> Self {
+        let permits = Arc::new(Semaphore::new(settings.concurrency));
         Self {
-            server: loaded.server.clone(),
-            business: loaded.business.clone(),
-            runtime: loaded.runtime.clone(),
-            run_id: loaded.run_id.clone(),
-            started_at: loaded.started_at.clone(),
-            storage,
-            logging: logging.health(),
-            logs: logging.reader(),
-            permits: Arc::new(Semaphore::new(loaded.server.management.concurrency)),
+            settings,
+            configuration,
+            runtime_status: services.runtime_status,
+            run_id: services.run_id,
+            started_at: services.started_at,
+            storage: services.storage,
+            logging: services.logging,
+            logs: services.logs,
+            permits,
         }
     }
 
-    pub async fn handle(&self, request: Request<Body>, id: &str, accepting: bool) -> Response {
-        let deadline = Instant::now() + Duration::from_millis(self.server.management.timeout_ms);
+    pub async fn handle(
+        &self,
+        route: AdminRoute,
+        request: Request<Body>,
+        id: &str,
+        accepting: bool,
+    ) -> Response {
+        let deadline = Instant::now() + self.settings.timeout;
         let result = match Arc::clone(&self.permits).try_acquire_owned() {
             Ok(permit) => tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
-                self.execute(request, accepting, permit, deadline),
+                self.execute(route, request, accepting, permit, deadline),
             )
             .await
             .unwrap_or(Err(Error::Timeout)),
@@ -121,24 +146,13 @@ impl Admin {
 
     async fn execute(
         &self,
+        route: AdminRoute,
         request: Request<Body>,
         accepting: bool,
         permit: OwnedSemaphorePermit,
         deadline: Instant,
     ) -> Result<Value, Error> {
-        let path = request.uri().path().to_owned();
-        let known = matches!(
-            path.as_str(),
-            "/admin/v1/status"
-                | "/admin/v1/config"
-                | "/admin/v1/requests"
-                | "/admin/v1/usage"
-                | "/admin/v1/logs"
-                | "/admin/v1/logs/files"
-        ) || path
-            .strip_prefix("/admin/v1/requests/")
-            .is_some_and(|id| !id.is_empty() && !id.contains('/'));
-        if !known {
+        if route == AdminRoute::Unknown {
             return Err(Error::NotFound);
         }
         if request.method() != Method::GET {
@@ -148,11 +162,11 @@ impl Admin {
         to_bytes(request.into_body(), 0)
             .await
             .map_err(|_error| Error::InvalidQuery)?;
-        let data = match path.as_str() {
-            "/admin/v1/status" => {
+        let data = match route {
+            AdminRoute::Status => {
                 query::allowed(&parameters, &[])?;
                 let storage = self.storage.health();
-                let vm = match self.runtime.status() {
+                let vm = match &*self.runtime_status.borrow() {
                     RuntimeStatus::Ready => "ready",
                     RuntimeStatus::Starting => "starting",
                     RuntimeStatus::Stopped => "stopped",
@@ -160,15 +174,15 @@ impl Admin {
                 };
                 json!({"data":{"version":env!("CARGO_PKG_VERSION"),"runId":self.run_id,"startedAt":self.started_at,"acceptingGenerations":accepting && storage.state==HealthState::Ready,"vm":vm,"storage":storage,"logging":self.logging.status()}})
             },
-            "/admin/v1/config" => self.configuration(&parameters)?,
-            "/admin/v1/requests" => self.request_page(&parameters, permit, deadline).await?,
-            "/admin/v1/usage" => {
+            AdminRoute::Config => self.configuration.page(&parameters, &self.run_id)?,
+            AdminRoute::Requests => self.request_page(&parameters, permit, deadline).await?,
+            AdminRoute::Usage => {
                 let request = query::usage(&parameters)?;
                 json!({"data":self.storage.usage(request, deadline, permit).await?})
             },
-            "/admin/v1/logs" | "/admin/v1/logs/files" => {
+            AdminRoute::Logs | AdminRoute::LogFiles => {
                 let reader = self.logs.clone();
-                let files = path.ends_with("/files");
+                let files = route == AdminRoute::LogFiles;
                 if files {
                     query::allowed(&parameters, &[])?;
                 }
@@ -182,21 +196,19 @@ impl Admin {
                 });
                 task.await.map_err(|_error| Error::Unavailable)??
             },
-            _ => {
+            AdminRoute::Request(id) => {
                 query::allowed(&parameters, &[])?;
-                let id = path
-                    .strip_prefix("/admin/v1/requests/")
-                    .ok_or(Error::NotFound)?;
                 if id.len() > 128 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
                     return Err(Error::InvalidQuery);
                 }
                 let record = self
                     .storage
-                    .get(id.to_owned(), deadline, permit)
+                    .get(id, deadline, permit)
                     .await?
                     .ok_or(Error::NotFound)?;
                 json!({"data":record})
             },
+            AdminRoute::Unknown => return Err(Error::NotFound),
         };
         if Instant::now() >= deadline {
             return Err(Error::Timeout);

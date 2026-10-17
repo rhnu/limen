@@ -6,7 +6,7 @@ mod types;
 mod worker;
 
 pub use types::*;
-pub use worker::Storage;
+pub use worker::{Storage, StorageReader, StorageWriter};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

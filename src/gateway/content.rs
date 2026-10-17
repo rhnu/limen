@@ -67,7 +67,7 @@ impl ContentPipeline {
 
 impl Gateway {
     pub(super) fn content_projector(&self, route: &RoutePlan<'_>) -> Option<ContentPipeline> {
-        let max_parts = self.server.limits.max_json_nodes;
+        let max_parts = self.limits.max_json_nodes;
         let (provider_steps, model_steps) = route.content();
         let stages: Vec<_> = provider_steps
             .iter()
@@ -156,7 +156,7 @@ impl Gateway {
             ContentInput::End => projector.source.project_end(),
         }
         .map_err(content_failure)?;
-        projector.capacity(None, &self.server.limits)?;
+        projector.capacity(None, &self.limits)?;
         let mut events = frame.events().to_vec();
         let mut rendered = None;
         for cursor in 0..projector.stages.len() {
@@ -177,7 +177,7 @@ impl Gateway {
                             native_deadline,
                             &step_name,
                         )?;
-                        charge(&produced, budget, &self.server.limits, &step_name)?;
+                        charge(&produced, budget, &self.limits, &step_name)?;
                         next.extend(produced);
                         continue;
                     },
@@ -199,7 +199,7 @@ impl Gateway {
                 let HookCandidate::OnContent { events: produced } = output.candidate else {
                     return Err(hook_invalid("onContent", &step_name));
                 };
-                charge(&produced, budget, &self.server.limits, &step_name)?;
+                charge(&produced, budget, &self.limits, &step_name)?;
                 *state = output.effects.state;
                 observations.commit(output.effects.observations, "onContent", Some(&step_name));
                 next.extend(produced);
@@ -207,7 +207,7 @@ impl Gateway {
             // Every step validates against its own previous output. Later steps
             // may remove or change a part without changing an earlier step's input.
             let value = render(&mut candidate.projector, frame.clone(), &next, ending)?;
-            projector.capacity(Some((cursor, &candidate)), &self.server.limits)?;
+            projector.capacity(Some((cursor, &candidate)), &self.limits)?;
             if let Some(value) = &value {
                 self.validate_content_render(value, complete, envelope, &step_name)?;
             }
@@ -237,13 +237,13 @@ impl Gateway {
     ) -> Result<(), Failure> {
         validate_json(
             value,
-            self.server.limits.max_json_depth,
-            self.server.limits.max_json_nodes,
+            self.limits.max_json_depth,
+            self.limits.max_json_nodes,
         )
         .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
         json::size(
             value,
-            self.server.limits.max_output_bytes,
+            self.limits.max_output_bytes,
             ErrorCode::HookFailed,
             "onContent",
         )?;
@@ -252,7 +252,7 @@ impl Gateway {
                 .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
             if let Some(envelope) = envelope {
                 envelope
-                    .encode(value, self.server.limits.max_event_bytes)
+                    .encode(value, self.limits.max_event_bytes)
                     .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
             }
         }
@@ -271,10 +271,10 @@ impl Gateway {
         lifecycle.step = Some(step.to_owned());
         let measurement = lifecycle.statistics.timings.native("onContent");
         let limits = NativeContentLimits {
-            max_output_events: self.server.limits.max_output_events,
-            max_output_bytes: self.server.limits.max_output_bytes,
-            max_retained_bytes: self.server.limits.max_output_bytes,
-            max_retained_records: self.server.limits.max_json_nodes,
+            max_output_events: self.limits.max_output_events,
+            max_output_bytes: self.limits.max_output_bytes,
+            max_retained_bytes: self.limits.max_output_bytes,
+            max_retained_records: self.limits.max_json_nodes,
         };
         let result = native
             .apply(event, &limits, &mut || {
@@ -295,8 +295,8 @@ impl Gateway {
         for event in &produced {
             validate_json(
                 event,
-                self.server.limits.max_json_depth,
-                self.server.limits.max_json_nodes,
+                self.limits.max_json_depth,
+                self.limits.max_json_nodes,
             )
             .map_err(|source| hook_invalid("onContent", step).with_source(source))?;
         }
