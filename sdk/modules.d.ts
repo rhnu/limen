@@ -7,6 +7,13 @@ declare module "limen:runtime" {
      * @throws If the name is invalid, a byte limit is exceeded, or the value is not Unicode.
      */
     export function env(name: string): string | undefined;
+    /**
+     * Reads a required process environment variable without trimming its value.
+     * @param name - Same name validation and host byte limit as `env`.
+     * @returns The nonempty Unicode value.
+     * @throws If absent or empty, or if `env` would throw. Errors do not include the name or value.
+     */
+    export function requiredEnv(name: string): string;
 }
 
 declare module "limen:gateway" {

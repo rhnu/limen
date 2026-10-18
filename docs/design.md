@@ -96,7 +96,7 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 ### 内置模块与策略扩展
 
-脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:gateway`、`limen:providers`、`limen:policies`、`limen:content` 与 `limen:runtime`；后者提供运行环境能力，当前导出 `env`，不注入全局宿主命名空间。未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，与本地模块共用模块数量限额；内嵌 JavaScript 计入共享源码大小限额，Rust 原生模块没有 JavaScript 源码字节，导出函数仍遵守各自资源限制。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
+脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:gateway`、`limen:providers`、`limen:policies`、`limen:content` 与 `limen:runtime`；后者提供运行环境能力，当前导出 `env` 与 `requiredEnv`，不注入全局宿主命名空间。未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，与本地模块共用模块数量限额；内嵌 JavaScript 计入共享源码大小限额，Rust 原生模块没有 JavaScript 源码字节，导出函数仍遵守各自资源限制。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
 
 JavaScript 实现的公开内置模块使用显式 ESM 导入复用私有实现，构建时各自打包为独立入口，再由 Rust 注册表嵌入；私有依赖不注册为可导入的 `limen:` 名称。源码预算以 VM 实际加载的打包字节计量，不隐式追加共享 prelude。`limen:runtime` 由同一注册表加载 Rust 原生 ESM 导出，其环境读取限额绑定所属 VM。请求上下文桥接仍由宿主在用户代码运行前私有装配，不进入公开模块加载路径。
 
@@ -200,7 +200,7 @@ concurrency = 4
 timeout_ms = 2000
 ```
 
-`auth.api_key` 必填；`auth.manager_key` 缺省表示管理功能关闭，空字符串不表示关闭。每个 key 为 32–256 字节、无空白的可打印 ASCII，二者不能相同。不支持 `client_auth`、匿名模式或旧 `log.output`；未知字段、重复键和非法值直接报配置错误。服务配置不做环境变量插值；上游仍可由 JS 从 `limen:runtime` 导入的 `env` 读取独立凭据。
+`auth.api_key` 必填；`auth.manager_key` 缺省表示管理功能关闭，空字符串不表示关闭。每个 key 为 32–256 字节、无空白的可打印 ASCII，二者不能相同。不支持 `client_auth`、匿名模式或旧 `log.output`；未知字段、重复键和非法值直接报配置错误。服务配置不做环境变量插值；上游仍可由 JS 从 `limen:runtime` 导入的 `requiredEnv` 读取必需的独立凭据。
 
 省略 storage/log/management 的可选字段时采用上例默认值。保留现有 `[limits]`、`[script_context]` 和 `[observability]`；密钥不属于可被脚本读取的客户端头或上下文。
 

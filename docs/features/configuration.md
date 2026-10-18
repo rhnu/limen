@@ -62,16 +62,13 @@ timeout_ms = 2000
 `gateway.js` 示例：
 
 ```js
-import { env } from "limen:runtime";
+import { requiredEnv } from "limen:runtime";
 import { defineGateway } from "limen:gateway";
-
-const upstreamKey = env("UPSTREAM_API_KEY");
-if (!upstreamKey) throw new Error("UPSTREAM_API_KEY is required");
 
 export default defineGateway((gateway) => {
   const primary = gateway.provider("primary", {
     endpoint: "https://api.example.com/v1/chat/completions",
-    auth: { bearer: upstreamKey },
+    auth: { bearer: requiredEnv("UPSTREAM_API_KEY") },
     defaults: { temperature: 0.7 },
   });
   primary.model("chat", {
@@ -99,11 +96,11 @@ cargo run --locked -- serve --config local/config/server.toml
 ```js
 import { defineGateway } from "limen:gateway";
 import { createDeepSeek } from "limen:providers";
-import { env } from "limen:runtime";
+import { requiredEnv } from "limen:runtime";
 
 export default defineGateway((gateway) => {
   const deepseek = createDeepSeek(gateway, "primary", {
-    apiKey: env("DEEPSEEK_API_KEY") ?? "",
+    apiKey: requiredEnv("DEEPSEEK_API_KEY"),
     options: { thinking: "enabled" },
   });
   deepseek.model("reasoner", {
@@ -114,7 +111,7 @@ export default defineGateway((gateway) => {
 });
 ```
 
-三家工厂都要求显式提供非空 `apiKey`，不会读取默认环境变量或客户端凭据。缺失环境变量时，上例的空 key 会使启动失败。可选的 `endpoint` 替换完整 URL，不追加路径；`headers` 添加静态上游头；`defaults` 保留开放的上游 JSON 字段；provider 级和 model 级 `options` 分别提供有类型的专有默认参数。
+三家工厂都要求显式提供非空 `apiKey`，不会读取默认环境变量或客户端凭据。上例通过 `requiredEnv` 在环境变量缺失或为空时使启动失败。可选的 `endpoint` 替换完整 URL，不追加路径；`headers` 添加静态上游头；`defaults` 保留开放的上游 JSON 字段；provider 级和 model 级 `options` 分别提供有类型的专有默认参数。
 
 | 工厂               | 缺省 endpoint                                   | 额外连接选项                                                         |
 | ------------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
@@ -145,6 +142,8 @@ OpenRouter 的 `provider` 接受字符串数组 `order / only / ignore`，布尔
 ## 环境变量
 
 从 `limen:runtime` 导入 `env`，通过 `env(name)` 读取进程环境变量。变量不存在时返回 `undefined`，存在但为空时返回 `""`；`??` 只处理前者。名称必须非空且不含 `=` 或 NUL，名称与值受字节限制，非 Unicode 值会抛错。
+
+必需的凭据使用同一模块导出的 `requiredEnv(name)`：返回类型为 `string`，变量缺失或为空字符串时抛出 `Error`。它与 `env` 共用名称校验、字节限制和非 Unicode 错误处理；非法名称抛出 `TypeError`，超过字节限制抛出 `RangeError`。两者均不裁剪值，纯空白仍是非空字符串，凭据的其他约束由使用方校验。错误消息不包含变量名或值。顶层或同步 setup 中未捕获的异常会使启动失败；hook 中的异常沿现有阶段失败与事务提交规则处理。
 
 变量来自启动 Limen 的进程环境，服务 TOML/YAML 不做环境变量插值，也不自动读取 `.env`。可在顶层读取一次保存到闭包，或在 hook 中按需读取。应由 shell、服务管理器或[容器配置](deployment.md#docker)提供变量，避免写入受版本管理的文件。
 

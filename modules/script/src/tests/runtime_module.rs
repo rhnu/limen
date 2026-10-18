@@ -8,7 +8,7 @@ async fn native_runtime_exports_share_esm_identity_and_reject_namespace_mutation
     let fixture = Fixture::new()?;
     fixture.write(
         "runtime-reexport.mjs",
-        "export { env } from 'limen:runtime';",
+        "export { env, requiredEnv } from 'limen:runtime';",
     )?;
     // A nearby local file must not replace the reserved builtin.
     fixture.write("runtime.js", "export const env = 'local';")?;

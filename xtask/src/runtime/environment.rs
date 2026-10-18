@@ -10,6 +10,7 @@ pub(crate) fn configure(command: &mut tokio::process::Command) {
         .env("LIMEN_PROBE_ENV_TOKEN", "synthetic-upstream-token")
         .env("LIMEN_PROBE_ENV_EMPTY", "")
         .env("LIMEN_PROBE_ENV_UNICODE", "密钥-é")
+        .env("LIMEN_PROBE_ENV_WHITESPACE", " \t")
         .env("LIMEN_PROBE_ENV_LARGE", "x".repeat(4097))
         .env_remove("LIMEN_PROBE_ENV_MISSING");
     #[cfg(unix)]
@@ -64,7 +65,8 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
             && output["module"]["sealed"] == true
             && output["module"]["unicode"] == "密钥-é"
             && output["module"]["missing"] == true
-            && output["module"]["empty"] == "",
+            && output["module"]["empty"] == ""
+            && output["module"]["whitespace"] == " \t",
         "runtime module lost namespace sealing, token, Unicode, absence or empty string",
     )?;
     ensure(
@@ -83,6 +85,21 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
             && matches!(runtime.status(), RuntimeStatus::Ready),
         "environment failure leaked input or retired a usable VM",
     )?;
+    let error = runtime
+        .invoke(call(id, 4, request(json!({"action":"required-uncaught"}))))
+        .await
+        .outcome
+        .err()
+        .ok_or("missing required environment variable must fail the hook")?;
+    ensure(
+        error.kind() == ScriptErrorKind::JavaScript
+            && !error
+                .diagnostic()
+                .to_string()
+                .contains("LIMEN_PROBE_ENV_MISSING")
+            && matches!(runtime.status(), RuntimeStatus::Ready),
+        "required environment failure leaked input or retired a usable VM",
+    )?;
     let output = runtime
         .invoke(call(id, 3, request(json!({"action":"read"}))))
         .await
@@ -93,5 +110,23 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         output["token"] == "synthetic-upstream-token" && output["fallback"] == "fallback",
         "async hook environment lookup failed after a rejected access",
     )?;
-    stop(&runtime).await
+    stop(&runtime).await?;
+    for source in [
+        include_str!("../../fixtures/runtime/environment-required-missing.js"),
+        include_str!("../../fixtures/runtime/environment-required-empty.js"),
+    ] {
+        let path = fixture.write("required.js", source)?;
+        match ScriptRuntime::start(path, RuntimeOptions::default()).await {
+            Err(error) => ensure(
+                error.kind() == ScriptErrorKind::Module
+                    && error.diagnostic().to_string().contains("exception=Error"),
+                "required environment startup failure used the wrong diagnostic",
+            )?,
+            Ok((runtime, _)) => {
+                stop(&runtime).await?;
+                return Err("required environment variable allowed startup without a value".into());
+            },
+        }
+    }
+    Ok(())
 }

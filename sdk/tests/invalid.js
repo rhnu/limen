@@ -1,4 +1,4 @@
-import { env } from "limen:runtime";
+import { env, requiredEnv } from "limen:runtime";
 import { defineGateway } from "limen:gateway";
 // Each expected diagnostic protects an author-facing contract; no runtime execution.
 /** @typedef {{ calls?: number, details?: { tags: string[] } }} RequestState */
@@ -286,6 +286,12 @@ export const nonJsonState = /** @type {never} */ (null);
 
 // @ts-expect-error Environment names must be strings.
 env(1);
+// @ts-expect-error Required environment names must be strings.
+requiredEnv(1);
+// @ts-expect-error Required environment names cannot be omitted.
+requiredEnv();
+// @ts-expect-error Imported required environment bindings are read-only.
+requiredEnv = () => "changed";
 // @ts-expect-error Environment results can be missing.
 env("MISSING").toUpperCase();
 // @ts-expect-error Imported bindings are read-only.

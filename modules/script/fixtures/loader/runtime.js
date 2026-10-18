@@ -1,10 +1,15 @@
-import { env } from "limen:runtime";
+import { env, requiredEnv } from "limen:runtime";
 import * as runtime from "limen:runtime";
-import { env as reexported } from "./runtime-reexport.mjs";
+import { env as reexported, requiredEnv as requiredReexported } from "./runtime-reexport.mjs";
 
 const dynamic = await import("limen:runtime");
 export default () => ({
-  same: runtime === dynamic && env === dynamic.env && env === reexported,
+  same:
+    runtime === dynamic &&
+    env === dynamic.env &&
+    env === reexported &&
+    requiredEnv === dynamic.requiredEnv &&
+    requiredEnv === requiredReexported,
   onRequest(ctx) {
     const rejected = (run, type) => {
       try {
@@ -15,8 +20,10 @@ export default () => ({
       }
       throw new Error("runtime operation unexpectedly succeeded");
     };
-    rejected(() => env("A=B"), TypeError);
-    rejected(() => env("x".repeat(1025)), RangeError);
+    for (const read of [env, requiredEnv]) {
+      rejected(() => read("A=B"), TypeError);
+      rejected(() => read("x".repeat(1025)), RangeError);
+    }
     rejected(() => {
       runtime.env = () => "changed";
     }, TypeError);
@@ -24,8 +31,18 @@ export default () => ({
       delete runtime.env;
     }, TypeError);
     rejected(() => {
+      runtime.requiredEnv = () => "changed";
+    }, TypeError);
+    rejected(() => {
+      delete runtime.requiredEnv;
+    }, TypeError);
+    rejected(() => {
       runtime.extra = true;
     }, TypeError);
-    ctx.state.checked = env === reexported && env === dynamic.env;
+    ctx.state.checked =
+      env === reexported &&
+      env === dynamic.env &&
+      requiredEnv === requiredReexported &&
+      requiredEnv === dynamic.requiredEnv;
   },
 });

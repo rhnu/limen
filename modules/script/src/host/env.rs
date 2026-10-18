@@ -6,6 +6,8 @@ use rquickjs::{Ctx, Exception, Function};
 
 #[derive(Debug, thiserror::Error)]
 enum ReadError {
+    #[error("required environment variable is missing or empty")]
+    RequiredValue,
     #[error("environment variable name must be nonempty and exclude '=' and NUL")]
     InvalidName,
     #[error("environment variable name exceeds byte limit")]
@@ -20,6 +22,7 @@ enum ReadError {
 fn read_with(
     name: &str,
     max_bytes: usize,
+    required: bool,
     lookup: impl FnOnce(&str) -> Result<String, VarError>,
 ) -> Result<Option<String>, ReadError> {
     if name.is_empty() || name.contains(['=', '\0']) {
@@ -28,21 +31,29 @@ fn read_with(
     if name.len() > max_bytes {
         return Err(ReadError::NameLimit);
     }
-    match lookup(name) {
+    let value = match lookup(name) {
         Ok(value) if value.len() > max_bytes => Err(ReadError::ValueLimit),
         Ok(value) => Ok(Some(value)),
         Err(VarError::NotPresent) => Ok(None),
         Err(error @ VarError::NotUnicode(_)) => Err(ReadError::NotUnicode(error)),
+    }?;
+    if required && value.as_deref().is_none_or(str::is_empty) {
+        return Err(ReadError::RequiredValue);
     }
+    Ok(value)
 }
 
 /// Build the bounded lookup function exported by the native runtime module.
-pub(super) fn function<'js>(ctx: &Ctx<'js>, max_bytes: usize) -> rquickjs::Result<Function<'js>> {
+pub(super) fn function<'js>(
+    ctx: &Ctx<'js>,
+    max_bytes: usize,
+    required: bool,
+) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'_>, name: rquickjs::String<'_>| {
             let name = name.to_string()?;
-            read_with(&name, max_bytes, |name| std::env::var(name)).map_err(|error| {
+            read_with(&name, max_bytes, required, |name| std::env::var(name)).map_err(|error| {
                 // Only fixed messages enter JS; OS errors can contain the secret value.
                 let message = error.to_string();
                 match error {
@@ -50,7 +61,9 @@ pub(super) fn function<'js>(ctx: &Ctx<'js>, max_bytes: usize) -> rquickjs::Resul
                     ReadError::NameLimit | ReadError::ValueLimit => {
                         Exception::throw_range(&ctx, &message)
                     },
-                    ReadError::NotUnicode(_) => Exception::throw_message(&ctx, &message),
+                    ReadError::RequiredValue | ReadError::NotUnicode(_) => {
+                        Exception::throw_message(&ctx, &message)
+                    },
                 }
             })
         },
