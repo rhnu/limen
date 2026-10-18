@@ -45,6 +45,31 @@ fn lifecycle() -> Lifecycle {
 fn chunk(text: &str) -> Value { json!({"choices":[{"index":0,"delta":{"content":text}}]}) }
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_deadlines_distinguish_hook_budget_and_expired_request() {
+    let (_directory, loaded, gateway) = configured().await;
+    let mut lifecycle = lifecycle();
+    lifecycle.phase = "onContent";
+    lifecycle.step = Some("policy".into());
+    let elapsed = Instant::now()
+        .checked_sub(std::time::Duration::from_secs(1))
+        .unwrap();
+    let failure = gateway.native_active(&lifecycle, elapsed).unwrap_err();
+    assert_eq!(
+        failure.error_json("test")["error"]["message"],
+        "The hook deadline was exceeded"
+    );
+    assert_eq!(failure.step.as_deref(), Some("policy"));
+    lifecycle.deadline = elapsed;
+    let failure = gateway.native_active(&lifecycle, elapsed).unwrap_err();
+    assert_eq!(
+        failure.error_json("test")["error"]["message"],
+        "The request deadline was exceeded"
+    );
+    assert_eq!(failure.step.as_deref(), Some("policy"));
+    loaded.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn failed_native_render_discards_candidate_and_preserves_previous_prefix() {
     let (_directory, loaded, mut gateway) = configured().await;
     Arc::get_mut(&mut gateway).unwrap().limits.max_event_bytes = 256;

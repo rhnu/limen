@@ -3,6 +3,37 @@ use std::{error::Error, io};
 use super::*;
 
 #[test]
+fn deadline_messages_distinguish_request_and_hook_without_changing_code_or_status() {
+    for (failure, message) in [
+        (
+            Failure::new(ErrorCode::DeadlineExceeded, "upstream_send"),
+            "The request deadline was exceeded",
+        ),
+        (
+            Failure::script(
+                ScriptError::new(ScriptErrorKind::Deadline),
+                "beforeSend",
+                Some("policy"),
+            ),
+            "The hook deadline was exceeded",
+        ),
+        (
+            Failure::hook_timeout("onContent"),
+            "The hook deadline was exceeded",
+        ),
+    ] {
+        assert_eq!(failure.http_status(), 504);
+        assert_eq!(
+            failure.error_json("request-7"),
+            json!({"error": {
+                "code": "deadline_exceeded", "message": message, "request_id": "request-7"
+            }})
+        );
+        assert_eq!(failure.observer_error("request-7")["message"], message);
+    }
+}
+
+#[test]
 fn public_error_keeps_fixed_message_and_request_id_without_raw_cause() {
     let mut failure = Failure::new(ErrorCode::InvalidRequest, "request_body")
         .with_source(io::Error::other("secret body token Cookie source"));

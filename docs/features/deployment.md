@@ -68,6 +68,8 @@ docker build --platform linux/amd64 --target runtime -t limen:local .
 
 `max_output_bytes` 也用于 JSON 输出和 JS 桥接，不能仅按流事件估算；它不是整条 SSE 的总流量上限。调大事件限制仍可能被聚合、JSON 节点、VM 内存或进程内存限制拒绝。容器内存需要容纳 Rust、TLS、连接缓冲和 VM，不能只按 `memory_bytes` 配置。
 
+请求与 hook 的默认期限、范围及计时方式见[配置与接入](configuration.md#配置文件)。HTTP 请求头读取期限沿用 `request_ms`，连接传输预算为 `request_ms + cleanup_ms`，也覆盖慢客户端的响应写出与后续空闲连接；调大请求期限会同时放宽这些传输边界。
+
 ## 日志与关闭
 
 `[log]` 的 `level` 控制等级，`format` 控制 stderr 的 text/JSON 格式；日志文件固定为带 UTC 毫秒时间的 JSONL。默认单文件 16 MiB、8 个备份，每条最多 16 KiB，队列有界并在满时丢弃。文件写入或轮换故障后停止本次运行的文件输出，通过 stderr 与管理状态诊断，修复后重启。Docker stderr 使用 `local` 日志驱动，单文件 10 MiB、最多 3 个文件。
@@ -93,3 +95,5 @@ Ctrl+C 或 Unix SIGTERM 会停止监听、取消请求，依次等待 HTTP 排�
 | Docker 无法访问或读取配置       | 容器监听地址、宿主端口映射、挂载依赖、UID/GID 10001 对 config 的读取和 data/logs 的读写权限                                |
 
 复现脚本与转换问题优先使用[离线测试](testing.md)，不要为诊断打印真实正文或秘密。网络、容器或真实上游问题需在对应运行环境验证。
+
+`deadline_exceeded` 的默认文案区分请求总期限与 hook 期限，见[状态与错误](transport.md#状态响应头与错误)；结合请求 ID 对应的 phase、step 和耗时定位，持续输出的流同样受请求总期限约束。

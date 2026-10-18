@@ -21,6 +21,10 @@ pub async fn deadline(laboratory: &mut Laboratory<'_>) -> Result<()> {
                 let reply = item.request(request(&[("wait", json!(true))])).await?;
                 reply.error(504, "deadline_exceeded", "hook waiting deadline")?;
                 ensure!(
+                    reply.body["error"]["message"] == "The hook deadline was exceeded",
+                    "hook timeout message"
+                );
+                ensure!(
                     started.elapsed() < Duration::from_secs(2),
                     "deadline bounded"
                 );
@@ -50,11 +54,45 @@ pub async fn deadline(laboratory: &mut Laboratory<'_>) -> Result<()> {
             item.upstream.controls.lock().await.delay = true;
             let reply = item.request(request(&[])).await?;
             reply.error(504, "deadline_exceeded", "upstream request deadline")?;
+            ensure!(
+                reply.body["error"]["message"] == "The request deadline was exceeded",
+                "request timeout message"
+            );
             item.upstream.wait(Duration::from_secs(1), true).await?;
             let log = item.statistics(reply.request_id()?, &[]).await?;
             log.outcome("failed", Some("deadline_exceeded"))?;
             log.no_upstream_samples()
         })
+        .await?;
+    laboratory
+        .with_fixture(
+            Options {
+                config: Some(PENDING_CONFIG),
+                hook_ms: Some(3000),
+                ..Options::default()
+            },
+            async |item| {
+                let reply = item.request(request(&[("wait", json!(true))])).await?;
+                reply.error(
+                    504,
+                    "deadline_exceeded",
+                    "total request deadline while awaiting hook",
+                )?;
+                ensure!(
+                    reply.body["error"]["message"] == "The request deadline was exceeded",
+                    "request deadline takes precedence over hook deadline"
+                );
+                ensure!(
+                    item.upstream.controls.lock().await.records.is_empty(),
+                    "expired request does not send upstream"
+                );
+                ensure!(
+                    item.request(request(&[])).await?.status == 200,
+                    "total deadline retains healthy VM"
+                );
+                Ok(())
+            },
+        )
         .await
 }
 

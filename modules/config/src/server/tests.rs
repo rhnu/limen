@@ -238,7 +238,7 @@ fn toml_and_yaml_share_schema_defaults_and_overrides() {
         assert_eq!(config.auth.api_key, "test-api-key-01234567890123456789");
         assert_eq!(config.limits.concurrency, 2);
         assert_eq!(config.limits.hook_ms, 1);
-        assert_eq!(config.limits.request_ms, 120_000);
+        assert_eq!(config.limits.request_ms, 600_000);
         assert_eq!(config.log.level, LogLevel::Warn);
         assert_eq!(config.log.format, LogFormat::Json);
         assert_eq!(config.log.max_files, 8);

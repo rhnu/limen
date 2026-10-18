@@ -89,6 +89,15 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
 | 上游 HTTP 失败   | 内部归类为 `upstream_failed`，正文保留上游格式                   | 上游原状态            |
 | 网络与协议       | `upstream_failed` / `upstream_protocol`                          | 502，超时为 504       |
 
+请求总超时与单次 hook 超时都使用 `deadline_exceeded` 和默认 HTTP 504，但默认文案区分来源：
+
+| 超时来源                            | `error.message`                     |
+| ----------------------------------- | ----------------------------------- |
+| 请求总期限                          | `The request deadline was exceeded` |
+| 单次 JS hook 等待或原生策略执行预算 | `The hook deadline was exceeded`    |
+
+请求总期限先到时，即使正在等待 hook，也使用请求超时文案。默认期限与配置范围见[配置与接入](configuration.md#配置文件)。SSE 已开始时沿用相同错误文案发送流内错误，不能改写已提交的 HTTP 状态；未开始的错误响应仍可由 `onErrorResponse` 显式适配。
+
 需要统一供应商错误格式或自定义网关错误时，配置 [`onErrorResponse`](scripting.md#错误响应适配)。它可修改尚未发出的错误响应，保留失败分类；已经开始的 SSE 仍按流内错误规则结束。日志和观察 hook 只提供 phase、step 与清理后的错误分类，不输出上游正文或任意脚本异常消息。排错见[部署与运维](deployment.md#排错)。
 
 协议权威实现：[`modules/chat/src/`](../../modules/chat/src/)、[`src/gateway/upstream.rs`](../../src/gateway/upstream.rs)、[`src/gateway/response.rs`](../../src/gateway/response.rs)。

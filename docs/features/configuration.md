@@ -32,6 +32,10 @@ api_key = "replace-with-a-random-api-key-at-least-32-bytes"
 运行参数的默认值：
 
 ```toml
+[limits]
+request_ms = 600000 # 请求总期限：10 分钟
+hook_ms = 5000 # 单次 hook 等待：5 秒
+
 [storage]
 dir = "../data"
 retention_days = 90
@@ -50,6 +54,8 @@ max_files = 8 # 备份数量，另有活动文件
 concurrency = 4
 timeout_ms = 2000
 ```
+
+请求总期限从生成任务开始计时，覆盖正文读取、hook、上游调用及响应处理，SSE 的下游发送也计入期限；收到 token 或心跳不会续期。单次 hook 等待包含排队与 Promise 等待，实际截止时刻取 `hook_ms` 与请求剩余期限的较早者；请求总期限先到时按请求超时报告。两类超时的默认错误文案见[状态与错误](transport.md#状态响应头与错误)。`request_ms` 可设为 1–3600000 毫秒，`hook_ms` 可设为 1–300000 毫秒。
 
 相对目录以服务文件父目录为基准。配置、数据、日志目录不能相同或互相包含；已有路径的符号链接会解析后检查。`serve` 创建缺失的 data/logs，但不创建配置或修改权限。`check` 不打开数据库、不创建日志或运行目录，通过也不代表目录可写。存储操作预算必须小于 `limits.shutdown_ms`，记录上限必须大于生成并发；完整范围见[设计契约](../design.md#服务配置与命令)。
 

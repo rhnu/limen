@@ -135,6 +135,37 @@ async fn errors_before_first_frame_use_json_and_after_first_frame_use_error_even
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn streaming_deadline_errors_keep_their_message_and_never_append_done() {
+    let lifecycle = Lifecycle::new("test".into(), Cancellation::new(), 1000);
+    for (failure, message) in [
+        (
+            Failure::new(ErrorCode::DeadlineExceeded, "upstream_receive"),
+            "The request deadline was exceeded",
+        ),
+        (
+            Failure::hook_timeout("onStreamEvent"),
+            "The hook deadline was exceeded",
+        ),
+    ] {
+        let (reply, mut receive) = oneshot::channel();
+        let mut delivery = Delivery::new(reply, Cancellation::new(), "test".into());
+        delivery.emit(b": alive\n\n".to_vec()).await.unwrap();
+        let response = receive.try_recv().unwrap();
+        assert_eq!(response.status(), 200);
+        let ((), bytes) = tokio::join!(
+            delivery.fail(&failure, &lifecycle),
+            axum::body::to_bytes(response.into_body(), 2048)
+        );
+        let bytes = bytes.unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains("event: error\n"));
+        assert!(text.contains("deadline_exceeded"));
+        assert!(text.contains(message));
+        assert!(!text.contains("[DONE]"));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn success_waits_for_body_drain_and_appends_one_done() {
     let (reply, mut receive) = oneshot::channel();
     let cancellation = Cancellation::new();

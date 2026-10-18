@@ -213,7 +213,7 @@ impl Gateway {
                 failure
             })?;
         if Instant::now() >= deadline {
-            let mut failure = Failure::new(ErrorCode::DeadlineExceeded, lifecycle.phase);
+            let mut failure = Failure::hook_timeout(lifecycle.phase);
             failure.step.clone_from(&lifecycle.step);
             Err(failure)
         } else {

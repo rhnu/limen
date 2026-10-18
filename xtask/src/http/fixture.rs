@@ -27,6 +27,7 @@ pub struct Options<'a> {
     pub real_signal: bool,
     pub config: Option<&'a str>,
     pub limits: &'a str,
+    pub hook_ms: Option<u64>,
     pub observation_names: &'a [&'a str],
     pub log_max_file_bytes: Option<u64>,
     pub log_max_files: Option<usize>,
@@ -182,8 +183,9 @@ impl Fixture {
             .context("encode HTTP fixture observation registry")?;
         let max_file_bytes = options.log_max_file_bytes.unwrap_or(16 * 1024 * 1024);
         let max_files = options.log_max_files.unwrap_or(8);
+        let hook_ms = options.hook_ms.unwrap_or(1000);
         let yaml = format!(
-            "listen: 127.0.0.1:{port}\nauth: {{{auth}}}\nlog: {{level: debug, format: json, max_file_bytes: {max_file_bytes}, max_files: {max_files}}}\nobservability: {{events: {observation_names}}}\nlimits:\n  request_ms: 1500\n  hook_ms: 1000\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
+            "listen: 127.0.0.1:{port}\nauth: {{{auth}}}\nlog: {{level: debug, format: json, max_file_bytes: {max_file_bytes}, max_files: {max_files}}}\nobservability: {{events: {observation_names}}}\nlimits:\n  request_ms: 1500\n  hook_ms: {hook_ms}\n  cleanup_ms: 200\n  shutdown_ms: 1500\n  concurrency: 2\n  queue_capacity: 2\n{}",
             options.limits
         );
         let config_path = directory.join("server.yaml");

@@ -89,7 +89,15 @@ pub struct Failure {
     pub step: Option<String>,
     pub status: Option<u16>,
     pub response: Option<Box<FailureResponse>>,
+    deadline_kind: DeadlineKind,
     source: Option<Box<dyn Error + Send + Sync>>,
+}
+
+/// Retain the deadline source while sharing the public code and HTTP status.
+#[derive(Clone, Copy)]
+enum DeadlineKind {
+    Request,
+    Hook,
 }
 
 /// Private response data is never included in failure diagnostics or observations.
@@ -107,8 +115,15 @@ impl Failure {
             step: None,
             status: None,
             response: None,
+            deadline_kind: DeadlineKind::Request,
             source: None,
         }
+    }
+
+    pub const fn hook_timeout(phase: &'static str) -> Self {
+        let mut failure = Self::new(ErrorCode::DeadlineExceeded, phase);
+        failure.deadline_kind = DeadlineKind::Hook;
+        failure
     }
 
     pub fn with_source(mut self, source: impl Error + Send + Sync + 'static) -> Self {
@@ -126,7 +141,12 @@ impl Failure {
             },
             _ => ErrorCode::HookFailed,
         };
-        let mut failure = Self::new(code, phase).with_source(source);
+        let mut failure = if code == ErrorCode::DeadlineExceeded {
+            Self::hook_timeout(phase)
+        } else {
+            Self::new(code, phase)
+        }
+        .with_source(source);
         failure.step = step.map(str::to_owned);
         failure
     }
@@ -186,7 +206,10 @@ impl Failure {
             ErrorCode::UnknownModel => "The requested model is not configured",
             ErrorCode::PayloadTooLarge => "The request or output exceeds the configured size limit",
             ErrorCode::Busy => "The gateway is busy",
-            ErrorCode::DeadlineExceeded => "The request deadline was exceeded",
+            ErrorCode::DeadlineExceeded => match self.deadline_kind {
+                DeadlineKind::Request => "The request deadline was exceeded",
+                DeadlineKind::Hook => "The hook deadline was exceeded",
+            },
             ErrorCode::Cancelled => "The request was cancelled",
             ErrorCode::RequestRejected => "The request was rejected by script policy",
             ErrorCode::HookFailed => "A configured request hook failed",

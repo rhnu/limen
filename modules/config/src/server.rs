@@ -249,7 +249,7 @@ macro_rules! resource_limits {
 resource_limits! {
     startup_ms: u64 = 5000, 1 => 300_000;
     hook_ms: u64 = 5000, 1 => 300_000;
-    request_ms: u64 = 120_000, 1 => 3_600_000;
+    request_ms: u64 = 600_000, 1 => 3_600_000;
     execution_ms: u64 = 100, 1 => 10_000;
     vm_work_ms: u64 = 1000, 1 => 60_000;
     cleanup_ms: u64 = 100, 1 => 10_000;
