@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 import { endpoint } from "../endpoint.js";
 
 let failedSnapshot;
@@ -49,46 +50,40 @@ function rewrittenUsage() {
   return { prompt_tokens: 90, completion_tokens: 9, total_tokens: 99 };
 }
 
-export default {
-  onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest(function (ctx) {
     ctx.state.mode = ctx.body.mode || "delete";
-  },
-  onError(ctx) {
+  });
+  gateway.onError(function (ctx) {
     failedSnapshot = checkStats(ctx);
-  },
-  onFinish(ctx) {
+  });
+  gateway.onFinish(function (ctx) {
     const current = checkStats(ctx);
     if (failedSnapshot) {
       require(current.usage !== failedSnapshot.usage);
       require(current.timings !== failedSnapshot.timings);
       require(JSON.stringify(current) === JSON.stringify(failedSnapshot));
     }
-  },
-  providers: {
-    p: {
-      endpoint,
-      pipeline: [
-        {
-          name: "statistics-transform",
-          beforeSend() {},
-          afterReceive() {},
-          onResponse(ctx) {
-            if (ctx.state.mode === "rewrite") ctx.body.usage = rewrittenUsage();
-            else delete ctx.body.usage;
-          },
-          onUpstreamEvent(ctx) {
-            if (ctx.event.usage && ctx.state.mode === "rewrite") {
-              ctx.event.usage = rewrittenUsage();
-            } else {
-              delete ctx.event.usage;
-            }
-          },
-          onStreamEvent(ctx) {
-            delete ctx.event.usage;
-          },
-        },
-      ],
+  });
+  const provider0 = gateway.provider("p", { endpoint });
+  provider0.use({
+    name: "statistics-transform",
+    beforeSend() {},
+    afterReceive() {},
+    onResponse(ctx) {
+      if (ctx.state.mode === "rewrite") ctx.body.usage = rewrittenUsage();
+      else delete ctx.body.usage;
     },
-  },
-  models: { chat: { provider: "p", upstream: "real-model" } },
-};
+    onUpstreamEvent(ctx) {
+      if (ctx.event.usage && ctx.state.mode === "rewrite") {
+        ctx.event.usage = rewrittenUsage();
+      } else {
+        delete ctx.event.usage;
+      }
+    },
+    onStreamEvent(ctx) {
+      delete ctx.event.usage;
+    },
+  });
+  const model0 = provider0.model("chat", { upstream: "real-model" });
+});

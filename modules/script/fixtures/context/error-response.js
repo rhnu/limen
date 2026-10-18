@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 function edit(ctx) {
   switch (ctx.meta.operation) {
     case "edit":
@@ -49,31 +50,21 @@ function edit(ctx) {
       });
   }
 }
-export default {
-  onErrorResponse: edit,
-  providers: {
-    p: {
-      pipeline: [
-        {
-          name: "provider-error",
-          onErrorResponse(ctx) {
-            ctx.state.order.push("provider");
-          },
-        },
-      ],
+export default defineGateway((gateway) => {
+  const p = gateway.provider("p", { endpoint: "https://fictional.invalid/chat" });
+  p.use({
+    name: "provider-error",
+    onErrorResponse(ctx) {
+      ctx.state.order.push("provider");
     },
-  },
-  models: {
-    m: {
-      pipeline: [
-        {
-          name: "model-error",
-          async onErrorResponse(ctx) {
-            await Promise.resolve();
-            ctx.state.order.push("model");
-          },
-        },
-      ],
+  });
+  const m = p.model("m", { upstream: "synthetic" });
+  m.use({
+    name: "model-error",
+    async onErrorResponse(ctx) {
+      await Promise.resolve();
+      ctx.state.order.push("model");
     },
-  },
-};
+  });
+  gateway.onErrorResponse(edit);
+});

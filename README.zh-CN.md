@@ -10,7 +10,7 @@ Limen 是供个人与私网使用的 Rust Chat Completions 网关。通过本地
 
 ```sh
 mkdir -p config data logs
-cp examples/docker/server.toml examples/docker/config.js config/
+cp examples/docker/server.toml examples/docker/gateway.js config/
 ```
 
 启动前确保 UID/GID 10001 可读取 `config/`、可读写 `data/` 和 `logs/`；容器不会以 root 自动改权。
@@ -18,7 +18,7 @@ cp examples/docker/server.toml examples/docker/config.js config/
 修改复制出的配置：
 
 - 在 `config/server.toml` 中，将 `auth.api_key` 替换为客户端 token。
-- 在 `config/config.js` 中，设置完整上游 Chat Completions URL、独立的上游凭据和上游模型名。
+- 在 `config/gateway.js` 中，通过 `defineGateway()` 注册 provider 及其模型，设置完整上游 Chat Completions URL、独立的上游凭据和上游模型名。
 
 验证并启动网关：
 

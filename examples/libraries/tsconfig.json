@@ -4,5 +4,5 @@
     "skipLibCheck": true
   },
   "include": ["../../sdk/**/*.d.ts", "src/**/*.js"],
-  "exclude": ["build.mjs", "config.js"]
+  "exclude": ["build.mjs", "gateway.js"]
 }

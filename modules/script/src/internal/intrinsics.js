@@ -57,6 +57,7 @@
       return value;
     }
     return {
+      apply,
       proto,
       descriptor,
       ownKeys,

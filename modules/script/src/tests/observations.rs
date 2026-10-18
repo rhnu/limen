@@ -41,7 +41,7 @@ fn batch(output: &super::FixtureOutput, expected: &[u8], dropped: u64) -> TestRe
 #[tokio::test]
 async fn sync_async_and_observer_phases_export_private_bounded_batches() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let (runtime, config) = ScriptRuntime::start(path, options(2)).await?;
     let id = hook(&config, "onRequest")?;
     for phase in [
@@ -83,7 +83,7 @@ async fn sync_async_and_observer_phases_export_private_bounded_batches() -> Test
 #[tokio::test]
 async fn invalid_calls_mutation_and_forgery_fail_without_exporting_a_batch() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let (runtime, config) = ScriptRuntime::start(path, options(2)).await?;
     let id = hook(&config, "onRequest")?;
     for mode in [
@@ -173,7 +173,7 @@ async fn empty_registry_is_available_but_cannot_accept_names() -> TestResult {
 #[tokio::test]
 async fn concurrent_pending_and_cancelled_late_calls_keep_batches_separate() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let (runtime, config) = ScriptRuntime::start(path, options(3)).await?;
     let id = hook(&config, "onRequest")?;
     let status = hook(&config, "onError")?;
@@ -228,7 +228,7 @@ async fn concurrent_pending_and_cancelled_late_calls_keep_batches_separate() -> 
 #[tokio::test]
 async fn private_envelope_is_subject_to_the_existing_json_depth_budget() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let mut limits = options(2);
     limits.json_limits.max_depth = 2;
     let (runtime, config) = ScriptRuntime::start(path, limits).await?;
@@ -294,7 +294,7 @@ fn observation_options_require_bounded_unique_ascii_names_and_hook_capacity() {
 #[tokio::test]
 async fn upper_registry_and_capacity_bounds_accept_all_64_ids() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let options = RuntimeOptions {
         observation_names: (0..64).map(|index| format!("event_{index}")).collect(),
         max_observations_per_hook: 64,
@@ -316,7 +316,7 @@ async fn upper_registry_and_capacity_bounds_accept_all_64_ids() -> TestResult {
 #[tokio::test]
 async fn deadline_failure_does_not_export_observations_from_late_work() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let (runtime, config) = ScriptRuntime::start(path, options(3)).await?;
     let id = hook(&config, "onRequest")?;
     let mut pending = call(id, 1, context("onRequest", "pending-first"));

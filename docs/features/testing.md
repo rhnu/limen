@@ -31,7 +31,7 @@ cargo run --locked -- test --config examples/libraries/server.toml --cases examp
 
 ## 编写用例
 
-用例与自己的 `server.toml`、`config.js` 可以放在 `local/` 下。下面的用例使用别名 `chat`，在 JSON → JSON 路径检查响应别名和成功状态：
+用例与自己的 `server.toml`、`gateway.js` 可以放在 `local/` 下。下面的用例使用别名 `chat`，在 JSON → JSON 路径检查响应别名和成功状态：
 
 ```json
 {

@@ -32,7 +32,7 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
         "[auth]\napi_key = \"synthetic-client-secret-0123456789\"\n[limits]\nexecution_ms=1000\n[observability]\nevents=['semantic']\n",
     )
     .unwrap();
-    fs::write(directory.path().join("config.js"), config).unwrap();
+    fs::write(directory.path().join("gateway.js"), config).unwrap();
     let (path, settings) = Loaded::settings(Some(&server)).unwrap();
     let loaded = Loaded::start(&path, settings).await.unwrap();
     let mut headers = HeaderMap::new();
@@ -110,7 +110,7 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
 
 fn config(imports: &str, provider: &str, model: &str, extra: &str) -> String {
     format!(
-        "{imports}\nexport default {{providers:{{p:{{endpoint:'https://upstream.invalid/chat',pipeline:[{provider}]}}}},models:{{chat:{{provider:'p',upstream:'real-model',pipeline:[{model}]}}}},{extra}}};"
+        "import {{defineGateway}} from 'limen:gateway'; {imports}\nexport default defineGateway(gateway=>{{ const p=gateway.provider('p',{{endpoint:'https://upstream.invalid/chat'}}); for (const step of [{provider}]) p.use(step); const m=p.model('chat',{{upstream:'real-model'}}); for (const step of [{model}]) m.use(step); {extra} }});"
     )
 }
 
@@ -141,12 +141,25 @@ fn encoded(events: &[Value], done: bool) -> String {
 
 #[tokio::test(flavor = "current_thread")]
 async fn native_and_script_steps_share_provider_model_order() {
-    let settings = config(
-        "import {replaceText} from 'limen:content';",
-        "replaceText({name:'first',search:'old',replacement:'middle',maxBufferedChars:2}),{name:'inspect',onContent(ctx){if(ctx.event.type==='part_delta')ctx.state.seen=(ctx.state.seen||'')+ctx.event.text;}}",
-        "replaceText({name:'last',search:'middle',replacement:'new',maxBufferedChars:5})",
-        "",
-    );
+    let settings = r"
+        import {defineGateway} from 'limen:gateway';
+        import {replaceText} from 'limen:content';
+        export default defineGateway(gateway => {
+            const provider = gateway.provider('p', {endpoint:'https://upstream.invalid/chat'});
+            provider.use(replaceText({name:'first',search:'old',replacement:'middle',maxBufferedChars:2}));
+            provider.step('inspect-provider', step => {
+                step.beforeSend(ctx => { ctx.state.order = ['provider']; });
+                step.onContent(ctx => {
+                    if(ctx.event.type==='part_delta') ctx.state.seen=(ctx.state.seen||'')+ctx.event.text;
+                });
+            });
+            const model = provider.model('chat', {upstream:'real-model'});
+            model.step('inspect-model', step => {
+                step.beforeSend(ctx => { ctx.state.order.push('model'); });
+            });
+            model.use(replaceText({name:'last',search:'middle',replacement:'new',maxBufferedChars:5}));
+        });
+    ";
     let input = encoded(
         &[
             chunk(json!({"role":"assistant","content":"ol"}), None),
@@ -158,7 +171,7 @@ async fn native_and_script_steps_share_provider_model_order() {
     for stream in [false, true] {
         for sse in [false, true] {
             let result = run(
-                &settings,
+                settings,
                 complete(json!({"role":"assistant","content":"old"}), "stop"),
                 sse.then_some(input.as_str()),
                 stream,
@@ -166,7 +179,10 @@ async fn native_and_script_steps_share_provider_model_order() {
             .await;
             assert!(result.error.is_none(), "{:?}", result.error);
             assert_eq!(result.body["choices"][0]["message"]["content"], "new");
-            assert_eq!(result.state, json!({"seen":"middle"}));
+            assert_eq!(
+                result.state,
+                json!({"order":["provider","model"],"seen":"middle"})
+            );
             assert!(
                 result.stats["timings"]["native"]["onContent"]["calls"]
                     .as_u64()

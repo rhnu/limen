@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
 async fn configured(root: &Path, manager: bool) -> Loaded {
-    std::fs::write(root.join("config.js"),"export default {providers:{p:{endpoint:'https://fictional.invalid/v1/chat/completions'}},models:{chat:{provider:'p',upstream:'synthetic'}},onRequest(){throw Error('generation must not execute');}};").unwrap();
+    std::fs::write(root.join("gateway.js"),"import {defineGateway} from 'limen:gateway'; export default defineGateway(gateway=>{ const p=gateway.provider('p',{endpoint:'https://fictional.invalid/v1/chat/completions'}); p.model('chat',{upstream:'synthetic'}); gateway.onRequest(()=>{throw Error('generation must not execute');}); });").unwrap();
     let mut source = String::from("[auth]\napi_key='synthetic-client-key-0123456789012345'\n");
     if manager {
         source.push_str("manager_key='synthetic-manager-key-0123456789012345'\n");

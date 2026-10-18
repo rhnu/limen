@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 function deep(ctx) {
   if (ctx.state.input) {
     let value = (ctx.meta.phase === "onStreamEvent" ? ctx.event : ctx.body).nested,
@@ -16,10 +17,10 @@ function deep(ctx) {
   if (ctx.meta.phase === "onStreamEvent") ctx.event = { nested };
   else ctx.body = { nested };
 }
-export default {
-  providers: {
-    p: { endpoint: "https://example.invalid", pipeline: [{ name: "deep", onStreamEvent: deep }] },
-  },
-  models: { m: { provider: "p", upstream: "m" } },
-  onRequest: deep,
-};
+
+export default defineGateway((gateway) => {
+  gateway.onRequest(deep);
+  const provider0 = gateway.provider("p", { endpoint: "https://example.invalid" });
+  provider0.use({ name: "deep", onStreamEvent: deep });
+  const model0 = provider0.model("m", { upstream: "m" });
+});

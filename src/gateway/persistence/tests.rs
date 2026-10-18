@@ -16,7 +16,7 @@ async fn configured(policy: &str) -> (tempfile::TempDir, Loaded) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("server.toml");
     fs::write(&path, format!("[auth]\napi_key='{KEY}'\n")).unwrap();
-    fs::write(directory.path().join("config.js"),format!("const c={{providers:{{p:{{endpoint:'https://synthetic.invalid/chat'}}}},models:{{chat:{{provider:'p',upstream:'native'}}}}}}; {policy} export default c;")).unwrap();
+    fs::write(directory.path().join("gateway.js"),format!("import {{defineGateway}} from 'limen:gateway'; export default defineGateway(c=>{{ const p=c.provider('p',{{endpoint:'https://synthetic.invalid/chat'}}); p.model('chat',{{upstream:'native'}}); {policy} }});")).unwrap();
     let (path, settings) = limen_config::load_server(Some(&path)).unwrap();
     let loaded = Loaded::start(&path, settings).await.unwrap();
     (directory, loaded)
@@ -97,7 +97,7 @@ async fn native_usage_is_recorded_for_all_four_transport_shapes() {
 
 #[tokio::test]
 async fn initial_write_failure_sends_no_upstream_or_observer_hooks() {
-    let (_directory,loaded)=configured("c.onRequest=()=>{throw Error('must not run')}; c.onFinish=()=>{throw Error('must not run')};").await;
+    let (_directory,loaded)=configured("c.onRequest(()=>{throw Error('must not run')}); c.onFinish(()=>{throw Error('must not run')});").await;
     let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
     let RecordSink::Memory(state) = &gateway.records else {
         panic!("offline recorder")
@@ -143,7 +143,7 @@ async fn terminal_failure_preserves_success_and_unknown_record() {
 async fn cancellation_during_begin_keeps_confirmation_and_records_cancelled_without_upstream() {
     for shutdown in [false, true] {
         let (_directory, loaded) =
-            configured("c.onRequest=ctx=>{ctx.state.requestHookRan=true};").await;
+            configured("c.onRequest(ctx=>{ctx.state.requestHookRan=true});").await;
         let (gateway, trace) = crate::offline::generation(&loaded, incoming(false));
         let RecordSink::Memory(state) = &gateway.records else {
             panic!("offline recorder")

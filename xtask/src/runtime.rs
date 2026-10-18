@@ -150,7 +150,7 @@ async fn retirement(fixture: &Fixture, case: &str) -> TestResult {
         options.continuous_work_timeout = Duration::from_secs(3);
     }
     for source in sources {
-        let path = fixture.write("config.js", source)?;
+        let path = fixture.write("gateway.js", source)?;
         let (runtime, config) = ScriptRuntime::start(path, options.clone()).await?;
         let mut changes = runtime.status_changes();
         changes.borrow_and_update();
@@ -183,7 +183,7 @@ async fn startup_loop(fixture: &Fixture) -> TestResult {
         include_str!("../fixtures/runtime/startup-sync.js"),
         include_str!("../fixtures/runtime/startup-pending.js"),
     ] {
-        let path = fixture.write("config.js", source)?;
+        let path = fixture.write("gateway.js", source)?;
         let options = RuntimeOptions {
             startup_timeout: Duration::from_millis(200),
             execution_timeout: Duration::from_millis(40),

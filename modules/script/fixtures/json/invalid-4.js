@@ -1,1 +1,1 @@
-export default { data: NaN };
+export default () => ({ data: NaN });

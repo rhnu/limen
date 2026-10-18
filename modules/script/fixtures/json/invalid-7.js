@@ -1,1 +1,1 @@
-export default { data: 9007199254740992 };
+export default () => ({ data: 9007199254740992 });

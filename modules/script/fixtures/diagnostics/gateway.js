@@ -1,2 +1,2 @@
 import "./private-module.mjs";
-export default {};
+export default () => ({});

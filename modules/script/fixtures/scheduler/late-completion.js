@@ -1,8 +1,9 @@
+import { defineGateway } from "limen:gateway";
 let release;
 let changes = 0;
 let started = 0;
-export default {
-  async onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest(async (ctx) => {
     started++;
     ctx.state.draft = "uncommitted";
     await new Promise((resolve) => {
@@ -10,12 +11,12 @@ export default {
     });
     changes++;
     ctx.state.draft = "late";
-  },
-  onFinish() {
+  });
+  gateway.onFinish(() => {
     release();
-  },
-  onError(ctx) {
+  });
+  gateway.onError((ctx) => {
     ctx.state.changes = changes;
     ctx.state.started = started;
-  },
-};
+  });
+});

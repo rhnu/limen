@@ -48,9 +48,9 @@ async fn embedded_modules_share_esm_cache_and_reserve_exact_names() -> TestResul
         "export { capCompletionTokens } from 'limen:policies';",
     )?;
     let source = include_str!("../../fixtures/policies/module-cache.js");
-    let path = fixture.write("config.js", source)?;
+    let path = fixture.write("gateway.js", source)?;
     let options = RuntimeOptions {
-        max_modules: 4,
+        max_modules: 5,
         ..RuntimeOptions::default()
     };
     let (runtime, config) = ScriptRuntime::start(path, options).await?;
@@ -66,9 +66,11 @@ async fn embedded_modules_share_esm_cache_and_reserve_exact_names() -> TestResul
         "limen:policies/internal/descriptor.js",
         "limen:policies/extra",
         "limen:content?query",
+        "limen:gateway?query",
+        "limen:gateway/extra",
         "Limen:content",
     ] {
-        let source = format!("import {{ anything }} from '{name}'; export default {{}};");
+        let source = format!("import {{ anything }} from '{name}'; export default () => ({{}});");
         match fixture.start(&source).await {
             Err(error) => ensure(
                 error
@@ -88,8 +90,8 @@ async fn embedded_modules_share_esm_cache_and_reserve_exact_names() -> TestResul
 #[tokio::test]
 async fn embedded_module_sources_and_count_share_startup_budgets() -> TestResult {
     let fixture = Fixture::new()?;
-    let source = "import {capCompletionTokens} from 'limen:policies'; export default capCompletionTokens({name:'cap',max:1});";
-    let path = fixture.write("config.js", source)?;
+    let source = "import {capCompletionTokens} from 'limen:policies'; export default () => (capCompletionTokens({name:'cap',max:1}));";
+    let path = fixture.write("gateway.js", source)?;
     for options in [
         RuntimeOptions {
             max_modules: 1,
@@ -119,7 +121,7 @@ async fn bundled_private_dependencies_share_the_public_modules_byte_and_count_bu
 {
     let fixture = Fixture::new()?;
     let source = include_str!("../../fixtures/policies/bundle-budget.js");
-    let path = fixture.write("config.js", source)?;
+    let path = fixture.write("gateway.js", source)?;
     // Measure the embedded data, so build formatting can change without changing the contract.
     let bytes = source.len()
         + crate::builtins::find("limen:policies")
@@ -197,7 +199,7 @@ async fn embedded_factory_failures_keep_sanitized_module_coordinates() -> TestRe
 async fn complete_part_callback_runs_in_quickjs_with_bounded_serialized_state() -> TestResult {
     let fixture = Fixture::new()?;
     let source = format!(
-        "{}\nexport default {{onRequest(ctx) {{ctx.state.checked = runContentPolicyTests();}}}};",
+        "{}\nexport default () => ({{onRequest(ctx) {{ctx.state.checked = runContentPolicyTests();}}}});",
         include_str!("../../../../sdk/tests/content-runtime.js")
     );
     let (runtime, config) = fixture.start(&source).await?;

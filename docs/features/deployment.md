@@ -2,7 +2,7 @@
 
 ## 本机与私网
 
-先按[配置与接入](configuration.md)准备 `local/config/server.toml` 和同目录 `config.js`，执行 `check` 后启动 `serve`。从源码构建时，先按[开发指引](../development.md#准备与构建)构建内置脚本与内嵌前端，再选择 Cargo 的 release 构建；发行二进制运行时不依赖 Node.js。
+先按[配置与接入](configuration.md)准备 `local/config/server.toml` 和同目录 `gateway.js`，执行 `check` 后启动 `serve`。从源码构建时，先按[开发指引](../development.md#准备与构建)构建内置脚本与内嵌前端，再选择 Cargo 的 release 构建；发行二进制运行时不依赖 Node.js。
 
 默认监听 `127.0.0.1:8080`，可在服务配置中指定 IP 与端口。Limen 提供 HTTP/1 服务；需要公网 TLS、域名或访问边界时由外部反向代理处理。客户端与上游 token 分开管理。上游客户端不使用系统代理环境变量，也不跟随重定向或自动重试。
 
@@ -14,17 +14,17 @@ POSIX shell：
 
 ```sh
 mkdir -p config data logs
-cp examples/docker/server.toml examples/docker/config.js config/
+cp examples/docker/server.toml examples/docker/gateway.js config/
 ```
 
 PowerShell：
 
 ```powershell
 New-Item -ItemType Directory -Path config, data, logs -Force | Out-Null
-Copy-Item -LiteralPath 'examples/docker/server.toml', 'examples/docker/config.js' -Destination config
+Copy-Item -LiteralPath 'examples/docker/server.toml', 'examples/docker/gateway.js' -Destination config
 ```
 
-在 `config/server.toml` 设置客户端 token，在 `config/config.js` 设置完整上游 Chat Completions URL、独立上游凭据和模型名；该示例可单文件加载。随后验证并启动：
+在 `config/server.toml` 设置客户端 token，在 `config/gateway.js` 设置完整上游 Chat Completions URL、独立上游凭据和模型名；该示例可单文件加载。随后验证并启动：
 
 ```sh
 docker compose run --rm limen check
@@ -80,16 +80,16 @@ Ctrl+C 或 Unix SIGTERM 会停止监听、取消请求，依次等待 HTTP 排�
 
 ## 排错
 
-| 现象                            | 检查方向                                                                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `check` 失败                    | 配置扩展名、字段路径与行列、同目录 `config.js`、导入路径、环境变量；先区分 server_config、script_startup、business_config |
-| 401                             | 客户端 token、单个 Bearer Authorization；与上游 token 分开核对                                                            |
-| `unknown_model`                 | 客户端别名及 `onRequest` 是否改写 model；`GET /v1/models` 只列配置别名                                                    |
-| `request_rejected`              | 指定 phase/step 的策略条件、客户端业务头白名单；这是明确策略拒绝                                                          |
-| `hook_failed`                   | hook 返回值、可写权限、JSON 边界、事件合法性与输出限额；用离线用例复现                                                    |
-| `busy` / 504                    | 在途数、VM 队列或 pending 容量、hook 等待和请求期限；同步/微任务失控还可能使 VM 退役                                      |
-| `upstream_failed`               | endpoint、DNS/TLS、实际凭据和上游状态；网关不重试、不跟随跳转                                                             |
-| `upstream_protocol` 或缺少 DONE | 上游原始媒体类型、完整 SSE 终止、choice 完成、跨形转换支持与聚合限额                                                      |
-| Docker 无法访问或读取配置       | 容器监听地址、宿主端口映射、挂载依赖、UID/GID 10001 对 config 的读取和 data/logs 的读写权限                               |
+| 现象                            | 检查方向                                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `check` 失败                    | 配置扩展名、字段路径与行列、同目录 `gateway.js`、导入路径、环境变量；先区分 server_config、script_startup、business_config |
+| 401                             | 客户端 token、单个 Bearer Authorization；与上游 token 分开核对                                                             |
+| `unknown_model`                 | 客户端别名及 `onRequest` 是否改写 model；`GET /v1/models` 只列配置别名                                                     |
+| `request_rejected`              | 指定 phase/step 的策略条件、客户端业务头白名单；这是明确策略拒绝                                                           |
+| `hook_failed`                   | hook 返回值、可写权限、JSON 边界、事件合法性与输出限额；用离线用例复现                                                     |
+| `busy` / 504                    | 在途数、VM 队列或 pending 容量、hook 等待和请求期限；同步/微任务失控还可能使 VM 退役                                       |
+| `upstream_failed`               | endpoint、DNS/TLS、实际凭据和上游状态；网关不重试、不跟随跳转                                                              |
+| `upstream_protocol` 或缺少 DONE | 上游原始媒体类型、完整 SSE 终止、choice 完成、跨形转换支持与聚合限额                                                       |
+| Docker 无法访问或读取配置       | 容器监听地址、宿主端口映射、挂载依赖、UID/GID 10001 对 config 的读取和 data/logs 的读写权限                                |
 
 复现脚本与转换问题优先使用[离线测试](testing.md)，不要为诊断打印真实正文或秘密。网络、容器或真实上游问题需在对应运行环境验证。

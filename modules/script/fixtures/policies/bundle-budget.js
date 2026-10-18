@@ -1,7 +1,7 @@
 import * as policies from "limen:policies";
 import * as content from "limen:content";
 const repeated = await import("limen:policies");
-export default {
+export default () => ({
   same: policies === repeated,
   policy: policies.capCompletionTokens({ name: "cap", max: 1 }).builtin.kind,
   content: content.replaceText({
@@ -10,4 +10,4 @@ export default {
     replacement: "b",
     maxBufferedChars: 1,
   }).builtin.kind,
-};
+});

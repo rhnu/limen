@@ -1,2 +1,2 @@
 import "node:fs";
-export default {};
+export default () => ({});

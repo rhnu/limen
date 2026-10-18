@@ -36,7 +36,7 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         include_str!("../../fixtures/runtime/environment-run-1.js"),
     )?;
     let path = fixture.write(
-        "config.js",
+        "gateway.js",
         include_str!("../../fixtures/runtime/environment-run-2.js"),
     )?;
     let (runtime, config) = ScriptRuntime::start(
@@ -51,14 +51,6 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         },
     )
     .await?;
-    ensure(
-        config["providers"]["p"]["auth"]["bearer"] == "synthetic-upstream-token"
-            && config["frozen"] == true
-            && config["unicode"] == "密钥-é"
-            && config["missing"] == true
-            && config["empty"] == "",
-        "module host API lost freezing, token, Unicode, absence or empty string",
-    )?;
     let id = hook(&config, "onRequest")?;
     let output = runtime
         .invoke(call(id, 1, request(json!({"action":"check"}))))
@@ -66,6 +58,15 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
         .outcome?
         .effects
         .state;
+    ensure(
+        config["providers"]["p"]["auth"]["bearer"] == "synthetic-upstream-token"
+            && output["module"]["token"] == "synthetic-upstream-token"
+            && output["module"]["frozen"] == true
+            && output["module"]["unicode"] == "密钥-é"
+            && output["module"]["missing"] == true
+            && output["module"]["empty"] == "",
+        "module host API lost freezing, token, Unicode, absence or empty string",
+    )?;
     ensure(
         output["checked"] == true,
         "environment error contracts were not checked",

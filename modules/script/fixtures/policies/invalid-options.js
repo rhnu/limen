@@ -26,7 +26,7 @@ for (const [factory, options] of factories) {
     }
   }
 }
-export default {
+export default () => ({
   rejected,
   hidden: policies.descriptor === undefined && content.descriptor === undefined,
-};
+});

@@ -1,2 +1,4 @@
+import { defineGateway } from "limen:gateway";
 while (true) {}
-export default {};
+
+export default defineGateway((gateway) => {});

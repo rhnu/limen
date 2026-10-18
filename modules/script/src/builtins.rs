@@ -7,6 +7,10 @@ pub(crate) struct BuiltinModule {
 
 const MODULES: &[BuiltinModule] = &[
     BuiltinModule {
+        name: "limen:gateway",
+        body: include_bytes!("../dist/gateway.js"),
+    },
+    BuiltinModule {
         name: "limen:policies",
         body: include_bytes!("../dist/policies.js"),
     },

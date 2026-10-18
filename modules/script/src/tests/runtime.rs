@@ -233,7 +233,7 @@ async fn json_bridge_rejects_invalid_values_and_preserves_safe_integer_boundary(
         include_str!("../../fixtures/json/invalid-11.js"),
         include_str!("../../fixtures/json/invalid-12.js"),
     ] {
-        let path = fixture.write("config.js", source)?;
+        let path = fixture.write("gateway.js", source)?;
         let result = ScriptRuntime::start(path, RuntimeOptions::default()).await;
         match result {
             Err(error) if error.kind() == ScriptErrorKind::Json => {},
@@ -302,8 +302,8 @@ async fn loader_normalizes_local_modules_and_rejects_non_local_imports() -> Test
         include_str!("../../fixtures/loader/reexport.js"),
     )?;
     let path = fixture.write(
-        "app/config.js",
-        include_str!("../../fixtures/loader/config.js"),
+        "app/gateway.js",
+        include_str!("../../fixtures/loader/gateway.js"),
     )?;
     let (runtime, config) = ScriptRuntime::start(path, RuntimeOptions::default()).await?;
     ensure(
@@ -316,7 +316,7 @@ async fn loader_normalizes_local_modules_and_rejects_non_local_imports() -> Test
         include_str!("../../fixtures/loader/forbidden-package.js"),
         include_str!("../../fixtures/loader/forbidden-url.js"),
     ] {
-        let path = fixture.write("config.js", source)?;
+        let path = fixture.write("gateway.js", source)?;
         match ScriptRuntime::start(path, RuntimeOptions::default()).await {
             Err(error) if error.kind() == ScriptErrorKind::Module => {},
             Err(error) => {

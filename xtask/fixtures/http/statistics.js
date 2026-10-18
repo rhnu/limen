@@ -1,10 +1,11 @@
+import { defineGateway } from "limen:gateway";
 import { endpoint } from "./fixture-data.js";
 
 let waiting = 0;
 let cancelled = 0;
 
-export default {
-  onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest(function (ctx) {
     if (ctx.body.wait) {
       waiting++;
       ctx.observe.record("pending_private");
@@ -15,30 +16,24 @@ export default {
       ctx.state.cleanupWait = true;
       ctx.reject(403);
     }
-  },
-  onError(ctx) {
+  });
+  gateway.onError(function (ctx) {
     if (ctx.state.cleanupWait) {
       ctx.observe.record("cleanup_private");
       return new Promise(() => {});
     }
-  },
-  onFinish(ctx) {
+  });
+  gateway.onFinish(function (ctx) {
     if (ctx.outcome === "cancelled") cancelled++;
     ctx.observe.record("finished");
-  },
-  providers: {
-    p: {
-      endpoint,
-      pipeline: [
-        {
-          name: "report",
-          onResponse(ctx) {
-            ctx.body.waiting = waiting;
-            ctx.body.cancelled = cancelled;
-          },
-        },
-      ],
+  });
+  const provider0 = gateway.provider("p", { endpoint });
+  provider0.use({
+    name: "report",
+    onResponse(ctx) {
+      ctx.body.waiting = waiting;
+      ctx.body.cancelled = cancelled;
     },
-  },
-  models: { chat: { provider: "p", upstream: "real-model" } },
-};
+  });
+  const model0 = provider0.model("chat", { upstream: "real-model" });
+});

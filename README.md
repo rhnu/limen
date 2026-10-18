@@ -10,7 +10,7 @@ Get a checkout of this repository and install Docker Compose, then run the follo
 
 ```sh
 mkdir -p config data logs
-cp examples/docker/server.toml examples/docker/config.js config/
+cp examples/docker/server.toml examples/docker/gateway.js config/
 ```
 
 On Linux, grant UID/GID 10001 read access to `config/` and write access to `data/` and `logs/` before starting; the container runs without root or permission repair.
@@ -18,7 +18,7 @@ On Linux, grant UID/GID 10001 read access to `config/` and write access to `data
 Edit the copied configuration:
 
 - In `config/server.toml`, replace `auth.api_key` with your client token.
-- In `config/config.js`, set the complete upstream Chat Completions URL, separate upstream credentials, and the upstream model name.
+- In `config/gateway.js`, register the provider and its model with `defineGateway()`, setting the complete upstream Chat Completions URL, separate upstream credentials, and the upstream model name.
 
 Validate and start the gateway:
 

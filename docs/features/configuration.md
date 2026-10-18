@@ -2,18 +2,18 @@
 
 ## 配置文件
 
-Limen 从服务配置所在目录加载 `config.js`。服务配置负责监听、客户端认证、日志、观测事件注册和资源限制；JavaScript 默认导出的对象负责 provider、模型别名与 hook。
+Limen 从服务配置所在目录加载 `gateway.js`。服务配置负责监听、客户端认证、日志、观测事件注册和资源限制；JavaScript 默认导出 `defineGateway()` 创建的网关工厂，在启动时显式注册 provider、模型别名与 hook。
 
 ```text
 local/
   config/
     server.toml     # YAML/YML 需要显式 --config
-    config.js
+    gateway.js
   data/
   logs/
 ```
 
-从仓库运行时，也可将 `examples/basic/server.toml` 与 `examples/basic/config.js` 复制到 `local/config/`，修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/config/server.toml`。basic 示例通过 `limen:policies` 导入二进制内置策略，不需要复制 SDK 运行时文件；外部类型声明只用于编辑与静态检查。
+从仓库运行时，也可将 `examples/basic/server.toml` 与 `examples/basic/gateway.js` 复制到 `local/config/`，修改客户端 token、上游 URL、独立上游凭据和模型名，并让 `--config` 指向 `local/config/server.toml`。basic 示例通过 `limen:policies` 导入二进制内置策略，不需要复制 SDK 运行时文件；外部类型声明只用于编辑与静态检查。
 
 未指定 `--config` 时，只读 `./config/server.toml`，不存在直接报错。YAML/YML 必须通过 `--config` 显式选择，不探测旧目录或其他扩展名。配置按扩展名解析，必须是 UTF-8。
 
@@ -53,31 +53,28 @@ timeout_ms = 2000
 
 相对目录以服务文件父目录为基准。配置、数据、日志目录不能相同或互相包含；已有路径的符号链接会解析后检查。`serve` 创建缺失的 data/logs，但不创建配置或修改权限。`check` 不打开数据库、不创建日志或运行目录，通过也不代表目录可写。存储操作预算必须小于 `limits.shutdown_ms`，记录上限必须大于生成并发；完整范围见[设计契约](../design.md#服务配置与命令)。
 
-`config.js` 示例：
+`gateway.js` 示例：
 
 ```js
+import { defineGateway } from "limen:gateway";
+
 const upstreamKey = limen.env("UPSTREAM_API_KEY");
 if (!upstreamKey) throw new Error("UPSTREAM_API_KEY is required");
 
-export default {
-  providers: {
-    primary: {
-      endpoint: "https://api.example.com/v1/chat/completions",
-      auth: { bearer: upstreamKey },
-      defaults: { temperature: 0.7 },
-    },
-  },
-  models: {
-    chat: {
-      provider: "primary",
-      upstream: "your-upstream-model",
-      defaults: { temperature: 0.4 },
-    },
-  },
-};
+export default defineGateway((gateway) => {
+  const primary = gateway.provider("primary", {
+    endpoint: "https://api.example.com/v1/chat/completions",
+    auth: { bearer: upstreamKey },
+    defaults: { temperature: 0.7 },
+  });
+  primary.model("chat", {
+    upstream: "your-upstream-model",
+    defaults: { temperature: 0.4 },
+  });
+});
 ```
 
-将 endpoint 和 upstream 改为实际服务值。endpoint 是完整 Chat Completions URL，Limen 不追加路径；只接受绝对 HTTP(S) URL，不接受 userinfo 或 fragment。provider 与 model 都需至少一项，model 的 provider 必须存在。
+将 endpoint 和 upstream 改为实际服务值。endpoint 是完整 Chat Completions URL，Limen 不追加路径；只接受绝对 HTTP(S) URL，不接受 userinfo 或 fragment。provider 与 model 都需至少一项；通过 provider scope 注册 model，归属由 scope 确定。provider 标识与全局模型别名分别唯一。
 
 启动前先验证，再运行服务：
 
@@ -86,7 +83,7 @@ cargo run --locked -- check --config local/config/server.toml
 cargo run --locked -- serve --config local/config/server.toml
 ```
 
-`check` 会执行顶层 JS、导入模块并验证配置，不调用请求 hook、不监听端口、不请求上游。服务只在启动时加载配置；修改后需重启。
+`check` 会执行顶层 JS、导入模块、调用同步 setup 并验证注册结果，不调用请求 hook、不监听端口、不请求上游。服务只在启动时加载配置；修改后需重启。setup 与 `step` 注册回调必须同步返回 `undefined`；默认导出普通对象、异步 setup、重复注册或 setup 后追加策略都会失败，详见[显式组合与生命周期](scripting.md#显式组合与生命周期)。
 
 ## 环境变量
 

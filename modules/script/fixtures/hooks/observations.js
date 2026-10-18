@@ -1,9 +1,10 @@
+import { defineGateway } from "limen:gateway";
 let started = 0,
   finished = 0;
 const releases = [];
 
-export default {
-  onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     const mode = ctx.meta.mode;
     if (mode === "empty") return;
     if (mode === "boundary") {
@@ -81,16 +82,16 @@ export default {
       ctx.observe.record("third");
       ctx.observe.record("first");
     }
-  },
-  onError(ctx) {
+  });
+  gateway.onError((ctx) => {
     ctx.state.started = started;
     ctx.state.finished = finished;
-  },
-  onFinish(ctx) {
+  });
+  gateway.onFinish((ctx) => {
     if (ctx.state.forge) {
       ctx.observations = { events: [0], dropped: 0 };
       return;
     }
     while (releases.length) releases.shift()();
-  },
-};
+  });
+});

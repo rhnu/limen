@@ -1,5 +1,6 @@
-export default {
-  onRequest(ctx) {
+import { defineGateway } from "limen:gateway";
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     switch (ctx.meta.operation) {
       case "meta-value":
         ctx.meta.clientStream = true;
@@ -50,5 +51,5 @@ export default {
         if (ctx.headers && ctx.headers.getAll("x-example").length !== 2) throw new Error();
         break;
     }
-  },
-};
+  });
+});

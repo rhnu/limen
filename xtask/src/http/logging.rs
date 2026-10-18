@@ -105,9 +105,10 @@ async fn rotation(laboratory: &mut Laboratory<'_>) -> Result<()> {
     let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
     let script = format!(
         r"import {{endpoint}} from './fixture-data.js';
+        import {{defineGateway}} from 'limen:gateway';
         const names = {};
         function observe(ctx) {{ for (const name of names) ctx.observe.record(name); }}
-        export default {{providers:{{p:{{endpoint}}}},models:{{chat:{{provider:'p',upstream:'real-model'}}}},onRequest:observe,onFinish:observe}};",
+        export default defineGateway(gateway=>{{ const p=gateway.provider('p',{{endpoint}}); p.model('chat',{{upstream:'real-model'}}); gateway.onRequest(observe); gateway.onFinish(observe); }});",
         serde_json::to_string(&names)?
     );
     laboratory

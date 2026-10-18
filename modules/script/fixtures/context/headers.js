@@ -1,5 +1,6 @@
-export default {
-  onRequest(ctx) {
+import { defineGateway } from "limen:gateway";
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     const mode = ctx.meta.mode;
     if (mode === "valid") {
       const values = ctx.headers.getAll("X-EXAMPLE");
@@ -15,5 +16,5 @@ export default {
     } else {
       ctx.headers[ctx.meta.operation](ctx.meta.name, ctx.meta.value);
     }
-  },
-};
+  });
+});

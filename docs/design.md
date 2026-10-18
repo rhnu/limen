@@ -58,11 +58,15 @@ HTTP 读取结束、协议终止、choice 完成和用量质量分别记录。Ch
 
 ## JavaScript 所有权与提交
 
-每个服务生命周期只加载一次业务模块，保留其闭包和 hook。QuickJS 的 VM、上下文、Promise、函数与持久句柄全部由同一个专用线程创建、使用和销毁；跨线程只传 owned JSON、ID、取消信号和终态。
+每个服务生命周期只加载一次业务模块，保留其闭包和 hook。入口默认导出 `limen:gateway` 的 `defineGateway(setup)` 结果；宿主在启动时执行一次同步 setup，验证注册结果并编译阶段计划。provider scope 创建自己的 model，provider 与 model scope 按调用顺序注册工厂策略或自定义 step，不接收完整的旧式配置对象。公开使用契约见[显式组合与生命周期](features/scripting.md#显式组合与生命周期)。
+
+注册 scope 与每次请求的 `ctx` 分离。setup 与 step setup 必须同步返回 `undefined`；step scope 在自身回调结束后关闭，其余 scope 在整个 setup 结束后关闭，不能在请求或 Promise 中继续注册。provider 标识、全局模型别名和所属管线的 step 名称分别唯一，全局 hook 及同一 step 的同一阶段不能重复注册。组合使用显式接收 scope 的普通函数，注册失败不会产生部分可运行的服务。
+
+QuickJS 的 VM、上下文、Promise、函数与持久句柄全部由同一个专用线程创建、使用和销毁；跨线程只传 owned JSON、ID、取消信号和终态。
 
 每次 hook 收到私有草稿。只有函数或 Promise 成功结束、返回值满足契约、草稿通过校验且调用仍有效，Rust 才提交结果。失败不回滚已完成的前序 hook，也不能回滚 JS 闭包或全局变量的副作用。请求状态必须放在 `ctx.state`，不能依靠共享闭包隔离请求。
 
-VM 启动装配与请求能力分开：私有桥接层在用户模块执行前捕获所需 ECMAScript 内置函数，分别装配 JSON 编解码、配置 hook 提取、异常诊断与请求上下文。headers、观察、拒绝和事件替换各自拥有每次调用的私有状态；上下文层按阶段统一安装能力并投影候选结果。能力模块不直接提交 Rust 状态，拆分模块不改变整次 hook 及正文批次的事务边界。
+VM 启动装配与请求能力分开：私有桥接层在用户模块执行前捕获所需 ECMAScript 内置函数，分别装配 JSON 编解码、网关工厂注册结果提取、异常诊断与请求上下文。headers、观察、拒绝和事件替换各自拥有每次调用的私有状态；上下文层按阶段统一安装能力并投影候选结果。能力模块不直接提交 Rust 状态，拆分模块不改变整次 hook 及正文批次的事务边界。
 
 Host 调用以类型化输入确定 hook 阶段，调度命令与待完成调用保留该阶段，JS 的 `meta.phase` 只是只读投影。跨线程结果区分阶段候选数据与 state/观察等候选效果，由网关完成协议、输出及取消检查后提交；原生请求策略使用相同的 owned 草稿与效果类型。封闭控制字段使用 Rust 类型，正文及未知协议扩展继续使用开放 JSON，不通过缺少 metadata 切换另一套生产调用契约。
 
@@ -90,7 +94,7 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 ### 内置模块与策略扩展
 
-脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:policies` 与 `limen:content`；未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，内嵌源码与本地模块共用源码大小和模块数量限额，执行仍受 VM 预算约束。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
+脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:gateway`、`limen:policies` 与 `limen:content`；未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，内嵌源码与本地模块共用源码大小和模块数量限额，执行仍受 VM 预算约束。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
 
 公开内置模块使用显式 ESM 导入复用私有实现，构建时各自打包为独立入口，再由 Rust 注册表嵌入；私有依赖不注册为可导入的 `limen:` 名称。源码预算以 VM 实际加载的打包字节计量，不隐式追加共享 prelude。请求上下文桥接仍由宿主在用户代码运行前私有装配，不进入公开模块加载路径。
 
@@ -162,7 +166,7 @@ managerKey 由统一浏览器存储模块保存到当前 origin 的 localStorage
 
 ### 服务配置与命令
 
-服务 TOML/YAML 继续负责运行参数，`config.js` 及本地 ESM 继续负责 provider、模型与策略。配置不存入数据库，启动时加载一次，修改后重启。
+服务 TOML/YAML 继续负责运行参数，`gateway.js` 及本地 ESM 继续负责 provider、模型与策略。配置不存入数据库，启动时加载一次，修改后重启。
 
 当前服务配置示例如下：
 
@@ -209,7 +213,7 @@ timeout_ms = 2000
 
 目录路径不得为空；相对路径以选定服务配置文件的父目录为基准。config、data、logs 解析到的目录必须分离，不能相同或互相包含，防止清理与权限作用域混淆。`serve` 创建缺失的 data/logs 目录，但不创建示例配置、不改 owner/group；现有路径和权限不满足要求则报错。
 
-未传 `--config` 时只读取 `./config/server.toml`，不存在直接报错；YAML/YML 通过 `--config` 显式选择，不做扩展名或旧目录回退。`config.js` 相对服务文件的位置不变。本机从仓库运行时显式指定 `--config local/config/server.toml`，容器以 `/` 为工作目录使用相同规则。
+未传 `--config` 时只读取 `./config/server.toml`，不存在直接报错；YAML/YML 通过 `--config` 显式选择，不做扩展名或旧目录回退。`gateway.js` 相对服务文件的位置不变。本机从仓库运行时显式指定 `--config local/config/server.toml`，容器以 `/` 为工作目录使用相同规则。
 
 - `serve`：初始化持久化、滚动日志、JS 和 HTTP。文件日志就绪前的启动错误只写受控 stderr。
 - `check`：解析配置、执行顶层 JS 并验证业务配置；不打开/创建运行数据库，不创建日志，不执行清理。通过不表示运行目录可写。
@@ -221,7 +225,7 @@ timeout_ms = 2000
 部署目录/                 local/
   config/                   config/
     server.toml               server.toml
-    config.js                 config.js
+    gateway.js                 gateway.js
     ...本地导入模块           ...本地导入模块
   data/                     data/
     limen.sqlite3             limen.sqlite3

@@ -173,7 +173,7 @@ impl Fixture {
         fs::write(directory.join("pending.js"), PENDING_CONFIG)
             .context("write pending-hook HTTP fixture")?;
         fs::write(
-            directory.join("config.js"),
+            directory.join("gateway.js"),
             options.config.unwrap_or(DEFAULT_CONFIG),
         )
         .context("write synthetic HTTP script")?;

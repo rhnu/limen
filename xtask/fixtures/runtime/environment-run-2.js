@@ -1,12 +1,16 @@
+import { defineGateway } from "limen:gateway";
 import { token, frozen } from "./token.mjs";
 const unicode = await Promise.resolve(limen.env("LIMEN_PROBE_ENV_UNICODE"));
-export default {
-  providers: { p: { auth: { bearer: token } } },
-  frozen,
-  unicode,
-  missing: limen.env("LIMEN_PROBE_ENV_MISSING") === undefined,
-  empty: limen.env("LIMEN_PROBE_ENV_EMPTY"),
-  async onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.provider("p", { auth: { bearer: token } });
+  gateway.onRequest(async (ctx) => {
+    ctx.state.module = {
+      token,
+      frozen,
+      unicode,
+      missing: limen.env("LIMEN_PROBE_ENV_MISSING") === undefined,
+      empty: limen.env("LIMEN_PROBE_ENV_EMPTY"),
+    };
     await Promise.resolve();
     if (ctx.state.action === "read") {
       ctx.state.token = limen.env("LIMEN_PROBE_ENV_TOKEN");
@@ -63,5 +67,5 @@ export default {
     }, TypeError);
     rejected(() => Object.setPrototypeOf(limen, {}), TypeError);
     ctx.state.checked = true;
-  },
-};
+  });
+});

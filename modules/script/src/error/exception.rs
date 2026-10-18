@@ -66,7 +66,7 @@ impl fmt::Display for ExceptionDiagnostic {
         write!(f, "exception={}", self.kind.name())?;
         if let Some(location) = self.location {
             if location.module == 0 {
-                f.write_str(", module=config.js")?;
+                f.write_str(", module=gateway.js")?;
             } else {
                 write!(f, ", module=import#{}", location.module)?;
             }

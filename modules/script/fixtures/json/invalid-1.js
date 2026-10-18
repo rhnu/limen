@@ -1,1 +1,1 @@
-export default { data: { value: undefined } };
+export default () => ({ data: { value: undefined } });

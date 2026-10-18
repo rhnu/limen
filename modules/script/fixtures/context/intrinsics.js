@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 const NativeError = Error;
 const reflectSet = Reflect.set;
 let touched = 0;
@@ -24,8 +25,8 @@ WeakMap.prototype.get = WeakMap.prototype.set = trap;
 Set.prototype.has = Set.prototype.add = Set.prototype.delete = trap;
 RegExp.prototype.test = trap;
 Function.prototype.call = trap;
-export default {
-  onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     if (touched !== 0 || reflectSet(ctx.meta, "phase", "forged"))
       throw new NativeError("intrinsics or readonly facts changed");
     ctx.observe.record("changed");
@@ -39,5 +40,5 @@ export default {
     } else if (ctx.meta.phase === "onFinish" && reflectSet(ctx.state, "checked", true)) {
       throw new NativeError("observer state changed");
     }
-  },
-};
+  });
+});

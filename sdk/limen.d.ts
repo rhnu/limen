@@ -415,27 +415,49 @@ export type Defaults = JsonObject & {
     messages?: never;
     stream?: never;
 };
-export interface Provider<State extends JsonObject = JsonObject> {
+export interface ProviderOptions {
     /** Complete HTTP(S) Chat Completions URL; no userinfo or fragment. */
     endpoint: string;
     auth?: { bearer: string };
     headers?: Record<string, string>;
     defaults?: Defaults;
-    pipeline?: PipelineStep<State>[];
 }
-export interface Model<State extends JsonObject = JsonObject> {
-    provider: string;
+export interface ModelOptions {
     upstream: string;
     defaults?: Defaults;
-    pipeline?: PipelineStep<State>[];
 }
-export interface Config<State extends JsonObject = JsonObject> {
-    providers: Record<string, Provider<State>>;
-    models: Record<string, Model<State>>;
-    onRequest?: Hook<RequestContext<State>>;
-    onErrorResponse?: Hook<ErrorResponseContext<State>>;
-    onError?: Hook<ErrorContext<State>>;
-    onFinish?: Hook<FinishContext<State>>;
+/** Synchronous assembly callbacks must finish without returning a value. */
+export type GatewaySetup<State extends JsonObject = JsonObject> = (
+    gateway: GatewayScope<State>,
+) => undefined;
+export type StepSetup<State extends JsonObject = JsonObject> = (
+    step: StepScope<State>,
+) => undefined;
+/** Startup invokes the exported factory once, with no arguments. */
+export type GatewayFactory = () => unknown;
+export interface StepScope<State extends JsonObject = JsonObject> {
+    readonly beforeSend: (hook: Hook<BeforeSendContext<State>>) => undefined;
+    readonly afterReceive: (hook: Hook<AfterReceiveContext<State>>) => undefined;
+    readonly onResponse: (hook: Hook<ResponseContext<State>>) => undefined;
+    readonly onContent: (hook: Hook<ContentContext<State>>) => undefined;
+    readonly onUpstreamEvent: (hook: Hook<UpstreamEventContext<State>>) => undefined;
+    readonly onStreamEvent: (hook: Hook<StreamEventContext<State>>) => undefined;
+    readonly onErrorResponse: (hook: Hook<ErrorResponseContext<State>>) => undefined;
+}
+export interface ModelScope<State extends JsonObject = JsonObject> {
+    readonly use: (step: PipelineStep<State>) => undefined;
+    readonly step: (name: string, setup: StepSetup<State>) => undefined;
+}
+export interface ProviderScope<State extends JsonObject = JsonObject> extends ModelScope<State> {
+    readonly model: (alias: string, options: ModelOptions) => ModelScope<State>;
+}
+/** Scopes are valid only during setup; each hook and declaration name is unique. */
+export interface GatewayScope<State extends JsonObject = JsonObject> {
+    readonly provider: (id: string, options: ProviderOptions) => ProviderScope<State>;
+    readonly onRequest: (hook: Hook<RequestContext<State>>) => undefined;
+    readonly onErrorResponse: (hook: Hook<ErrorResponseContext<State>>) => undefined;
+    readonly onError: (hook: Hook<ErrorContext<State>>) => undefined;
+    readonly onFinish: (hook: Hook<FinishContext<State>>) => undefined;
 }
 
 export interface LimenHost {

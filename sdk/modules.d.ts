@@ -1,4 +1,31 @@
 // Runtime modules are embedded in Limen; this file supplies editor types only.
+declare module "limen:gateway" {
+    export type GatewayScope<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").GatewayScope<State>;
+    export type ProviderScope<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").ProviderScope<State>;
+    export type ModelScope<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").ModelScope<State>;
+    export type StepScope<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").StepScope<State>;
+    export type ProviderOptions = import("./limen").ProviderOptions;
+    export type ModelOptions = import("./limen").ModelOptions;
+    export type GatewaySetup<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").GatewaySetup<State>;
+    export type StepSetup<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    > = import("./limen").StepSetup<State>;
+    export type GatewayFactory = import("./limen").GatewayFactory;
+    export function defineGateway<
+        State extends import("./limen").JsonObject = import("./limen").JsonObject,
+    >(setup: import("./limen").GatewaySetup<State>): import("./limen").GatewayFactory;
+}
+
 declare module "limen:policies" {
     type BuiltinStep = import("./limen").BuiltinStep;
     export interface CapCompletionTokensOptions {

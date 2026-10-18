@@ -1,7 +1,8 @@
+import { defineGateway } from "limen:gateway";
 let release;
 let started = false;
-export default {
-  async onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest(async (ctx) => {
     switch (ctx.meta.operation) {
       case "edit":
         ctx.event.text += " edited";
@@ -57,11 +58,11 @@ export default {
         break;
     }
     ctx.state.visited = true;
-  },
-  onFinish() {
+  });
+  gateway.onFinish(() => {
     release();
-  },
-  onError(ctx) {
+  });
+  gateway.onError((ctx) => {
     ctx.state.started = started;
-  },
-};
+  });
+});

@@ -2,13 +2,46 @@
 
 ## 模块与运行环境
 
-`config.js` 必须是默认导出配置对象的 ESM。通过 `limen:policies`、`limen:content` 导入二进制内置工具，不需要部署 SDK 运行时文件。也可用相对路径导入自己的本地 `.js`、`.mjs`，包括 `../`；本地模块按规范化文件路径加载并受总源码大小和模块数量限制。未知 `limen:` 模块、包名、`node:`、URL、带 query/fragment 的路径及 import attributes 均被拒绝。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
+`gateway.js` 必须是默认导出 `defineGateway()` 结果的 ESM。通过 `limen:gateway` 注册网关，通过 `limen:policies`、`limen:content` 导入二进制内置工具，不需要部署 SDK 运行时文件。也可用相对路径导入自己的本地 `.js`、`.mjs`，包括 `../`；本地模块按规范化文件路径加载并受总源码大小和模块数量限制。未知 `limen:` 模块、包名、`node:`、URL、带 query/fragment 的路径及 import attributes 均被拒绝。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
 
 环境提供 ECMAScript 内建能力和 `limen.env()`，不提供 Node.js、DOM、文件系统、网络或计时器 API。`async`/Promise 可用，顶层 await 也受启动预算约束；没有宿主 I/O 能唤醒的悬空 Promise 只能等待超时。需要 npm 库时先[打包为本地 ESM](#第三方库)。
 
+## 显式组合与生命周期
+
+`defineGateway(setup)` 描述一次启动注册。setup 的 `gateway` 用于创建 provider 和注册全局 hook；`provider.model()` 创建并返回所属模型的 scope。provider 与 model scope 都提供 `use(step)` 和 `step(name, setup)`，分别挂载工厂返回的 `PipelineStep` 和注册自定义阶段回调。用普通函数显式接收 scope，可将相关策略抽出复用：
+
+```js
+import { defineGateway } from "limen:gateway";
+import { capCompletionTokens } from "limen:policies";
+
+/** @param {import("limen:gateway").ProviderScope} scope */
+function useProviderPolicy(scope) {
+  scope.use(capCompletionTokens({ name: "cap-output", max: 4096 }));
+  scope.step("remove-store", (step) => {
+    step.beforeSend((ctx) => {
+      delete ctx.body.store;
+    });
+  });
+}
+
+export default defineGateway((gateway) => {
+  const primary = gateway.provider("primary", {
+    endpoint: "https://example.invalid/v1/chat/completions",
+  });
+  useProviderPolicy(primary);
+  primary.model("chat", { upstream: "demo-model" });
+});
+```
+
+setup 与 step setup 都必须同步返回 `undefined`，不能是 async 函数或返回 Promise、scope、策略描述。`gateway.onRequest()`、`onErrorResponse()`、`onError()`、`onFinish()` 各最多注册一次；自定义 step 的同一阶段也只能注册一次。provider 标识唯一，模型别名在整个网关唯一，同一 provider 或 model 管线中的 step 名称唯一，`use()` 与 `step()` 共用该名称空间。不同 scope 可以使用相同 step 名称。
+
+step scope 在自身 setup 返回后立即关闭；gateway、provider 和 model scope 在整个 setup 返回后关闭。保存 scope 到闭包后再在 Promise 或请求 hook 中注册会失败。setup 抛错、非法返回、重复注册、空 step 或无效配置都会使启动失败；不保留部分可运行的网关。默认导出普通对象不符合契约。
+
+注册 scope 只描述启动配置，没有请求正文或请求状态。阶段回调的 `ctx` 则在每次请求调用时创建；业务输入、可写草稿和 `ctx.state` 不得存放在注册 scope 或模块级可变变量中。setup 完成后，宿主把注册结果验证并编译成请求执行计划，后续请求沿既定计划运行。
+
 ## Hook 顺序与可写内容
 
-全局 `onRequest` 在路由之前执行。路由后，每个阶段都遍历 provider.pipeline，再遍历 model.pipeline，均按数组正序；step 名称在所属 pipeline 内必须唯一，每个 step 至少有一个 hook。是否进入响应或事件阶段取决于[四种传输路径](transport.md#四种传输路径)。
+全局 `gateway.onRequest()` 在路由之前执行。路由后，每个阶段都遍历 provider 管线，再遍历 model 管线，各自按 `use()` 与 `step()` 的注册顺序正序执行；每个自定义 step 至少注册一个阶段。是否进入响应或事件阶段取决于[四种传输路径](transport.md#四种传输路径)。
 
 | Hook              | 触发点                             | 可修改内容                                          |
 | ----------------- | ---------------------------------- | --------------------------------------------------- |
@@ -26,18 +59,18 @@
 所有 hook 必须返回 `undefined` 或最终 resolve 为 `undefined` 的原生 Promise。通过修改 `ctx` 工作，不返回替代正文、事件、上下文或错误对象；`return ctx.body` 和 `return null` 都违反契约。
 
 ```js
-const limitOutput = {
-  name: "limit-output",
-  beforeSend(ctx) {
+provider.step("limit-output", (step) => {
+  step.beforeSend((ctx) => {
     const requested = ctx.body.max_completion_tokens;
     ctx.body.max_completion_tokens = typeof requested === "number"
       ? Math.min(requested, 4096)
       : 4096;
     delete ctx.body.store;
-  },
-};
-// 将 limitOutput 放入所需 provider 或 model 的 pipeline。
+  });
+});
 ```
+
+这里的 `provider` 是 setup 中创建的 provider scope；也可在 model scope 上注册同样的 step。
 
 `body` 与 `event` 可直接修改或整体替换。`state` 引用固定，初始为 `{}`，其 JSON 字段可修改；不允许添加任意顶层上下文字段。调用成功且草稿通过校验后才有提交资格，throw、reject 的 Promise、非法返回值或非法草稿都不会提交当前调用的修改。`onContent` 还遵守下面的源正文批次提交规则。前序已提交的修改仍保留。
 
@@ -48,27 +81,24 @@ const limitOutput = {
 在 `onRequest` 或 `beforeSend` 调用 `ctx.reject()`，默认返回 400；可指定 403 或 422。每次调用最多记录一次拒绝。它不会抛异常或提前结束函数，需要停止策略执行时自行 `return`：
 
 ```js
-const tenantPolicy = {
-  onRequest(ctx) {
-    if (ctx.client.headers.getAll("x-tenant").length !== 1) {
-      ctx.state.reason = "tenant-required";
-      ctx.reject(403);
-      return;
-    }
-  },
-};
+gateway.onRequest((ctx) => {
+  if (ctx.client.headers.getAll("x-tenant").length !== 1) {
+    ctx.state.reason = "tenant-required";
+    ctx.reject(403);
+    return;
+  }
+});
 ```
 
-将 `tenantPolicy.onRequest` 设为配置对象的全局 `onRequest`，并配合下面的头部白名单。只有当前 hook 成功、草稿合法时拒绝才生效；此时有效 `state` 会提交，后续请求处理停止。throw、Promise 拒绝或破坏正文后再 `reject()` 会作为 hook 错误处理。默认返回固定 `request_rejected` 错误；自定义正文使用下面的错误响应适配。
+在网关 setup 中注册该回调，并配合下面的头部白名单。只有当前 hook 成功、草稿合法时拒绝才生效；此时有效 `state` 会提交，后续请求处理停止。throw、Promise 拒绝或破坏正文后再 `reject()` 会作为 hook 错误处理。默认返回固定 `request_rejected` 错误；自定义正文使用下面的错误响应适配。
 
 ## 错误响应适配
 
-`onErrorResponse` 可放在 provider/model 的 pipeline step，也可放在配置对象顶层。请求失败且响应尚未开始时，按 provider → model → 全局顺序执行；路由前失败只执行全局 hook。它与只读 `onError` 分开：适配完成后先发送错误，再由 `onError` 和 `onFinish` 观察最终失败。
+`onErrorResponse` 可通过 provider/model 的 `step.onErrorResponse()` 注册，也可通过 `gateway.onErrorResponse()` 注册全局回调。请求失败且响应尚未开始时，按 provider → model → 全局顺序执行；路由前失败只执行全局 hook。它与只读 `onError` 分开：适配完成后先发送错误，再由 `onError` 和 `onFinish` 观察最终失败。
 
 ```js
-const normalizeErrors = {
-  name: "normalize-errors",
-  onErrorResponse(ctx) {
+provider.step("normalize-errors", (step) => {
+  step.onErrorResponse((ctx) => {
     if (ctx.meta.upstreamStatus === 429) {
       ctx.body = JSON.stringify({
         error: { code: "rate_limited", message: "Try again later" },
@@ -77,9 +107,8 @@ const normalizeErrors = {
       ctx.headers.set("Retry-After", "30");
       ctx.state.rateLimited = true;
     }
-  },
-};
-// 将 normalizeErrors 放入 provider 或 model 的 pipeline。
+  });
+});
 ```
 
 `ctx.status` 初始为实际待发状态；上游 HTTP 失败可映射为 3xx/4xx/5xx，网关错误仅可映射为 4xx/5xx。`ctx.body` 是原始正文的 UTF-8 字符串，JSON 错误可用 `JSON.parse`/`JSON.stringify` 适配。二进制、非 UTF-8 或带 `Content-Encoding` 的正文以 `null` 暴露；保持或设置为 `null` 表示保留当前原始字节。设置字符串表示显式替换正文，并移除原始 `Content-Encoding`。正文不要求是 JSON 对象，替换仍受 `max_output_bytes` 限制。
@@ -100,16 +129,15 @@ client_headers = ["x-tenant", "x-example-policy"]
 `ctx.client.headers.getAll(name)` 不区分头名大小写，返回新的字符串数组；缺失或未暴露时返回 `[]`。不支持写入，也不会自动转发。认证、Cookie 和传输相关头不能加入白名单；客户端 `Connection` 指名的头也会被剔除。要传递业务值，在 `beforeSend` 中明确设置：
 
 ```js
-const forwardTenant = {
-  name: "forward-tenant",
-  beforeSend(ctx) {
+provider.step("forward-tenant", (step) => {
+  step.beforeSend((ctx) => {
     const tenants = ctx.client.headers.getAll("x-tenant");
     if (tenants.length === 1) ctx.headers.set("X-Tenant", tenants[0]);
-  },
-};
+  });
+});
 ```
 
-将 `forwardTenant` 放入所需 provider 或 model 的 pipeline。`ctx.headers` 的 `getAll`、`append`、`set`、`delete` 操作也不区分大小写。`getAll` 返回副本，`append` 保留重复值，`set` 替换同名所有值。API 引用和方法固定，内容可以通过这些方法变更。
+在所需 provider 或 model scope 中注册该 step。`ctx.headers` 的 `getAll`、`append`、`set`、`delete` 操作也不区分大小写。`getAll` 返回副本，`append` 保留重复值，`set` 替换同名所有值。API 引用和方法固定，内容可以通过这些方法变更。
 
 `Host`、`Content-Length`、`Content-Type`、`Content-Encoding` 及逐跳传输头由 Rust 管理，不能通过 headers draft 设置或删除；错误响应媒体类型用 `contentType` 修改。初始响应头保留上游 `Content-Language`、`X-Request-Id`、`Retry-After`、`WWW-Authenticate`、`Location`、`RateLimit`、`RateLimit-Policy` 以及 `RateLimit-*`、`X-RateLimit-*` 字段；`Connection` 指名字段剔除，不自动转发 Cookie 或认证凭据。响应 hook 可以再添加业务响应头。
 
@@ -216,15 +244,15 @@ const observeLimit = {
 ```js
 import { replaceText } from "limen:content";
 
-const pipeline = [replaceText({
+model.use(replaceText({
   name: "replace-brand",
   search: "old-name",
   replacement: "new-name",
   maxBufferedChars: 64,
-})];
+}));
 ```
 
-把 pipeline 放入所需 provider 或 model；内置模块名称不随配置所在目录变化。`replaceText` 与 `syntheticTextTool` 由 Rust 执行，请求状态由管线隔离，不进入 `ctx.state`。`mapPartText` 的用户回调由 JS 执行。完整选项与外部编辑类型见 [`sdk/modules.d.ts`](../../sdk/modules.d.ts)。
+在 setup 中对所需 provider 或 model scope 调用 `use()`；内置模块名称不随配置所在目录变化。`replaceText` 与 `syntheticTextTool` 由 Rust 执行，请求状态由管线隔离，不进入 `ctx.state`。`mapPartText` 的用户回调由 JS 执行。完整选项与外部编辑类型见 [`sdk/modules.d.ts`](../../sdk/modules.d.ts)。
 
 - `replaceText({ name, search, replacement, maxBufferedChars, maxParts? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
 - `mapPartText({ name, kinds, maxBufferedChars, transform, maxParts?, stateKey? })` 缓冲所选 text/reasoning/refusal/tool part 的字符串，在 `part_end` 调用同步 `transform(text, info)`，返回替换字符串。`info` 只读，包含 choice、part、kind 和可选 finishReason。工具 ID/名称元数据仍及时传递，参数文字等待映射完成；全文正则或工具参数 JSON 编辑可以使用这一模式。每个 part 的保留文本受必填 UTF-16 长度上限约束，超限即失败；输出另受网关预算约束。该模式会延迟正文交付，流中断时不会调用映射函数或成功刷新缓冲。
@@ -241,17 +269,16 @@ const pipeline = [replaceText({
 `onUpstreamEvent` 和 `onStreamEvent` 直接处理原始 Chat chunk，与完整对象的 `onResponse` 一起保留对未知字段和编码结构的适配能力。它们是独立能力。原始事件 hook 默认继续发送修改后的 `ctx.event`；调用 `ctx.replaceEvents(events)` 可丢弃、替换或按顺序拆分事件，每次调用最多一次：
 
 ```js
-const dropEmpty = {
-  name: "drop-empty",
-  onUpstreamEvent(ctx) {
+provider.step("drop-empty", (step) => {
+  step.onUpstreamEvent((ctx) => {
     if (ctx.event.choices?.length === 0 && ctx.event.usage == null) {
       ctx.replaceEvents([]);
     }
-  },
-};
+  });
+});
 ```
 
-将 `dropEmpty` 放入所需 provider 或 model 的 pipeline。替换数组中的每个事件都会依次进入后续 step。`onUpstreamEvent` 的输出用于聚合或继续流处理；`onStreamEvent` 的输出只用于下游 SSE。不能操作 `[DONE]`，它由 Rust 在整体成功后发送。
+在所需 provider 或 model scope 中注册该 step。替换数组中的每个事件都会依次进入后续 step。`onUpstreamEvent` 的输出用于聚合或继续流处理；`onStreamEvent` 的输出只用于下游 SSE。不能操作 `[DONE]`，它由 Rust 在整体成功后发送。
 
 `ctx.event` 是开放的 Chat JSON 对象，可能是内容增量、usage、标注或附加元数据。`choices`、`delta`、`finish_reason` 可能缺失，正文也可能是内容块数组；脚本读取时需要按形状判断。已完成 choice 可接收元数据尾事件，但不能继续生成正文、工具参数或推理内容。丢弃所有生成 choice 或必要的 finish 事件会失败。一个源事件经过所有事件 hook 的累计产出受 `max_output_events`、`max_output_bytes` 限制，不能逐步展开绕过限额。
 
@@ -259,7 +286,7 @@ const dropEmpty = {
 
 ## JSON 边界
 
-配置数据、state、正文与事件只能包含普通 JSON 值。函数仅能放在规定的 hook 槽位。桥接不依赖用户自定义 `toJSON`，拒绝循环、Proxy、getter/setter、Symbol、BigInt、`undefined` 字段、稀疏数组、额外数组属性和自定义原型对象。数值必须有限，整数必须在 JS 安全整数范围内。可选字段应省略，不要用 `undefined` 或 `null` 代替缺失的配置项。
+provider/model 选项、state、正文与事件只能包含普通 JSON 值。函数仅用于 setup、规定的阶段回调或工具工厂接受的回调。桥接不依赖用户自定义 `toJSON`，拒绝循环、Proxy、getter/setter、Symbol、BigInt、`undefined` 字段、稀疏数组、额外数组属性和自定义原型对象。数值必须有限，整数必须在 JS 安全整数范围内。可选字段应省略，不要用 `undefined` 或 `null` 代替缺失的配置项。
 
 JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖正文。JS 中能构造的对象不一定能提交到 Rust，静态类型检查也不能替代这些校验。
 
@@ -267,7 +294,7 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 
 选择只依赖 ECMAScript 的库，先在 Node.js 开发环境将第三方依赖打包为本地 ESM，再交给 QuickJS。esbuild 使用 `external: ["limen:*"]` 保留内置模块导入，其余第三方依赖须打入产物。构建工具不会为运行时提供 `fetch`、`process`、`Buffer`、文件系统或 DOM；目标语法可编译不代表库的宿主能力可用。
 
-随附的 [Valibot 示例](../../examples/libraries/src/config.js)通过谓词校验请求，在 `onRequest` 拒绝无效参数，在 `beforeSend` 实施 provider 限制；保留原正文可避免校验器丢失未知扩展字段。构建脚本见 [`build.mjs`](../../examples/libraries/build.mjs)，生成文件为同目录的 `config.js`，不要直接编辑它。重分发库代码时保留其许可证。
+随附的 [Valibot 示例](../../examples/libraries/src/gateway.js)通过谓词校验请求，在 `onRequest` 拒绝无效参数，在 `beforeSend` 实施 provider 限制；保留原正文可避免校验器丢失未知扩展字段。构建脚本见 [`build.mjs`](../../examples/libraries/build.mjs)，生成文件为同目录的 `gateway.js`，不要直接编辑它。重分发库代码时保留其许可证。
 
 安装、构建、静态检查命令统一见[开发指引](../development.md#前端与-javascript)。打包后执行配置检查及[对应离线用例](testing.md#运行示例)，验证真实 QuickJS 行为。
 
@@ -279,14 +306,12 @@ JSON 深度、节点和保守字节预算覆盖整个 hook 输出，不只覆盖
 import { capCompletionTokens, dropRequestFields, forwardClientHeader }
   from "limen:policies";
 
-const pipeline = [
-  capCompletionTokens({ name: "cap-output", max: 4096 }),
-  dropRequestFields({ name: "remove-store", fields: ["store"] }),
-  forwardClientHeader({ name: "forward-profile", from: "x-profile", to: "x-profile" }),
-];
+provider.use(capCompletionTokens({ name: "cap-output", max: 4096 }));
+provider.use(dropRequestFields({ name: "remove-store", fields: ["store"] }));
+provider.use(forwardClientHeader({ name: "forward-profile", from: "x-profile", to: "x-profile" }));
 ```
 
-把 `pipeline` 放入所需 provider 或 model。工厂保存配置副本并冻结返回的描述，完整参数校验在配置启动检查中由 Rust 完成。一个 step 只能是原生策略或自定义 JS hook，不能向原生描述追加 hook；需要组合时在 pipeline 中声明相邻 step。同一个工厂结果可供多个请求或管线位置复用。
+在 setup 中对所需 provider 或 model scope 调用 `use()`。工厂保存配置副本并冻结返回的描述，完整参数校验在配置启动检查中由 Rust 完成。一个 step 只能是原生策略或自定义 JS hook，不能向原生描述追加 hook；需要组合时依次调用 `use()` 与 `step()`。同一个工厂结果可供多个请求或管线位置复用。
 
 | 工厂                                                    | 行为                                                                                                                                                                                                          |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -300,10 +325,15 @@ name 遵循 pipeline step 名称规则，同一 pipeline 内不得重复。错�
 
 ## 脚本静态检查
 
-[`sdk/limen.d.ts`](../../sdk/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，会自动引用 [`sdk/modules.d.ts`](../../sdk/modules.d.ts) 中的 `limen:` 内置模块声明；它们都不是运行时模块。外部编辑环境保留这两份声明的相对位置，在默认导出的配置对象前添加 JSDoc：
+[`sdk/limen.d.ts`](../../sdk/limen.d.ts) 是 JSDoc/TypeScript 的可选编辑契约，会自动引用 [`sdk/modules.d.ts`](../../sdk/modules.d.ts) 中的 `limen:` 内置模块声明；它们都不是运行时模块。外部编辑环境保留这两份声明的相对位置，并将其纳入项目类型检查。`defineGateway()` 的回调可直接推导 scope 和请求 ctx；抽出的组合函数可显式声明 scope 类型：
 
 ```js
-/** @satisfies {import("../../sdk/limen").Config} */
+import { capCompletionTokens } from "limen:policies";
+
+/** @param {import("limen:gateway").ProviderScope} scope */
+function useOutputLimit(scope) {
+  scope.use(capCompletionTokens({ name: "cap-output", max: 4096 }));
+}
 ```
 
-按文件位置调整类型路径，完整用法见 [`examples/basic/config.js`](../../examples/basic/config.js)。声明使用 readonly 区分上下文权限，检查 hook 返回值和已知字段；完整运行校验仍在 Rust。项目检查入口见[开发指引](../development.md#前端与-javascript)，hook 实现入口见 [`src/gateway/`](../../src/gateway/) 与 [`modules/script/src/context.js`](../../modules/script/src/context.js)。
+完整用法见 [`examples/basic/gateway.js`](../../examples/basic/gateway.js)与[抽取策略的示例](../../examples/libraries/src/gateway.js)。声明使用 readonly 区分上下文权限，检查 setup、hook 返回值和已知字段；运行时仍验证注册生命周期、JSON 与业务契约。项目检查入口见[开发指引](../development.md#前端与-javascript)，hook 实现入口见 [`src/gateway/`](../../src/gateway/) 与 [`modules/script/src/context.js`](../../modules/script/src/context.js)。

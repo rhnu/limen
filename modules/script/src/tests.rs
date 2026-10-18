@@ -12,6 +12,7 @@ use crate::{Cancellation, RuntimeOptions, RuntimeStatus, ScriptRuntime};
 mod context;
 mod contract;
 mod diagnostics;
+mod gateway;
 mod observations;
 mod policies;
 mod runtime;
@@ -49,7 +50,7 @@ impl Fixture {
         &self,
         source: &str,
     ) -> Result<(ScriptRuntime, Value), Box<dyn Error + Send + Sync>> {
-        let path = self.write("config.js", source)?;
+        let path = self.write("gateway.js", source)?;
         let started = ScriptRuntime::start(path, RuntimeOptions::default()).await?;
         ensure(
             matches!(started.0.status(), RuntimeStatus::Ready),

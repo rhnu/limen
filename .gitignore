@@ -3,7 +3,7 @@
 **/node_modules/
 /web/dist/
 /modules/script/dist/
-/examples/libraries/config.js
+/examples/libraries/gateway.js
 .rumdl_cache/
 
 # Local runtime configuration and secrets. Commit sanitized *.example.* files instead.
@@ -12,6 +12,8 @@
 /data/
 /logs/
 /server.yaml
+/gateway.js
+/gateway.mjs
 /config.js
 /config.mjs
 secrets.js

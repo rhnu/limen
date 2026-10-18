@@ -1,2 +1,2 @@
 missingSyntheticBinding();
-export default {};
+export default () => ({});

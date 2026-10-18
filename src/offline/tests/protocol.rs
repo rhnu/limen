@@ -25,8 +25,8 @@ async fn run(
         "[auth]\napi_key = \"synthetic-client-secret-0123456789\"\n",
     )
     .unwrap();
-    fs::write(directory.path().join("config.js"), format!(
-        "export default {{ providers: {{ p: {{ endpoint: 'https://upstream.invalid/chat', pipeline: [{}] }} }}, models: {{ chat: {{ provider: 'p', upstream: 'real-model', pipeline: [{}] }} }} }};",
+    fs::write(directory.path().join("gateway.js"), format!(
+        "import {{defineGateway}} from 'limen:gateway'; export default defineGateway(gateway=>{{ const p=gateway.provider('p',{{endpoint:'https://upstream.invalid/chat'}}); for (const step of [{}]) p.use(step); const m=p.model('chat',{{upstream:'real-model'}}); for (const step of [{}]) m.use(step); }});",
         steps[0], steps[1],
     )).unwrap();
     let upstream = match input {

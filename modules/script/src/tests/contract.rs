@@ -74,7 +74,7 @@ fn call(hook_id: u64, input: HookInput, state: ScriptState) -> HookCall {
 async fn typed_invocations_preserve_phase_effects_and_open_protocol_objects() -> TestResult {
     let fixture = Fixture::new()?;
     let path = fixture.write(
-        "config.js",
+        "gateway.js",
         include_str!("../../fixtures/contract/phases.js"),
     )?;
     let (runtime, config) = ScriptRuntime::start(
@@ -155,7 +155,7 @@ async fn typed_invocations_preserve_phase_effects_and_open_protocol_objects() ->
 async fn public_input_and_output_shape_failures_remain_contract_errors() -> TestResult {
     let fixture = Fixture::new()?;
     let (runtime, config) = fixture
-        .start("export default {onRequest(ctx) {if(ctx.state.invalid) ctx.body=[];}};")
+        .start("export default () => ({onRequest(ctx) {if(ctx.state.invalid) ctx.body=[];}});")
         .await?;
     let id = hook(&config, "onRequest")?;
     let report = runtime

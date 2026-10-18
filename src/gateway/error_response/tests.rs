@@ -42,13 +42,15 @@ async fn run(policy: &str, incoming: FixtureResponse, stream: bool, limit: usize
     )
     .unwrap();
     fs::write(
-        directory.path().join("config.js"),
+        directory.path().join("gateway.js"),
         format!(
             r#"
-        const config = {{providers: {{p: {{endpoint: "http://upstream.invalid/completions"}}}},
-            models: {{chat: {{provider: "p", upstream: "real"}}}}}};
-        {policy}
-        export default config;
+        import {{defineGateway}} from "limen:gateway";
+        export default defineGateway(gateway => {{
+            const provider = gateway.provider("p", {{endpoint: "http://upstream.invalid/completions"}});
+            const model = provider.model("chat", {{upstream: "real"}});
+            {policy}
+        }});
     "#
         ),
     )
@@ -202,13 +204,13 @@ async fn invalid_failed_and_timed_out_error_policies_keep_last_commit_without_re
     ] {
         let policy = format!(
             r#"
-            config.providers.p.pipeline = [{{name:"first", onErrorResponse(ctx) {{
+            provider.use({{name:"first", onErrorResponse(ctx) {{
                 ctx.state.first = true; ctx.status = 418; ctx.body = "committed"; ctx.contentType = "text/plain";
-            }}}}];
-            config.models.chat.pipeline = [{{name:"bad", onErrorResponse(ctx) {{
+            }}}});
+            model.use({{name:"bad", onErrorResponse(ctx) {{
                 ctx.state.bad = true; ctx.headers.set("x-bad", "yes"); ctx.observe.record("adapted"); {operation}
-            }}}}];
-            config.onErrorResponse = ctx => {{ ctx.state.recursed = true; }};
+            }}}});
+            gateway.onErrorResponse(ctx => {{ ctx.state.recursed = true; }});
         "#
         );
         let output = run(
@@ -267,7 +269,7 @@ async fn binary_or_encoded_error_body_can_be_preserved_or_explicitly_replaced() 
                 ""
             };
             let policy = format!(
-                "config.onErrorResponse = ctx => {{ if (ctx.body !== null) throw Error(); {operation} }};"
+                "gateway.onErrorResponse(ctx => {{ if (ctx.body !== null) throw Error(); {operation} }});"
             );
             let output = run(&policy, incoming, false, 4096).await;
             assert_eq!(output.status, 503);
@@ -349,7 +351,7 @@ async fn oversized_upstream_error_is_never_forwarded_as_a_complete_body() {
 async fn started_stream_skips_error_response_policy_and_never_appends_done() {
     let body = b"data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"real\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n";
     let output = run(
-        "config.onErrorResponse = ctx => { ctx.state.rewritten = true; };",
+        "gateway.onErrorResponse(ctx => { ctx.state.rewritten = true; });",
         upstream(200, Some("text/event-stream"), body),
         true,
         4096,

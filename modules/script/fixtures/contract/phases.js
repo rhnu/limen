@@ -1,5 +1,6 @@
-export default {
-  onRequest(ctx) {
+import { defineGateway } from "limen:gateway";
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     ctx.observe.record("accepted");
     if (ctx.meta.phase === "onRequest") {
       ctx.body.extension.custom.push("kept");
@@ -22,5 +23,5 @@ export default {
     if (ctx.meta.phase === "onError" || ctx.meta.phase === "onFinish") {
       if (!Object.isFrozen(ctx.state)) throw Error();
     } else ctx.state.committed = true;
-  },
-};
+  });
+});

@@ -129,9 +129,9 @@ async fn error_response_readonly_fields_transport_headers_and_completion_values_
 #[tokio::test]
 async fn error_response_registration_rejects_non_functions() -> TestResult {
     for source in [
-        "export default { onErrorResponse: null };",
-        "export default { providers: { p: { pipeline: [{ name: 'error', onErrorResponse: 1 }] } } };",
-        "export default { models: { m: { pipeline: [{ name: 'error', onErrorResponse: {} }] } } };",
+        "export default () => ({ onErrorResponse: null });",
+        "export default () => ({ providers: { p: { pipeline: [{ name: 'error', onErrorResponse: 1 }] } } });",
+        "export default () => ({ models: { m: { pipeline: [{ name: 'error', onErrorResponse: {} }] } } });",
     ] {
         let fixture = Fixture::new()?;
         ensure(

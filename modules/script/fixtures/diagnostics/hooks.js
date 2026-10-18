@@ -4,7 +4,7 @@ const trap = () => {
   touched++;
   throw new Error("synthetic-secret");
 };
-export default {
+export default () => ({
   onRequest(ctx) {
     if (ctx.state.mode === "import") fail();
     if (ctx.state.mode === "async") return Promise.reject(new ReferenceError("synthetic-secret"));
@@ -57,4 +57,4 @@ export default {
     ctx.state.touched = touched;
     ctx.state.ok = true;
   },
-};
+});

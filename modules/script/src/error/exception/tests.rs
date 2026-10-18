@@ -3,12 +3,12 @@ use super::{ExceptionDiagnostic, ExceptionKind, Location, locate};
 #[test]
 fn locates_runtime_and_parser_frames_in_registered_modules() {
     let modules = vec![
-        "/private/config.js".into(),
+        "/private/gateway.js".into(),
         "/private/shared/module.mjs".into(),
     ];
     for (stack, expected) in [
         (
-            "    at check (/private/config.js:4:17)\n",
+            "    at check (/private/gateway.js:4:17)\n",
             Location {
                 module: 0,
                 line: 4,
@@ -24,7 +24,7 @@ fn locates_runtime_and_parser_frames_in_registered_modules() {
             },
         ),
         (
-            "    at check (/private/config.js:8)\n",
+            "    at check (/private/gateway.js:8)\n",
             Location {
                 module: 0,
                 line: 8,
@@ -32,7 +32,7 @@ fn locates_runtime_and_parser_frames_in_registered_modules() {
             },
         ),
         (
-            "    at check (/private/config.js:8:0)\n",
+            "    at check (/private/gateway.js:8:0)\n",
             Location {
                 module: 0,
                 line: 8,
@@ -55,14 +55,14 @@ fn accepts_windows_colons_unicode_and_spaces_without_exposing_paths() {
     .to_string();
     assert_eq!(
         rendered,
-        "exception=TypeError, module=config.js, line=12, column=3"
+        "exception=TypeError, module=gateway.js, line=12, column=3"
     );
 }
 
 #[test]
 fn skips_native_and_unregistered_frames_before_selecting_a_location() {
-    let modules = vec!["/private/config.js".into()];
-    let stack = "    at native (native)\n    at f (/unknown/secret.js:1:2)\n    at f (/private/config.js:9:4)\n";
+    let modules = vec!["/private/gateway.js".into()];
+    let stack = "    at native (native)\n    at f (/unknown/secret.js:1:2)\n    at f (/private/gateway.js:9:4)\n";
     assert_eq!(
         locate(stack, &modules),
         Some(Location {
@@ -75,20 +75,20 @@ fn skips_native_and_unregistered_frames_before_selecting_a_location() {
 
 #[test]
 fn rejects_unknown_paths_invalid_coordinates_and_oversized_stacks() {
-    let modules = vec!["/private/config.js".into()];
+    let modules = vec!["/private/gateway.js".into()];
     for stack in [
-        "secret /private/config.js:4:2",
-        "    at f (/private/config.js:0:2)",
-        "    at f (/private/config.js:4294967296:2)",
-        "    at f (/private/config.js:4:4294967296)",
-        "    at f (/private/config.js:4:secret)",
-        "    at f (/other/private/config.js:4:2)",
+        "secret /private/gateway.js:4:2",
+        "    at f (/private/gateway.js:0:2)",
+        "    at f (/private/gateway.js:4294967296:2)",
+        "    at f (/private/gateway.js:4:4294967296)",
+        "    at f (/private/gateway.js:4:secret)",
+        "    at f (/other/private/gateway.js:4:2)",
     ] {
         assert_eq!(locate(stack, &modules), None);
     }
     assert_eq!(
         locate(
-            &format!("{}\n    at /private/config.js:4:2", "x".repeat(16_384)),
+            &format!("{}\n    at /private/gateway.js:4:2", "x".repeat(16_384)),
             &modules
         ),
         None

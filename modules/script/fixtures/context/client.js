@@ -1,5 +1,6 @@
-export default {
-  onRequest(ctx) {
+import { defineGateway } from "limen:gateway";
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     switch (ctx.meta.operation) {
       case "client-ref":
         ctx.client = {};
@@ -53,5 +54,5 @@ export default {
         if (ctx.meta.phase !== "onError" && ctx.meta.phase !== "onFinish") ctx.state.read = true;
       }
     }
-  },
-};
+  });
+});

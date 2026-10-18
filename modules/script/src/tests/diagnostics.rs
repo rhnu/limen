@@ -35,7 +35,7 @@ async fn startup(fixture: &Fixture) -> TestResult {
             "RangeError",
         ),
     ] {
-        let path = fixture.write("config.js", source)?;
+        let path = fixture.write("gateway.js", source)?;
         match ScriptRuntime::start(path, RuntimeOptions::default()).await {
             Err(error) => {
                 check(&error, ScriptErrorKind::Module, class)?;
@@ -43,7 +43,7 @@ async fn startup(fixture: &Fixture) -> TestResult {
                     error
                         .diagnostic()
                         .to_string()
-                        .contains("module=config.js, line=1"),
+                        .contains("module=gateway.js, line=1"),
                     "startup exception lost its entry coordinates",
                 )?;
             },
@@ -69,8 +69,8 @@ async fn startup(fixture: &Fixture) -> TestResult {
     ] {
         fixture.write("private-module.mjs", source)?;
         let path = fixture.write(
-            "config.js",
-            include_str!("../../fixtures/diagnostics/config.js"),
+            "gateway.js",
+            include_str!("../../fixtures/diagnostics/gateway.js"),
         )?;
         match ScriptRuntime::start(path, RuntimeOptions::default()).await {
             Err(error) => {

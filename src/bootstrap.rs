@@ -37,7 +37,7 @@ pub enum Error {
         #[source]
         source: Box<ConfigError>,
     },
-    #[error("config.js runtime failed")]
+    #[error("gateway.js runtime failed")]
     Script(#[from] ScriptError),
     #[error("native policy configuration failed")]
     NativeContent(#[from] limen_chat::NativeContentError),
@@ -168,7 +168,7 @@ impl Loaded {
         let script = path
             .parent()
             .unwrap_or_else(|| Path::new("."))
-            .join("config.js");
+            .join("gateway.js");
         let started = Instant::now();
         let (runtime, exported) = tokio::time::timeout_at(
             tokio::time::Instant::from_std(deadline),
@@ -178,7 +178,7 @@ impl Loaded {
         .map_err(Error::StartupTimeout)??;
         let business =
             BusinessConfig::from_value(exported, &server.limits).map_err(|source| Error::Config {
-                file: "config.js",
+                file: "gateway.js",
                 source: Box::new(source),
             });
         let result = if Instant::now() >= deadline {
@@ -197,7 +197,7 @@ impl Loaded {
                 .map(Arc::new)
                 .map_err(|error| match error {
                     crate::gateway::PlanError::Config(source) => Error::Config {
-                        file: "config.js",
+                        file: "gateway.js",
                         source: Box::new(source),
                     },
                     crate::gateway::PlanError::Content(source) => Error::NativeContent(source),
@@ -289,7 +289,7 @@ impl ServeResources {
             .instrument(tracing::info_span!(
                 "configuration",
                 command = "serve",
-                file = "config.js"
+                file = "gateway.js"
             ))
             .await;
         match result {

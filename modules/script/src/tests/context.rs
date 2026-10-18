@@ -455,7 +455,7 @@ async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -
 async fn captured_intrinsics_survive_config_extraction_and_capability_projection() -> TestResult {
     let fixture = Fixture::new()?;
     let path = fixture.write(
-        "config.js",
+        "gateway.js",
         include_str!("../../fixtures/context/intrinsics.js"),
     )?;
     let options = crate::RuntimeOptions {

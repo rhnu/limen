@@ -1,9 +1,6 @@
-import config from "./pending.js";
+import { defineGateway } from "limen:gateway";
+import { configurePending } from "./pending.js";
 
-const onFinish = config.onFinish;
-config.onFinish = (ctx) => {
-  onFinish(ctx);
-  if (ctx.outcome === "cancelled") throw new Error("observer failure");
-};
-
-export default config;
+export default defineGateway((gateway) => {
+  configurePending(gateway, true);
+});

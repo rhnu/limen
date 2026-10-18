@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 let release;
 let started = false;
 let finished = false;
@@ -61,47 +62,34 @@ async function content(ctx) {
       break;
   }
 }
-export default {
-  providers: {
-    p: {
-      endpoint: "https://fictional.invalid/v1/chat/completions",
-      pipeline: [
-        {
-          name: "provider",
-          onContent: content,
-          onResponse(ctx) {
-            ctx.body.lower = "response";
-          },
-          onUpstreamEvent(ctx) {
-            ctx.event.lower = "upstream";
-          },
-          onStreamEvent(ctx) {
-            ctx.event.lower = "stream";
-          },
-        },
-      ],
+export default defineGateway((gateway) => {
+  const p = gateway.provider("p", { endpoint: "https://fictional.invalid/v1/chat/completions" });
+  p.use({
+    name: "provider",
+    onContent: content,
+    onResponse(ctx) {
+      ctx.body.lower = "response";
     },
-  },
-  models: {
-    m: {
-      provider: "p",
-      upstream: "synthetic",
-      pipeline: [
-        {
-          name: "model",
-          onContent(ctx) {
-            ctx.state.visits++;
-            ctx.event.model = true;
-          },
-        },
-      ],
+    onUpstreamEvent(ctx) {
+      ctx.event.lower = "upstream";
     },
-  },
-  onError(ctx) {
+    onStreamEvent(ctx) {
+      ctx.event.lower = "stream";
+    },
+  });
+  const m = p.model("m", { upstream: "synthetic" });
+  m.use({
+    name: "model",
+    onContent(ctx) {
+      ctx.state.visits++;
+      ctx.event.model = true;
+    },
+  });
+  gateway.onError((ctx) => {
     ctx.state.started = started;
     ctx.state.finished = finished;
-  },
-  onFinish() {
+  });
+  gateway.onFinish(() => {
     release();
-  },
-};
+  });
+});

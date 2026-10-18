@@ -1,2 +1,2 @@
 import "synthetic-package";
-export default {};
+export default () => ({});

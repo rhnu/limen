@@ -1,1 +1,1 @@
-export default { data: Symbol("synthetic") };
+export default () => ({ data: Symbol("synthetic") });

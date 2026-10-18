@@ -203,7 +203,7 @@ async fn projection_and_parameters(item: &Fixture) -> Result<()> {
             "synthetic-manager-secret",
             "synthetic-upstream-secret",
             "synthetic-query-secret",
-            "config.js",
+            "gateway.js",
             "fixture-data",
         ] {
             ensure!(

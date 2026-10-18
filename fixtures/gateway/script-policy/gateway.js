@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 function checkClient(ctx) {
   const actual = {
     profiles: ctx.client.headers.getAll("X-Profile"),
@@ -16,8 +17,9 @@ function checkClient(ctx) {
 }
 
 let errors = 0;
-export default {
-  async onRequest(ctx) {
+
+export default defineGateway((gateway) => {
+  gateway.onRequest(async function (ctx) {
     ctx.state.client = checkClient(ctx);
     ctx.client.headers.getAll("x-profile").push("detached");
     ctx.state.mode = ctx.body.mode || "normal";
@@ -41,64 +43,8 @@ export default {
       return ctx.reject(422);
     }
     if (ctx.body.mode === "readonly") ctx.client.headers.set("x-profile", "changed");
-  },
-  providers: {
-    demo: {
-      endpoint: "https://example.invalid/v1/chat/completions",
-      auth: { bearer: "synthetic-upstream-secret" },
-      pipeline: [
-        {
-          name: "provider-policy",
-          async beforeSend(ctx) {
-            checkClient(ctx);
-            if (ctx.state.mode === "provider-reject") {
-              await Promise.resolve();
-              ctx.state.rejectedBy = "provider";
-              return ctx.reject(422);
-            }
-            if (ctx.state.mode === "reject-promise") {
-              ctx.state.uncommitted = true;
-              ctx.reject(403);
-              await Promise.reject(new Error("synthetic private policy data"));
-            }
-            ctx.state.provider = true;
-          },
-          afterReceive(ctx) {
-            checkClient(ctx);
-          },
-          onResponse(ctx) {
-            checkClient(ctx);
-          },
-          onUpstreamEvent(ctx) {
-            checkClient(ctx);
-          },
-          onStreamEvent(ctx) {
-            checkClient(ctx);
-          },
-        },
-      ],
-    },
-  },
-  models: {
-    chat: {
-      provider: "demo",
-      upstream: "demo-model",
-      pipeline: [
-        {
-          name: "model-policy",
-          beforeSend(ctx) {
-            checkClient(ctx);
-            if (ctx.state.mode === "model-reject") {
-              ctx.state.rejectedBy = "model";
-              return ctx.reject(403);
-            }
-            ctx.state.model = true;
-          },
-        },
-      ],
-    },
-  },
-  onError(ctx) {
+  });
+  gateway.onError(function (ctx) {
     errors += 1;
     checkClient(ctx);
     if (ctx.error.code === "request_rejected") {
@@ -119,9 +65,54 @@ export default {
         throw new Error("wrong rejecting step");
       }
     }
-  },
-  onFinish(ctx) {
+  });
+  gateway.onFinish(function (ctx) {
     checkClient(ctx);
     if (errors !== (ctx.outcome === "success" ? 0 : 1)) throw new Error("wrong observation count");
-  },
-};
+  });
+  const provider0 = gateway.provider("demo", {
+    endpoint: "https://example.invalid/v1/chat/completions",
+    auth: { bearer: "synthetic-upstream-secret" },
+  });
+  provider0.use({
+    name: "provider-policy",
+    async beforeSend(ctx) {
+      checkClient(ctx);
+      if (ctx.state.mode === "provider-reject") {
+        await Promise.resolve();
+        ctx.state.rejectedBy = "provider";
+        return ctx.reject(422);
+      }
+      if (ctx.state.mode === "reject-promise") {
+        ctx.state.uncommitted = true;
+        ctx.reject(403);
+        await Promise.reject(new Error("synthetic private policy data"));
+      }
+      ctx.state.provider = true;
+    },
+    afterReceive(ctx) {
+      checkClient(ctx);
+    },
+    onResponse(ctx) {
+      checkClient(ctx);
+    },
+    onUpstreamEvent(ctx) {
+      checkClient(ctx);
+    },
+    onStreamEvent(ctx) {
+      checkClient(ctx);
+    },
+  });
+  const model0 = provider0.model("chat", { upstream: "demo-model" });
+  model0.use({
+    name: "model-policy",
+    beforeSend(ctx) {
+      checkClient(ctx);
+      if (ctx.state.mode === "model-reject") {
+        ctx.state.rejectedBy = "model";
+        return ctx.reject(403);
+      }
+      ctx.state.model = true;
+    },
+  });
+});

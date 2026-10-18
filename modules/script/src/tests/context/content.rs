@@ -31,7 +31,7 @@ async fn content_registration_rejects_non_functions_on_both_pipeline_layers() ->
         ] {
             let fixture = Fixture::new()?;
             let source = format!(
-                "export default {{ {layer}: {{ p: {{ pipeline: [{{ name: 'content', onContent: {value} }}] }} }} }};"
+                "export default () => ({{ {layer}: {{ p: {{ pipeline: [{{ name: 'content', onContent: {value} }}] }} }} }});"
             );
             match fixture.start(&source).await {
                 Err(error) => ensure(
@@ -155,7 +155,7 @@ async fn content_failures_discard_event_and_state_drafts_and_preserve_readonly_f
 #[tokio::test]
 async fn content_replacement_count_is_bounded_at_call_and_commit() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", SOURCE)?;
+    let path = fixture.write("gateway.js", SOURCE)?;
     let options = RuntimeOptions {
         max_output_events: 1,
         ..RuntimeOptions::default()

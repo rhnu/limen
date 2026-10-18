@@ -1,1 +1,1 @@
-export default { data: -Infinity };
+export default () => ({ data: -Infinity });

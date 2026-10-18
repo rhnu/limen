@@ -50,11 +50,11 @@ pub(super) async fn startup(fixture: &Fixture) -> TestResult {
     for (depth, accepted) in [(128, true), (129, false)] {
         let source = format!(
             "let nested = null; for (let i = 0; i < {}; i++) nested = [nested];\n\
-             export default {{providers: {{p: {{endpoint: 'https://example.invalid', defaults: {{nested}}}}}},\n\
-             models: {{m: {{provider: 'p', upstream: 'm'}}}}}};",
+             export default () => ({{providers: {{p: {{endpoint: 'https://example.invalid', defaults: {{nested}}}}}},\n\
+             models: {{m: {{provider: 'p', upstream: 'm'}}}}}});",
             depth - 4,
         );
-        let path = fixture.write("config.js", &source)?;
+        let path = fixture.write("gateway.js", &source)?;
         match ScriptRuntime::start(path, options()).await {
             Ok((runtime, config)) => {
                 ensure(
@@ -76,7 +76,7 @@ pub(super) async fn startup(fixture: &Fixture) -> TestResult {
 
 pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
     let path = fixture.write(
-        "config.js",
+        "gateway.js",
         include_str!("../../fixtures/runtime/json-depth-hooks.js"),
     )?;
     let (runtime, config) = ScriptRuntime::start(path, options()).await?;
@@ -148,7 +148,7 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
 
 pub(super) async fn stack_limit(fixture: &Fixture) -> TestResult {
     let path = fixture.write(
-        "config.js",
+        "gateway.js",
         include_str!("../../fixtures/runtime/stack-limit.js"),
     )?;
     // Exercise the standalone default, service default and service upper bound.

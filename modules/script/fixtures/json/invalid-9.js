@@ -1,1 +1,1 @@
-export default { data: 1n };
+export default () => ({ data: 1n });

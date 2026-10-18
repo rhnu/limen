@@ -1,6 +1,7 @@
 /** Private VM bootstrap contracts; no JavaScript handles leave the owning thread. */
 export type RecordValue = Record<PropertyKey, unknown>;
 export interface Intrinsics {
+    apply: typeof Reflect.apply;
     descriptor: typeof Object.getOwnPropertyDescriptor;
     ownKeys: typeof Reflect.ownKeys;
     define: typeof Object.defineProperty;

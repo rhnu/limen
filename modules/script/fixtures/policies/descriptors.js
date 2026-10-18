@@ -16,9 +16,9 @@ const steps = [
   replaceText({ name: "replace", search: "abc", replacement: "x", maxBufferedChars: 2 }),
   syntheticTextTool({ name: "tool", maxBufferedChars: 512 }),
 ];
-export default {
+export default () => ({
   steps,
   frozen:
     steps.every((step) => Object.isFrozen(step) && Object.isFrozen(step.builtin)) &&
     Object.isFrozen(drop.builtin.fields),
-};
+});

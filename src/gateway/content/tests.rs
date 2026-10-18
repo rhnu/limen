@@ -8,7 +8,7 @@ use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
 async fn configured() -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
     configured_with(include_str!(
-        "../../../fixtures/gateway/content-unit/config.js"
+        "../../../fixtures/gateway/content-unit/gateway.js"
     ))
     .await
 }
@@ -21,7 +21,7 @@ async fn configured_with(script: &str) -> (tempfile::TempDir, Loaded, Arc<Gatewa
         "[auth]\napi_key='synthetic-client-secret-0123456789'\n",
     )
     .unwrap();
-    fs::write(directory.path().join("config.js"), script).unwrap();
+    fs::write(directory.path().join("gateway.js"), script).unwrap();
     let (path, settings) = limen_config::load_server(Some(&path)).unwrap();
     let loaded = Loaded::start(&path, settings).await.unwrap();
     let (gateway, _) = crate::offline::generation(

@@ -90,7 +90,7 @@ pnpm build:web
 
 `test:web` 使用 Vitest，仅运行确定性的纯逻辑测试，覆盖数值、时间、参数解析与序列化、查询条件、分页、会话取消和错误状态；传输边界使用合成响应，不访问真实管理服务。浏览器布局、键盘操作和真实请求需另行检查，不以构建通过代替。
 
-`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/config.js`](../examples/libraries/src/config.js)。打包时将 `limen:*` 保留为 external，由 Limen 解析内置模块；第三方依赖仍打包为本地 ESM。`check:types` 检查前端、[`sdk/`](../sdk/)、内嵌 JS 实现与示例，包括预期会被类型系统拒绝的契约用法。常规测试分别验证真实 QuickJS 的模块导入与脚本回调、Rust 原生策略算法以及复用网关管线的离线组合，Node.js 静态检查不能替代它们。
+`build:examples` 生成第三方库示例的运行文件；修改入口是 [`examples/libraries/src/gateway.js`](../examples/libraries/src/gateway.js)。打包时将 `limen:*` 保留为 external，由 Limen 解析内置模块；第三方依赖仍打包为本地 ESM。`check:types` 检查前端、[`sdk/`](../sdk/)、内嵌 JS 实现与示例，包括预期会被类型系统拒绝的契约用法。常规测试分别验证真实 QuickJS 的模块导入与脚本回调、Rust 原生策略算法以及复用网关管线的离线组合，Node.js 静态检查不能替代它们。
 
 静态检查不能证明 QuickJS 兼容性、JSON 合法性或协议语义。继续使用 [`limen check` 和离线用例](features/testing.md)验证实际模块；第三方库的打包边界见[脚本文档](features/scripting.md#第三方库)。
 
@@ -98,7 +98,7 @@ pnpm build:web
 
 公开模块的源入口位于 `modules/script/src/builtins/`，共享实现放在其 `internal/` 子目录，通过显式 ESM 导入引用。运行 `pnpm build:scripts` 使用现有 esbuild 生成 `modules/script/dist/`，该目录不提交；修改入口或私有依赖后须重新打包，再运行 Rust 检查。Rust 固定注册表嵌入打包入口，新增入口须同时登记公开模块名。CI 在 Rust 编译前打包；Docker 的 Node 构建阶段生成相同产物，并交给 cargo-chef 与最终 Rust 构建。
 
-请求级注入能力与公开 ESM 工具分开维护。新增上下文能力应在私有桥接装配中显式接入，明确适用阶段、每调用状态和候选输出；需要跨调用复用的 ECMAScript 内置函数在用户模块执行前捕获。JSON 编解码与调度器不承担具体能力的实现，能力本身不得提前提交请求状态。核心桥接 JS 与公开内置模块都参加脚本类型检查，运行行为继续由真实 QuickJS 测试验证。
+请求级注入能力与公开 ESM 工具分开维护。`limen:gateway` 负责启动时的显式注册，注册 scope 只在 setup 期间有效；`ctx` 由请求桥接按阶段创建，不能用注册 scope 兼任请求状态。setup 收集的描述仍经过业务校验与统一阶段计划编译，不为组合函数增设另一条执行路径。新增上下文能力应在私有桥接装配中显式接入，明确适用阶段、每调用状态和候选输出；需要跨调用复用的 ECMAScript 内置函数在用户模块执行前捕获。JSON 编解码与调度器不承担具体能力的实现，能力本身不得提前提交请求状态。核心桥接 JS 与公开内置模块都参加脚本类型检查，运行行为继续由真实 QuickJS 测试验证。
 
 桥接脚本在顶层启用严格模式，在块中声明带 JSDoc 的工厂，以块末尾的工厂函数引用作为 `eval` 的结果；严格模式的块作用域避免工厂名进入全局。不要改成注释位于括号内的匿名函数表达式：Oxfmt 会移动注释，使 TypeScript 丢失参数类型。
 

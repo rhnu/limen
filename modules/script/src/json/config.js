@@ -20,6 +20,7 @@
       weakGet,
       weakSet,
     } = i;
+    const apply = i.apply;
     /** @returns {never} */
     function fail() {
       return invalid();
@@ -43,6 +44,8 @@
       "onErrorResponse",
     ];
     return function capture(root) {
+      if (typeof root !== "function" || isProxy(root)) fail();
+      root = apply(root, undefined, []);
       /** @type {import("../internal/types").Hook[]} */
       const hooks = setProto([], null);
       /** @type {WeakMap<object, import("../internal/types").RecordValue>} */

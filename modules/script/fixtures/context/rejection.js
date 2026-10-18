@@ -1,3 +1,4 @@
+import { defineGateway } from "limen:gateway";
 let release;
 let started = false;
 
@@ -8,8 +9,8 @@ function mark(ctx) {
   ctx.state.after = true;
 }
 
-export default {
-  onRequest(ctx) {
+export default defineGateway((gateway) => {
+  gateway.onRequest((ctx) => {
     switch (ctx.meta.operation) {
       case "noop":
         return;
@@ -82,11 +83,11 @@ export default {
       default:
         mark(ctx);
     }
-  },
-  onError(ctx) {
+  });
+  gateway.onError((ctx) => {
     ctx.state.started = started;
-  },
-  onFinish() {
+  });
+  gateway.onFinish(() => {
     release();
-  },
-};
+  });
+});

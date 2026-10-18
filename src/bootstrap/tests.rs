@@ -41,7 +41,7 @@ fn config_context_preserves_the_original_failure() {
         .err()
         .unwrap();
     let error = Error::Config {
-        file: "config.js",
+        file: "gateway.js",
         source: Box::new(source),
     };
     let source = error
@@ -153,7 +153,7 @@ fn rejection_and_operational_failure_have_distinct_severity() {
         .err()
         .unwrap();
     assert!(expected_rejection(&Error::Config {
-        file: "config.js",
+        file: "gateway.js",
         source: Box::new(source)
     }));
     assert!(expected_rejection(&Error::Script(ScriptError::new(
@@ -165,4 +165,32 @@ fn rejection_and_operational_failure_have_distinct_severity() {
     assert!(!expected_rejection(&Error::Executor(
         io::ErrorKind::Other.into()
     )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn loader_resolves_gateway_modules_relative_to_server_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = directory.path().join("server.toml");
+    std::fs::write(
+        &server,
+        "[auth]\napi_key='synthetic-client-secret-0123456789'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("config.js"),
+        "export default {endpoint:'https://synthetic.invalid/chat'};",
+    )
+    .unwrap();
+    let source = r"
+        import {defineGateway} from 'limen:gateway';
+        import options from './config.js';
+        export default defineGateway(gateway => {
+            const provider = gateway.provider('synthetic', options);
+            provider.model('chat', {upstream:'actual-model'});
+        });
+    ";
+    std::fs::write(directory.path().join("gateway.js"), source).unwrap();
+    let loaded = super::Loaded::load(Some(&server)).await.unwrap();
+    assert_eq!(loaded.business.models["chat"].upstream, "actual-model");
+    loaded.shutdown().await.unwrap();
 }
