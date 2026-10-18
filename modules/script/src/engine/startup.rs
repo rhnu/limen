@@ -37,6 +37,7 @@ pub(super) async fn load(
                 diagnostics: diagnostics.clone(),
                 remaining: options.max_source_bytes - bytes.len(),
                 max_modules: options.max_modules,
+                max_host_bytes: options.json_limits.max_bytes,
                 loaded: HashSet::from([name.to_owned()]),
             },
         )

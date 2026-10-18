@@ -459,13 +459,3 @@ export interface GatewayScope<State extends JsonObject = JsonObject> {
     readonly onError: (hook: Hook<ErrorContext<State>>) => undefined;
     readonly onFinish: (hook: Hook<FinishContext<State>>) => undefined;
 }
-
-export interface LimenHost {
-    /** Missing => undefined; a present empty value remains "". May throw on invalid input. */
-    readonly env: (name: string) => string | undefined;
-}
-
-declare global {
-    /** The only Limen host namespace; no Node.js, DOM, network or filesystem globals. */
-    const limen: LimenHost;
-}

@@ -56,9 +56,10 @@ timeout_ms = 2000
 `gateway.js` 示例：
 
 ```js
+import { env } from "limen:runtime";
 import { defineGateway } from "limen:gateway";
 
-const upstreamKey = limen.env("UPSTREAM_API_KEY");
+const upstreamKey = env("UPSTREAM_API_KEY");
 if (!upstreamKey) throw new Error("UPSTREAM_API_KEY is required");
 
 export default defineGateway((gateway) => {
@@ -87,7 +88,7 @@ cargo run --locked -- serve --config local/config/server.toml
 
 ## 环境变量
 
-`limen.env(name)` 是脚本唯一的宿主命名空间入口。变量不存在时返回 `undefined`，存在但为空时返回 `""`；`??` 只处理前者。名称必须非空且不含 `=` 或 NUL，名称与值受字节限制，非 Unicode 值会抛错。
+从 `limen:runtime` 导入 `env`，通过 `env(name)` 读取进程环境变量。变量不存在时返回 `undefined`，存在但为空时返回 `""`；`??` 只处理前者。名称必须非空且不含 `=` 或 NUL，名称与值受字节限制，非 Unicode 值会抛错。
 
 变量来自启动 Limen 的进程环境，服务 TOML/YAML 不做环境变量插值，也不自动读取 `.env`。可在顶层读取一次保存到闭包，或在 hook 中按需读取。应由 shell、服务管理器或[容器配置](deployment.md#docker)提供变量，避免写入受版本管理的文件。
 

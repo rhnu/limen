@@ -2,9 +2,9 @@
 
 ## 模块与运行环境
 
-`gateway.js` 必须是默认导出 `defineGateway()` 结果的 ESM。通过 `limen:gateway` 注册网关，通过 `limen:policies`、`limen:content` 导入二进制内置工具，不需要部署 SDK 运行时文件。也可用相对路径导入自己的本地 `.js`、`.mjs`，包括 `../`；本地模块按规范化文件路径加载并受总源码大小和模块数量限制。未知 `limen:` 模块、包名、`node:`、URL、带 query/fragment 的路径及 import attributes 均被拒绝。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
+`gateway.js` 必须是默认导出 `defineGateway()` 结果的 ESM。通过 `limen:gateway` 注册网关，通过 `limen:policies`、`limen:content` 导入二进制内置工具，通过 `limen:runtime` 导入运行环境能力，不需要部署 SDK 运行时文件。也可用相对路径导入自己的本地 `.js`、`.mjs`，包括 `../`；本地模块按规范化文件路径加载并受总源码大小和模块数量限制。未知 `limen:` 模块、包名、`node:`、URL、带 query/fragment 的路径及 import attributes 均被拒绝。配置及其依赖在同一服务生命周期内保留，不随请求重新加载。
 
-环境提供 ECMAScript 内建能力和 `limen.env()`，不提供 Node.js、DOM、文件系统、网络或计时器 API。`async`/Promise 可用，顶层 await 也受启动预算约束；没有宿主 I/O 能唤醒的悬空 Promise 只能等待超时。需要 npm 库时先[打包为本地 ESM](#第三方库)。
+环境提供 ECMAScript 内建能力；读取环境变量使用 `import { env } from "limen:runtime"`，调用语义见[环境变量](configuration.md#环境变量)。不提供 Node.js、DOM、文件系统、网络或计时器 API。`async`/Promise 可用，顶层 await 也受启动预算约束；没有宿主 I/O 能唤醒的悬空 Promise 只能等待超时。需要 npm 库时先[打包为本地 ESM](#第三方库)。
 
 ## 显式组合与生命周期
 

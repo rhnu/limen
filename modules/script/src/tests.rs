@@ -16,6 +16,7 @@ mod gateway;
 mod observations;
 mod policies;
 mod runtime;
+mod runtime_module;
 mod timings;
 
 type TestResult = Result<(), Box<dyn Error + Send + Sync>>;

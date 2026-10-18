@@ -1,3 +1,4 @@
+import { env } from "limen:runtime";
 import { defineGateway } from "limen:gateway";
 /** @typedef {{ calls?: number, details?: { tags: string[] } }} RequestState */
 
@@ -5,7 +6,7 @@ export const config = defineGateway(
   /** @param {import("../limen").GatewayScope<RequestState>} gateway */ (gateway) => {
     const primary = gateway.provider("primary", {
       endpoint: "https://fictional.invalid/v1/chat/completions",
-      auth: { bearer: limen.env("UPSTREAM_API_KEY") ?? "example-upstream-token" },
+      auth: { bearer: env("UPSTREAM_API_KEY") ?? "example-upstream-token" },
       headers: { "X-App-Name": "Limen" },
       defaults: { temperature: 0.7, extension: { enabled: true, values: [null, 1] } },
     });

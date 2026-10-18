@@ -61,11 +61,11 @@ pub(super) async fn run(fixture: &Fixture) -> TestResult {
     ensure(
         config["providers"]["p"]["auth"]["bearer"] == "synthetic-upstream-token"
             && output["module"]["token"] == "synthetic-upstream-token"
-            && output["module"]["frozen"] == true
+            && output["module"]["sealed"] == true
             && output["module"]["unicode"] == "密钥-é"
             && output["module"]["missing"] == true
             && output["module"]["empty"] == "",
-        "module host API lost freezing, token, Unicode, absence or empty string",
+        "runtime module lost namespace sealing, token, Unicode, absence or empty string",
     )?;
     ensure(
         output["checked"] == true,

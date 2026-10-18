@@ -517,7 +517,6 @@ fn private_projection_preserves_readonly_facts_for_every_stage() -> TestResult {
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> TestResult {
         let options = crate::RuntimeOptions::default();
-        crate::host::install(&ctx, options.json_limits.max_bytes)?;
         let bridge = crate::bridge::install(&ctx, &options)?;
         for phase in ["onRequest", "beforeSend", "afterReceive", "onResponse", "onContent", "onUpstreamEvent", "onStreamEvent", "onErrorResponse", "onError", "onFinish"] {
             let mut input = draft(phase);
@@ -548,7 +547,6 @@ fn private_context_rejects_unprepared_roots_missing_meta_and_forged_phase() -> T
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> TestResult {
         let options = crate::RuntimeOptions::default();
-        crate::host::install(&ctx, options.json_limits.max_bytes)?;
         let bridge = crate::bridge::install(&ctx, &options)?;
         for input in [json!({}), json!({"state":{},"body":{}}), draft("onFinish")] {
             let prepare = bridge.prepare.clone().restore(&ctx)?;

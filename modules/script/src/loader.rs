@@ -124,6 +124,7 @@ pub(crate) struct ModuleLoader {
     pub diagnostics: ModuleDiagnostics,
     pub remaining: usize,
     pub max_modules: usize,
+    pub max_host_bytes: usize,
     pub loaded: HashSet<String>,
 }
 
@@ -145,7 +146,7 @@ impl Loader for ModuleLoader {
             self.remaining -= module.source_len();
             self.loaded.insert(name.to_owned());
             self.diagnostics.register(name);
-            return Module::declare(ctx.clone(), name, module.source());
+            return module.declare(ctx, self.max_host_bytes);
         }
         let path = module_path(Path::new(name)).map_err(|error| {
             self.diagnostics.retain(error);

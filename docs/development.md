@@ -96,7 +96,7 @@ pnpm build:web
 
 ### 内置脚本能力
 
-公开模块的源入口位于 `modules/script/src/builtins/`，共享实现放在其 `internal/` 子目录，通过显式 ESM 导入引用。运行 `pnpm build:scripts` 使用现有 esbuild 生成 `modules/script/dist/`，该目录不提交；修改入口或私有依赖后须重新打包，再运行 Rust 检查。Rust 固定注册表嵌入打包入口，新增入口须同时登记公开模块名。CI 在 Rust 编译前打包；Docker 的 Node 构建阶段生成相同产物，并交给 cargo-chef 与最终 Rust 构建。
+JavaScript 实现的公开模块源入口位于 `modules/script/src/builtins/`，共享实现放在其 `internal/` 子目录，通过显式 ESM 导入引用。运行 `pnpm build:scripts` 使用现有 esbuild 生成 `modules/script/dist/`，该目录不提交；修改入口或私有依赖后须重新打包，再运行 Rust 检查。Rust 固定注册表嵌入打包入口，也通过原生 ESM 提供 `limen:runtime` 的宿主能力，所有公开模块沿同一解析与缓存路径加载。原生模块通过模块私有元数据向导出函数绑定所属 VM 的环境读取限额，不注入全局对象。新增入口须同时登记公开模块名。CI 在 Rust 编译前打包；Docker 的 Node 构建阶段生成相同产物，并交给 cargo-chef 与最终 Rust 构建。
 
 请求级注入能力与公开 ESM 工具分开维护。`limen:gateway` 负责启动时的显式注册，注册 scope 只在 setup 期间有效；`ctx` 由请求桥接按阶段创建，不能用注册 scope 兼任请求状态。setup 收集的描述仍经过业务校验与统一阶段计划编译，不为组合函数增设另一条执行路径。新增上下文能力应在私有桥接装配中显式接入，明确适用阶段、每调用状态和候选输出；需要跨调用复用的 ECMAScript 内置函数在用户模块执行前捕获。JSON 编解码与调度器不承担具体能力的实现，能力本身不得提前提交请求状态。核心桥接 JS 与公开内置模块都参加脚本类型检查，运行行为继续由真实 QuickJS 测试验证。
 

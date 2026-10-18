@@ -1,3 +1,4 @@
+import { env } from "limen:runtime";
 import { defineGateway } from "limen:gateway";
 // Each expected diagnostic protects an author-facing contract; no runtime execution.
 /** @typedef {{ calls?: number, details?: { tags: string[] } }} RequestState */
@@ -284,11 +285,11 @@ export const errorResponseAsyncReturn = defineGateway(
 export const nonJsonState = /** @type {never} */ (null);
 
 // @ts-expect-error Environment names must be strings.
-limen.env(1);
+env(1);
 // @ts-expect-error Environment results can be missing.
-limen.env("MISSING").toUpperCase();
-// @ts-expect-error The host namespace is frozen.
-limen.env = () => "changed";
+env("MISSING").toUpperCase();
+// @ts-expect-error Imported bindings are read-only.
+env = () => "changed";
 // @ts-expect-error QuickJS has no Node.js process host API.
 process.env.UPSTREAM_API_KEY;
 // @ts-expect-error Network host APIs are not exposed.

@@ -1,4 +1,9 @@
 // Runtime modules are embedded in Limen; this file supplies editor types only.
+declare module "limen:runtime" {
+    /** Missing => undefined; a present empty value remains "". May throw on invalid input. */
+    export function env(name: string): string | undefined;
+}
+
 declare module "limen:gateway" {
     export type GatewayScope<
         State extends import("./limen").JsonObject = import("./limen").JsonObject,

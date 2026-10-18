@@ -36,7 +36,7 @@ fn read_with(
     }
 }
 
-/// Build the bounded lookup function; the host module owns namespace publication.
+/// Build the bounded lookup function exported by the native runtime module.
 pub(super) fn function<'js>(ctx: &Ctx<'js>, max_bytes: usize) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),

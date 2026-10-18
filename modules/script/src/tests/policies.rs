@@ -126,12 +126,10 @@ async fn bundled_private_dependencies_share_the_public_modules_byte_and_count_bu
     let bytes = source.len()
         + crate::builtins::find("limen:policies")
             .ok_or("missing policies module")?
-            .source()
-            .len()
+            .source_len()
         + crate::builtins::find("limen:content")
             .ok_or("missing content module")?
-            .source()
-            .len();
+            .source_len();
     let options = RuntimeOptions {
         max_modules: 3,
         max_source_bytes: bytes,

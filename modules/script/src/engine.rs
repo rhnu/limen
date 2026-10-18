@@ -16,7 +16,6 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use crate::{
     Command, RuntimeOptions, RuntimeStatus, ScriptError, ScriptErrorKind,
     bridge::{self, Bridge},
-    host,
 };
 
 type Hooks = Vec<Persistent<Function<'static>>>;
@@ -109,14 +108,7 @@ pub(crate) async fn run(
         },
     };
     budget.arm(startup_deadline.min(Instant::now() + options.execution_timeout));
-    let bridge = match context
-        .with(|ctx| {
-            host::install(&ctx, options.json_limits.max_bytes)
-                .map_err(|error| bridge::failure(&ctx, error))?;
-            bridge::install(&ctx, &options)
-        })
-        .await
-    {
+    let bridge = match context.with(|ctx| bridge::install(&ctx, &options)).await {
         Ok(value) => value,
         Err(error) => {
             let _sent = ready.send(Err(error.clone()));
