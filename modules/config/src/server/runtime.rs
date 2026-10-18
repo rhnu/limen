@@ -158,7 +158,11 @@ impl StorageConfig {
             "storage.max_db_bytes",
         )?;
         range(
-            (50..=10_000).contains(&self.operation_ms) && self.operation_ms < limits.shutdown_ms,
+            (50..=10_000).contains(&self.operation_ms)
+                && self
+                    .operation_ms
+                    .checked_add(limits.cleanup_ms)
+                    .is_some_and(|tail| tail < limits.shutdown_ms),
             "storage.operation_ms",
         )
     }

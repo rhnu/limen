@@ -118,7 +118,12 @@ impl Gateway {
         let deadline = lifecycle
             .deadline
             .min(Instant::now() + Duration::from_millis(self.storage_operation_ms));
-        self.records
+        let measurement = lifecycle
+            .statistics
+            .timings
+            .measure(super::stats::WaitKind::StorageBegin);
+        let result = self
+            .records
             .begin(
                 PendingRecord {
                     request_id: lifecycle.request_id.clone(),
@@ -126,18 +131,20 @@ impl Gateway {
                     started_at_ms: lifecycle.started_at_ms,
                     client_stream: lifecycle.client_stream.unwrap_or(false),
                     input_bytes: lifecycle.input_bytes as u64,
+                    client_parameters: lifecycle.client_parameters.clone(),
                 },
                 deadline,
             )
-            .await
-            .map_err(|error| {
-                let code = if matches!(error, limen_storage::Error::Busy) {
-                    ErrorCode::Busy
-                } else {
-                    ErrorCode::StorageUnavailable
-                };
-                Failure::new(code, "storage_begin").with_source(error)
-            })?;
+            .await;
+        drop(measurement);
+        result.map_err(|error| {
+            let code = if matches!(error, limen_storage::Error::Busy) {
+                ErrorCode::Busy
+            } else {
+                ErrorCode::StorageUnavailable
+            };
+            Failure::new(code, "storage_begin").with_source(error)
+        })?;
         lifecycle.recorded = true;
         Ok(())
     }
@@ -149,13 +156,7 @@ pub(super) fn terminal(lifecycle: &Lifecycle, failure: Option<&Failure>) -> Opti
         return None;
     }
     let usage = lifecycle.statistics.usage.snapshot();
-    let timings = lifecycle.statistics.snapshot();
-    let millis = |key: &str| {
-        timings["timings"][key]
-            .as_f64()
-            .map(|value| Duration::from_secs_f64(value / 1000.0).as_millis())
-            .and_then(|value| u64::try_from(value).ok())
-    };
+    let (timings, generation, phases) = lifecycle.statistics.timings.owned();
     Some(FinalRecord {
         request_id: lifecycle.request_id.clone(),
         finished_at_ms: chrono::Utc::now().timestamp_millis(),
@@ -199,8 +200,9 @@ pub(super) fn terminal(lifecycle: &Lifecycle, failure: Option<&Failure>) -> Opti
             .upstream_status
             .map(|_| lifecycle.upstream_bytes as u64),
         output_bytes: Some(lifecycle.output_bytes as u64),
-        request_ms: millis("requestMs"),
-        upstream_headers_ms: lifecycle.upstream_headers_ms,
-        first_output_ms: millis("downstreamFirstEventMs"),
+        timings,
+        generation,
+        phases,
+        upstream_parameters: lifecycle.upstream_parameters.clone(),
     })
 }

@@ -72,6 +72,7 @@ impl Gateway {
                 body = self.content_json(route, body, lifecycle).await?;
             }
             if client_stream {
+                lifecycle.statistics.timings.buffered();
                 json::size(
                     &body,
                     self.limits.max_output_bytes,
@@ -179,6 +180,12 @@ impl Gateway {
         if !body.is_object() {
             return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
         }
+        lifecycle.statistics.timings.finishes(
+            limen_chat::FinishCounts::from_response(&body),
+            body.get("choices")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+        );
         lifecycle.statistics.usage.observe(body.get("usage"));
         lifecycle.statistics.upstream_completed = true;
         Ok(body)
@@ -190,13 +197,17 @@ impl Gateway {
         lifecycle: &mut Lifecycle,
     ) -> Result<Vec<u8>, Failure> {
         let mut bytes = Vec::new();
-        while let Some(chunk) = read_chunk(response, lifecycle).await? {
+        while let Some((chunk, _observed_at)) = read_chunk(response, lifecycle).await? {
             if chunk.len() > self.limits.max_output_bytes.saturating_sub(bytes.len()) {
                 return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
             }
             bytes.extend_from_slice(&chunk);
             lifecycle.upstream_bytes = bytes.len();
         }
+        lifecycle
+            .statistics
+            .timings
+            .upstream_completed(Instant::now());
         Ok(bytes)
     }
 
@@ -220,7 +231,8 @@ impl Gateway {
             aggregate: (!client_stream)
                 .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events)),
         };
-        'upstream: while let Some(chunk) = read_chunk(response, lifecycle).await? {
+        let mut completed_at = None;
+        'upstream: while let Some((chunk, observed_at)) = read_chunk(response, lifecycle).await? {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
                 let frame = decoder
@@ -238,6 +250,7 @@ impl Gateway {
                             protocol::control_frame(&frame, limits)?;
                         }
                         terminator = Some(frame);
+                        completed_at = Some(observed_at);
                         break 'upstream;
                     },
                     Event::KeepAlive => {
@@ -257,7 +270,16 @@ impl Gateway {
                         upstream_tracker
                             .push(&event)
                             .map_err(|source| protocol(source, "upstream_sse"))?;
-                        lifecycle.statistics.timings.first_chunk(Instant::now());
+                        lifecycle.statistics.timings.finishes(
+                            upstream_tracker.finish_counts(),
+                            upstream_tracker.choice_count(),
+                        );
+                        lifecycle.statistics.timings.first_chunk(observed_at);
+                        lifecycle.statistics.timings.upstream_content(
+                            limen_chat::observe_generated_content(&event),
+                            upstream_tracker.choice_count(),
+                            observed_at,
+                        );
                         lifecycle.statistics.usage.observe(event.get("usage"));
                         self.content_stream_event(
                             route,
@@ -276,6 +298,12 @@ impl Gateway {
         }
         let terminator = protocol::finish_stream(decoder, upstream_tracker, terminator)?;
         lifecycle.statistics.upstream_completed = true;
+        if let Some(completed_at) = completed_at {
+            lifecycle
+                .statistics
+                .timings
+                .upstream_completed(completed_at);
+        }
         if let Some(content) = &mut output.content {
             self.content_end(content, lifecycle).await?;
         }
@@ -340,15 +368,11 @@ impl Gateway {
         .await?;
         // Both semantic expansion work and encoded frames have independent byte
         // bounds; preserved outer fields can be much larger than JSON data.
-        for bytes in frames {
-            lifecycle.output_bytes = lifecycle.output_bytes.saturating_add(bytes.len());
+        for frame in frames {
+            lifecycle.output_bytes = lifecycle.output_bytes.saturating_add(frame.bytes.len());
             lifecycle.phase = "response";
             lifecycle.step = None;
-            delivery.emit(bytes).await?;
-            lifecycle
-                .statistics
-                .timings
-                .first_output(lifecycle.started, Instant::now());
+            delivery.emit_content(frame.bytes, frame.content).await?;
         }
         Ok(())
     }
@@ -364,6 +388,7 @@ impl Gateway {
         let mut headers = logic::response_headers(response.headers());
         let (provider_steps, model_steps) = route.after_receive();
         for step in provider_steps.iter().chain(model_steps) {
+            lifecycle.scope = step.scope;
             let hook = step.executor;
             let context = lifecycle.context(HookInput::AfterReceive(ResponseHead {
                 status,
@@ -392,17 +417,18 @@ impl Gateway {
 async fn read_chunk(
     response: &mut super::transport::Incoming,
     lifecycle: &mut Lifecycle,
-) -> Result<Option<axum::body::Bytes>, Failure> {
+) -> Result<Option<(axum::body::Bytes, Instant)>, Failure> {
     let measurement = lifecycle.statistics.timings.measure(WaitKind::Read);
     let result = response.chunk().await;
+    let observed_at = Instant::now();
     drop(measurement);
     if result
         .as_ref()
         .is_ok_and(|chunk| chunk.as_ref().is_some_and(|bytes| !bytes.is_empty()))
     {
-        lifecycle.statistics.timings.first_byte(Instant::now());
+        lifecycle.statistics.timings.first_byte(observed_at);
     }
-    result
+    result.map(|chunk| chunk.map(|bytes| (bytes, observed_at)))
 }
 
 /// Individual SSE events can fit the JSON limits while their combined choices or

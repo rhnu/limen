@@ -11,6 +11,11 @@ use super::{
     plan::RoutePlan,
 };
 
+pub(super) struct EncodedEvent {
+    pub bytes: Vec<u8>,
+    pub content: limen_chat::GeneratedContent,
+}
+
 /// Downstream batches must be fully encodable before their hook effects commit.
 pub(super) enum EventConsumer<'a> {
     Upstream {
@@ -18,7 +23,7 @@ pub(super) enum EventConsumer<'a> {
     },
     Stream {
         tracker: &'a mut limen_chat::ChunkTracker,
-        frames: &'a mut Vec<Vec<u8>>,
+        frames: &'a mut Vec<EncodedEvent>,
         max_event_bytes: usize,
         frame: Option<&'a limen_chat::Frame>,
         stream_started: bool,
@@ -70,7 +75,10 @@ impl EventConsumer<'_> {
                     bytes.drain(..3);
                 }
                 budget.charge_wire(bytes.len(), limits)?;
-                batch.push(bytes);
+                batch.push(EncodedEvent {
+                    bytes,
+                    content: limen_chat::observe_generated_content(event),
+                });
             }
             frames.extend(batch);
         }
@@ -148,6 +156,7 @@ impl Gateway {
             consumer.consume(&events, budget, &self.limits)?;
         }
         for step in provider_steps.iter().chain(model_steps) {
+            lifecycle.scope = step.scope;
             let hook = step.executor;
             remaining -= 1;
             let final_hook = remaining == 0;

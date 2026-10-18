@@ -68,7 +68,7 @@ docker build --platform linux/amd64 --target runtime -t limen:local .
 
 `max_output_bytes` 也用于 JSON 输出和 JS 桥接，不能仅按流事件估算；它不是整条 SSE 的总流量上限。调大事件限制仍可能被聚合、JSON 节点、VM 内存或进程内存限制拒绝。容器内存需要容纳 Rust、TLS、连接缓冲和 VM，不能只按 `memory_bytes` 配置。
 
-请求与 hook 的默认期限、范围及计时方式见[配置与接入](configuration.md#配置文件)。HTTP 请求头读取期限沿用 `request_ms`，连接传输预算为 `request_ms + cleanup_ms`，也覆盖慢客户端的响应写出与后续空闲连接；调大请求期限会同时放宽这些传输边界。
+请求与 hook 的默认期限、范围及计时方式见[配置与接入](configuration.md#配置文件)。HTTP 请求头读取期限沿用 `request_ms`，连接传输预算为 `request_ms + cleanup_ms`，也覆盖慢客户端的响应写出与后续空闲连接；调大请求期限会同时放宽这些传输边界。终态事务在有限清理结束后执行，生成许可覆盖两者；`cleanup_ms + storage.operation_ms` 必须小于 `shutdown_ms`，并为 HTTP 排空留余量。成功响应交付不等待最终数据库确认。
 
 ## 日志与关闭
 

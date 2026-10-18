@@ -27,6 +27,7 @@ pub(super) struct ContentPipeline {
 
 #[derive(Clone)]
 struct ContentStage {
+    scope: limen_storage::PhaseScope,
     name: String,
     projector: ContentProjector,
     executor: ContentExecution,
@@ -73,6 +74,7 @@ impl Gateway {
             .iter()
             .chain(model_steps)
             .map(|step| ContentStage {
+                scope: step.scope,
                 name: step.name.clone(),
                 projector: ContentProjector::new(max_parts),
                 executor: match &step.executor {
@@ -166,6 +168,7 @@ impl Gateway {
             let mut next = Vec::new();
             let mut candidate = projector.stages[cursor].clone();
             let step_name = candidate.name.clone();
+            lifecycle.scope = candidate.scope;
             let native_deadline = self.hook_deadline(lifecycle);
             for event in events {
                 let hook = match &mut candidate.executor {
@@ -269,7 +272,10 @@ impl Gateway {
     ) -> Result<Vec<Value>, Failure> {
         lifecycle.phase = "onContent";
         lifecycle.step = Some(step.to_owned());
-        let measurement = lifecycle.statistics.timings.native("onContent");
+        let measurement = lifecycle
+            .statistics
+            .timings
+            .native_scoped("onContent", lifecycle.scope);
         let limits = NativeContentLimits {
             max_output_events: self.limits.max_output_events,
             max_output_bytes: self.limits.max_output_bytes,

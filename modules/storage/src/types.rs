@@ -30,7 +30,7 @@ pub enum HealthState {
 
 macro_rules! text_enum {
     ($name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
         #[serde(rename_all = "snake_case")]
         pub enum $name { $($variant),+ }
         impl $name {
@@ -48,6 +48,7 @@ text_enum!(RecordState { Pending => "pending", Finalized => "finalized", Interru
 text_enum!(Outcome { Success => "success", Failed => "failed", Cancelled => "cancelled" });
 text_enum!(UsageQuality { Missing => "missing", Partial => "partial", Reported => "reported", Invalid => "invalid", Conflicting => "conflicting" });
 text_enum!(GroupBy { None => "none", Day => "day", Model => "model", Provider => "provider" });
+text_enum!(PerformanceOutcome { All => "all", Success => "success", Failed => "failed", Cancelled => "cancelled" });
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +58,7 @@ pub struct PendingRecord {
     pub started_at_ms: i64,
     pub client_stream: bool,
     pub input_bytes: u64,
+    pub client_parameters: crate::GenerationParameters,
 }
 
 /// Owned, frozen metadata only. Missing fields remain unknown rather than becoming zero.
@@ -86,9 +88,10 @@ pub struct FinalRecord {
     pub outbound_bytes: Option<u64>,
     pub upstream_bytes: Option<u64>,
     pub output_bytes: Option<u64>,
-    pub request_ms: Option<u64>,
-    pub upstream_headers_ms: Option<u64>,
-    pub first_output_ms: Option<u64>,
+    pub timings: crate::RequestTimings,
+    pub generation: crate::GenerationFacts,
+    pub phases: Vec<crate::PhaseTiming>,
+    pub upstream_parameters: Option<crate::GenerationParameters>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -134,9 +137,27 @@ pub struct RequestRecord {
     pub upstream_bytes: Option<u64>,
     #[serde(serialize_with = "optional_decimal")]
     pub output_bytes: Option<u64>,
-    pub request_ms: Option<u64>,
-    pub upstream_headers_ms: Option<u64>,
-    pub first_output_ms: Option<u64>,
+    pub request_ms: Option<f64>,
+    pub upstream_headers_ms: Option<f64>,
+    pub first_output_ms: Option<f64>,
+    pub metrics: crate::RequestMetrics,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestDetail {
+    #[serde(flatten)]
+    pub record: RequestRecord,
+    pub timings: crate::RequestTimings,
+    pub generation: crate::GenerationFacts,
+    pub phases: Vec<crate::PhaseTiming>,
+    pub parameters: crate::ParameterSnapshots,
+}
+
+impl std::ops::Deref for RequestDetail {
+    type Target = RequestRecord;
+
+    fn deref(&self) -> &Self::Target { &self.record }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +169,8 @@ pub struct Filter {
     pub provider: Option<String>,
     pub state: Option<RecordState>,
     pub outcome: Option<Outcome>,
+    pub client_stream: Option<bool>,
+    pub upstream_media: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +199,7 @@ pub struct RequestPage {
 pub struct UsageQuery {
     pub filter: Filter,
     pub group_by: GroupBy,
+    pub performance_outcome: PerformanceOutcome,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -206,6 +230,9 @@ pub struct UsageGroup {
     pub qualities: BTreeMap<&'static str, u64>,
     pub upstream_completed: BTreeMap<&'static str, u64>,
     pub tokens: TokenTotals,
+    pub performance: crate::PerformanceSummary,
+    pub stages: BTreeMap<String, crate::DurationAggregate>,
+    pub phases: Vec<crate::PhaseAggregate>,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +254,8 @@ pub struct UsageSummary {
     pub group_by: GroupBy,
     pub retention: Retention,
     pub groups: Vec<UsageGroup>,
+    pub overall: UsageGroup,
+    pub performance_outcome: PerformanceOutcome,
 }
 
 #[expect(

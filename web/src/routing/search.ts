@@ -91,13 +91,21 @@ function optionalEnum<const T extends readonly string[]>(values: T) {
         ),
     );
 }
-const windowFields = { from: dateField, to: dateField, model: textField, provider: textField };
+const windowFields = {
+    from: dateField,
+    to: dateField,
+    model: textField,
+    provider: textField,
+    clientStream: optionalEnum(["true", "false"]),
+    upstreamMedia: optionalEnum(["json", "sse", "other"]),
+};
 const windowMessage = "请同时提供开始和结束时间，结束时间须更晚，且范围最多为 31 天。";
 
 export const usageSearchSchema = v.pipe(
     v.strictObject(
         {
             ...windowFields,
+            performanceOutcome: optionalEnum(["all", "success", "failed", "cancelled"]),
             groupBy: v.optional(
                 v.pipe(
                     v.union([v.literal(""), v.picklist(groups, invalidQuery)], invalidQuery),

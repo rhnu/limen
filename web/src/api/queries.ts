@@ -28,11 +28,15 @@ function windowQuery({
     to,
     model,
     provider,
-}: Pick<UsageSearch, "from" | "to" | "model" | "provider">) {
+    clientStream,
+    upstreamMedia,
+}: Pick<UsageSearch, "from" | "to" | "model" | "provider" | "clientStream" | "upstreamMedia">) {
     return {
         ...dateQuery(from, to),
         ...(model === undefined ? {} : { model }),
         ...(provider === undefined ? {} : { provider }),
+        ...(clientStream === undefined ? {} : { clientStream: clientStream === "true" }),
+        ...(upstreamMedia === undefined ? {} : { upstreamMedia }),
     };
 }
 
@@ -76,7 +80,16 @@ export const queries = {
             queryKey: [epoch, "usage", identity(filters)],
             queryFn: ({ signal }) => {
                 const current = requireFilters(filters);
-                return api.usage({ ...windowQuery(current), groupBy: current.groupBy }, signal);
+                return api.usage(
+                    {
+                        ...windowQuery(current),
+                        groupBy: current.groupBy,
+                        ...(current.performanceOutcome === undefined
+                            ? {}
+                            : { performanceOutcome: current.performanceOutcome }),
+                    },
+                    signal,
+                );
             },
             enabled: filters !== null,
         }),

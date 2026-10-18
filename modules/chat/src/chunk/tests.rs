@@ -144,3 +144,47 @@ fn metadata_only_deltas_do_not_open_new_generation_choices() {
     }
     tracker.finish().unwrap();
 }
+
+#[test]
+fn finish_counts_classify_each_choice_once_and_keep_tail_reports_idempotent() {
+    let mut tracker = ChunkTracker::new(8);
+    let choices = json!({"choices":[
+        {"index":0,"delta":{},"finish_reason":"stop"},
+        {"index":1,"delta":{},"finish_reason":"length"},
+        {"index":2,"delta":{},"finish_reason":"tool_calls"},
+        {"index":3,"delta":{},"finish_reason":"function_call"},
+        {"index":4,"delta":{},"finish_reason":"content_filter"},
+        {"index":5,"delta":{},"finish_reason":"provider_secret_reason"}
+    ]});
+    tracker.push(&choices).unwrap();
+    tracker.push(&choices).unwrap();
+    assert_eq!(tracker.choice_count(), 6);
+    assert_eq!(
+        tracker.finish_counts(),
+        super::FinishCounts {
+            stop: 1,
+            length: 1,
+            tool: 2,
+            filtered: 1,
+            other: 1
+        }
+    );
+    tracker.finish().unwrap();
+}
+
+#[test]
+fn full_json_finish_observation_preserves_the_open_object_boundary() {
+    let source = json!({"choices":[{"finish_reason":"stop"},{"finish_reason":"length"},{"finish_reason":null},{"finish_reason":12},{"vendor":"opaque"}]});
+    assert_eq!(
+        super::FinishCounts::from_response(&source),
+        super::FinishCounts {
+            stop: 1,
+            length: 1,
+            ..super::FinishCounts::default()
+        }
+    );
+    assert_eq!(
+        super::FinishCounts::from_response(&json!({"choices":"opaque"})),
+        super::FinishCounts::default()
+    );
+}

@@ -188,3 +188,41 @@ describe("management search parameters", () => {
         }
     });
 });
+
+describe("performance and transport filters", () => {
+    it("round trips false stream intent and independent performance outcome", () => {
+        const params = new URLSearchParams(
+            "clientStream=false&upstreamMedia=json&performanceOutcome=cancelled",
+        );
+        const parsed = parseSearch(usageSearchSchema, params);
+        expect(parsed.error).toBeNull();
+        expect(parsed.filters).toMatchObject({
+            clientStream: "false",
+            upstreamMedia: "json",
+            performanceOutcome: "cancelled",
+        });
+        expect(parsed.canonical).toBe(
+            "clientStream=false&groupBy=day&performanceOutcome=cancelled&upstreamMedia=json",
+        );
+        expect(
+            parseSearch(
+                requestsSearchSchema,
+                new URLSearchParams("clientStream=true&upstreamMedia=sse"),
+            ).filters,
+        ).toMatchObject({ clientStream: "true", upstreamMedia: "sse" });
+    });
+    it.each([
+        "clientStream=0",
+        "clientStream=True",
+        "upstreamMedia=application%2Fjson",
+        "performanceOutcome=pending",
+    ])("rejects unsupported values %s", (raw) => {
+        expect(parseSearch(usageSearchSchema, new URLSearchParams(raw)).filters).toBeNull();
+    });
+    it("keeps performance outcome out of request-list filters", () => {
+        expect(
+            parseSearch(requestsSearchSchema, new URLSearchParams("performanceOutcome=all"))
+                .filters,
+        ).toBeNull();
+    });
+});

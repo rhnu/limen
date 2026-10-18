@@ -4,7 +4,7 @@
 
 ## 恢复部署前的环境验收
 
-- 在可用的 Linux Docker 环境验证本次变更：先验证生成器移至 `api/codegen/`、`pnpm patch` 及内嵌脚本打包后的构建上下文、补丁应用、cargo-chef 产物传递与镜像构建，确认不挂载 `sdk/` 也能导入 `limen:` 模块；再以 UID/GID 10001 启动，只读 config 和根文件系统、可写 data/logs，验证请求落库、重启恢复、日志轮换、管理查询及 SIGTERM 在 25 秒宽限内退出。本机没有 Docker/WSL，不能以 Windows HTTP 或 SQLite 隔离测试代替这项容器验收。
+- 在可用的 Linux Docker 环境验证本次变更：先验证生成器移至 `api/codegen/`、`pnpm patch` 及内嵌脚本打包后的构建上下文、补丁应用、cargo-chef 产物传递与镜像构建，确认不挂载 `sdk/` 也能导入 `limen:` 模块；再以 UID/GID 10001 启动，只读 config 和根文件系统、可写 data/logs，验证 schema 2 的请求与性能数据落库、重启恢复、TTFT/TPS 和阶段汇总、日志轮换、管理查询及 SIGTERM 在 25 秒宽限内退出。本机没有可用的 Linux Docker/WSL 运行环境，不能以 Windows HTTP 或 SQLite 隔离测试代替这项容器验收。
 - 在允许创建符号链接的环境执行日志读取拒绝链接的隔离分支。本机 Windows 缺少创建符号链接权限，测试明确报告跳过；普通文件、目录拒绝、更名与截断已在 Windows 验证。
 - 推送实施提交前，确认仓库外跟踪 `latest` 的自动更新已停用或固定镜像 digest；仓库内停用 webhook 不代表外部环境已完成此操作。
 - 只有用户明确要求后恢复部署触发，并以该次部署使用的 schema 建立首个受支持基线。

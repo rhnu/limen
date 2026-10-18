@@ -10,6 +10,8 @@ use crate::{
     StorageOptions, UsageQuality, UsageQuery, database, query,
 };
 
+mod performance;
+
 fn options() -> StorageOptions {
     StorageOptions {
         dir: PathBuf::from("unused"),
@@ -37,6 +39,7 @@ fn pending(id: &str, started: i64) -> PendingRecord {
         started_at_ms: started,
         client_stream: true,
         input_bytes: 12,
+        client_parameters: crate::GenerationParameters::default(),
     }
 }
 
@@ -59,6 +62,8 @@ fn filter() -> Filter {
         provider: None,
         state: None,
         outcome: None,
+        client_stream: None,
+        upstream_media: None,
     }
 }
 
@@ -195,6 +200,7 @@ fn usage_includes_failures_and_unknown_records_with_independent_samples() {
         &UsageQuery {
             filter: filter(),
             group_by: GroupBy::Model,
+            performance_outcome: crate::PerformanceOutcome::Success,
         },
         &options(),
         deadline(),
@@ -225,6 +231,7 @@ fn usage_sum_exceeds_signed_sql_integer_without_overflow_or_rounding() {
         &UsageQuery {
             filter: filter(),
             group_by: GroupBy::None,
+            performance_outcome: crate::PerformanceOutcome::Success,
         },
         &options(),
         deadline(),
@@ -252,7 +259,8 @@ fn broad_group_queries_fail_without_partial_success() {
             &mut connection,
             &UsageQuery {
                 filter: filter(),
-                group_by: GroupBy::Model
+                group_by: GroupBy::Model,
+                performance_outcome: crate::PerformanceOutcome::Success
             },
             &options(),
             deadline()
@@ -276,7 +284,8 @@ fn usage_scan_and_time_window_limits_reject_partial_totals() {
             &mut connection,
             &UsageQuery {
                 filter: filter(),
-                group_by: GroupBy::None
+                group_by: GroupBy::None,
+                performance_outcome: crate::PerformanceOutcome::Success
             },
             &options(),
             deadline()
@@ -319,7 +328,8 @@ fn invalid_usage_and_expired_queries_do_not_become_valid_data() {
             &mut connection,
             &UsageQuery {
                 filter: filter(),
-                group_by: GroupBy::None
+                group_by: GroupBy::None,
+                performance_outcome: crate::PerformanceOutcome::Success
             },
             &options(),
             Instant::now()

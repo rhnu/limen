@@ -10,9 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use thiserror::Error;
 
+mod observation;
 mod project;
 mod render;
 
+pub use observation::{GeneratedContent, observe_generated_content};
 use project::project_body;
 use render::{apply_event, positional_metadata, render_frame};
 
@@ -38,6 +40,25 @@ enum Kind {
     Reasoning,
     Refusal,
     Tool { index: u64, kind: String },
+}
+
+const CONTENT_FIELDS: &[(&str, Kind)] = &[
+    ("content", Kind::Text),
+    ("refusal", Kind::Refusal),
+    ("reasoning", Kind::Reasoning),
+    ("reasoning_content", Kind::Reasoning),
+    ("reasoning_details", Kind::Reasoning),
+];
+
+fn block_kind(typ: Option<&str>, default: &Kind) -> Option<(Kind, &'static str)> {
+    match typ {
+        Some("text") => Some((default.clone(), "text")),
+        Some("reasoning.text") => Some((Kind::Reasoning, "text")),
+        Some("thinking") => Some((Kind::Reasoning, "thinking")),
+        Some("refusal") => Some((Kind::Refusal, "refusal")),
+        Some("reasoning.summary" | "summary") => Some((Kind::Reasoning, "summary")),
+        _ => None,
+    }
 }
 
 impl Kind {

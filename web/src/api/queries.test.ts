@@ -264,4 +264,48 @@ describe("management query options", () => {
             code: "invalid_response",
         });
     });
+    it("passes transport and performance filters while preserving false stream intent", async () => {
+        vi.mocked(api.usage).mockRejectedValue(stopped);
+        vi.mocked(api.requests).mockRejectedValue(stopped);
+        const queryClient = client();
+        await expect(
+            queryClient.fetchQuery(
+                queries.usage(
+                    1,
+                    parseSearch(
+                        usageSearchSchema,
+                        new URLSearchParams(
+                            "clientStream=false&upstreamMedia=json&performanceOutcome=failed",
+                        ),
+                    ).filters,
+                ),
+            ),
+        ).rejects.toBe(stopped);
+        expect(api.usage).toHaveBeenCalledWith(
+            {
+                groupBy: "day",
+                clientStream: false,
+                upstreamMedia: "json",
+                performanceOutcome: "failed",
+            },
+            expect.any(AbortSignal),
+        );
+        await expect(
+            queryClient.fetchQuery(
+                queries.requests(
+                    1,
+                    parseSearch(
+                        requestsSearchSchema,
+                        new URLSearchParams(
+                            "clientStream=true&upstreamMedia=sse&outcome=cancelled",
+                        ),
+                    ).filters,
+                ),
+            ),
+        ).rejects.toBe(stopped);
+        expect(api.requests).toHaveBeenCalledWith(
+            { limit: 50, clientStream: true, upstreamMedia: "sse", outcome: "cancelled" },
+            expect.any(AbortSignal),
+        );
+    });
 });

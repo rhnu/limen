@@ -5,6 +5,7 @@ mod fixture;
 mod lifecycle;
 mod logging;
 mod management;
+mod performance;
 mod routing;
 mod statistics;
 mod transport;
@@ -25,6 +26,7 @@ pub const CASES: &[&str] = &[
     "stream-boundary",
     "content-transform",
     "statistics",
+    "performance",
     "management",
     "persistence",
     "logging",
@@ -43,6 +45,7 @@ pub async fn run(case: &str, executable: &Path, directory: &Path) -> Result<()> 
         "stream-boundary" => transport::run(&mut laboratory).await,
         "content-transform" => content::run(&mut laboratory).await,
         "statistics" => statistics::run(&mut laboratory).await,
+        "performance" => performance::run(&mut laboratory).await,
         "management" => management::run(&mut laboratory).await,
         "persistence" => management::persistence(&mut laboratory).await,
         "logging" => logging::run(&mut laboratory).await,

@@ -168,63 +168,73 @@ impl Gateway {
         worker_connection_cancel: Cancellation,
     ) {
         delivery.timings = lifecycle.statistics.timings.clone();
+        delivery.started = lifecycle.started;
         let result = self
             .execute_request(request, lifecycle, delivery, &worker_connection_cancel)
             .await;
-        let result = self
-            .request_active(lifecycle, &worker_connection_cancel)
-            .and(result);
+        let result = terminal_result(
+            result,
+            self.request_active(lifecycle, &worker_connection_cancel),
+            delivery.completed(lifecycle.deadline),
+        );
         let cleanup_deadline = Instant::now() + Duration::from_millis(self.limits.cleanup_ms);
         lifecycle
             .statistics
             .freeze(lifecycle.started, Instant::now());
-        let record = persistence::terminal(lifecycle, result.as_ref().err());
-        let persist = async {
-            if let Some(record) = record {
-                let deadline = Instant::now() + Duration::from_millis(self.storage_operation_ms);
-                if let Err(error) = self.records.finish(record, deadline).await {
-                    tracing::error!(
-                        phase = "storage_finish",
-                        code = error.code(),
-                        "request persistence failed"
-                    );
+        let mut record = persistence::terminal(lifecycle, result.as_ref().err());
+        let cleanup_started = Instant::now();
+        let terminal = match result {
+            Ok(response) => {
+                if let Some(response) = response {
+                    delivery.send_json(response);
                 }
-            }
-        };
-        let cleanup = async {
-            let terminal = match result {
-                Ok(response) => {
-                    if let Some(response) = response {
-                        delivery.send_json(response);
-                    }
-                    Ok(())
-                },
-                Err(mut failure) => {
-                    if delivery.pending() && lifecycle.recorded {
-                        self.prepare_error(&mut failure, lifecycle, cleanup_deadline)
-                            .await;
-                    }
-                    // Terminal writes have a finite budget even after the request
-                    // deadline; a slow or disconnected consumer cannot retain a permit.
-                    let _finished = tokio::time::timeout_at(
-                        tokio::time::Instant::from_std(cleanup_deadline),
-                        delivery.fail(&failure, lifecycle),
-                    )
-                    .await;
-                    delivery.close();
-                    Err(failure)
-                },
-            };
-            if lifecycle.recorded {
-                self.observe(lifecycle, terminal.as_ref().err(), cleanup_deadline)
-                    .await;
-            }
-            lifecycle.record(&terminal, &self.observation_names);
-            self.transport
-                .complete(lifecycle, terminal.as_ref().err(), &self.observation_names)
+                Ok(())
+            },
+            Err(mut failure) => {
+                if delivery.pending() && lifecycle.recorded {
+                    self.prepare_error(&mut failure, lifecycle, cleanup_deadline)
+                        .await;
+                }
+                let _finished = tokio::time::timeout_at(
+                    tokio::time::Instant::from_std(cleanup_deadline),
+                    delivery.fail(&failure, lifecycle),
+                )
                 .await;
+                delivery.close();
+                Err(failure)
+            },
         };
-        tokio::join!(persist, cleanup);
+        if lifecycle.recorded {
+            self.observe(lifecycle, terminal.as_ref().err(), cleanup_deadline)
+                .await;
+        }
+        let cleanup_us = u64::try_from(cleanup_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        lifecycle.record(&terminal, &self.observation_names);
+        self.transport
+            .complete(lifecycle, terminal.as_ref().err(), &self.observation_names)
+            .await;
+        if let Some(record) = &mut record {
+            record.timings.cleanup_us = Some(cleanup_us);
+            record.phases.extend(lifecycle.cleanup_timings.owned().2);
+        }
+        if let Some(record) = record {
+            stats::record_performance(&record, lifecycle.client_stream.unwrap_or(false));
+            let deadline = Instant::now() + Duration::from_millis(self.storage_operation_ms);
+            let started = Instant::now();
+            match self.records.finish(record, deadline).await {
+                Ok(()) => tracing::debug!(
+                    phase = "storage_finish",
+                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                    "request persistence completed"
+                ),
+                Err(error) => tracing::error!(
+                    phase = "storage_finish",
+                    code = error.code(),
+                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                    "request persistence failed"
+                ),
+            }
+        }
     }
 
     async fn execute_request(
@@ -304,6 +314,27 @@ impl Gateway {
         lifecycle
             .deadline
             .min(Instant::now() + Duration::from_millis(self.limits.hook_ms))
+    }
+}
+
+/// EOF acknowledgement completes SSE delivery before the connection driver can close.
+fn terminal_result(
+    result: Result<Option<Response>, Failure>,
+    active: Result<(), Failure>,
+    stream_completed: bool,
+) -> Result<Option<Response>, Failure> {
+    let completion_race = match &result {
+        Ok(None) => true,
+        Err(failure) => matches!(
+            failure.code,
+            ErrorCode::Cancelled | ErrorCode::DeadlineExceeded
+        ),
+        Ok(Some(_)) => false,
+    };
+    if stream_completed && completion_race {
+        Ok(None)
+    } else {
+        active.and(result)
     }
 }
 

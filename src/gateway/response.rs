@@ -2,6 +2,7 @@ use std::{
     convert::Infallible,
     pin::Pin,
     task::{Context, Poll},
+    time::Instant,
 };
 
 use axum::{
@@ -30,7 +31,7 @@ const CONTROL_EVENT_BYTES: usize = 1024;
 /// Keeping the acknowledgement separate from queue capacity covers the final frame too.
 pub(super) struct Delivery {
     reply: Option<oneshot::Sender<Response>>,
-    sender: Option<mpsc::Sender<Bytes>>,
+    sender: Option<mpsc::Sender<QueuedFrame>>,
     drained: Option<oneshot::Receiver<()>>,
     cancellation: Cancellation,
     status: u16,
@@ -38,6 +39,7 @@ pub(super) struct Delivery {
     request_id: String,
     done_sent: bool,
     pub(super) timings: Timings,
+    pub(super) started: Instant,
 }
 
 impl Delivery {
@@ -56,6 +58,7 @@ impl Delivery {
             request_id,
             done_sent: false,
             timings: Timings::default(),
+            started: Instant::now(),
         }
     }
 
@@ -86,6 +89,8 @@ impl Delivery {
             finished: Some(finished),
             cancellation: self.cancellation.clone(),
             completed: false,
+            timings: self.timings.clone(),
+            started: self.started,
         };
         let mut response = Response::new(Body::new(body));
         *response.status_mut() = http::StatusCode::from_u16(self.status)
@@ -110,6 +115,15 @@ impl Delivery {
     }
 
     pub async fn emit(&mut self, bytes: Vec<u8>) -> Result<(), Failure> {
+        self.emit_content(bytes, limen_chat::GeneratedContent::default())
+            .await
+    }
+
+    pub async fn emit_content(
+        &mut self,
+        bytes: Vec<u8>,
+        content: limen_chat::GeneratedContent,
+    ) -> Result<(), Failure> {
         self.start()?;
         let sender = self
             .sender
@@ -117,7 +131,10 @@ impl Delivery {
             .ok_or_else(|| Failure::new(ErrorCode::Internal, "response"))?;
         let _measurement = self.timings.measure(WaitKind::Queue);
         sender
-            .send(Bytes::from(bytes))
+            .send(QueuedFrame {
+                bytes: Bytes::from(bytes),
+                content,
+            })
             .await
             .map_err(|source| Failure::new(ErrorCode::Cancelled, "response").with_source(source))
     }
@@ -136,6 +153,14 @@ impl Delivery {
             })?;
         }
         Ok(())
+    }
+
+    pub fn completed(&self, deadline: Instant) -> bool {
+        self.done_sent
+            && self
+                .timings
+                .drained_at()
+                .is_some_and(|drained_at| drained_at <= deadline)
     }
 
     pub fn close(&mut self) {
@@ -179,8 +204,15 @@ impl Delivery {
     }
 }
 
+struct QueuedFrame {
+    bytes: Bytes,
+    content: limen_chat::GeneratedContent,
+}
+
 struct StreamBody {
-    receiver: mpsc::Receiver<Bytes>,
+    receiver: mpsc::Receiver<QueuedFrame>,
+    timings: Timings,
+    started: Instant,
     finished: Option<oneshot::Sender<()>>,
     cancellation: Cancellation,
     completed: bool,
@@ -195,8 +227,17 @@ impl HttpBody for StreamBody {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
         match self.receiver.poll_recv(cx) {
-            Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
+            Poll::Ready(Some(frame)) => {
+                self.timings.downstream(
+                    self.started,
+                    Instant::now(),
+                    frame.content.generation,
+                    frame.content.text,
+                );
+                Poll::Ready(Some(Ok(Frame::data(frame.bytes))))
+            },
             Poll::Ready(None) => {
+                self.timings.drained(Instant::now());
                 self.completed = true;
                 if let Some(finished) = self.finished.take() {
                     let _sent = finished.send(());
@@ -226,6 +267,7 @@ impl Gateway {
         apply_alias(&mut body, lifecycle);
         let (provider_steps, model_steps) = route.response();
         for step in provider_steps.iter().chain(model_steps) {
+            lifecycle.scope = step.scope;
             let hook = step.executor;
             let context = lifecycle.context(HookInput::OnResponse { body });
             let output = self

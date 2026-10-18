@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use http::HeaderValue;
-use limen_script::{Cancellation, ErrorResponseInput, HookCall, HookCandidate, HookId, HookInput};
+use limen_script::{
+    Cancellation, ErrorResponseInput, HookCall, HookCandidate, HookId, HookInput, RuntimeStatus,
+};
 
 use super::{
     Gateway,
@@ -11,7 +13,6 @@ use super::{
     lifecycle::Lifecycle,
     logic,
     pipeline::hook_invalid,
-    stats::Timings,
 };
 
 impl Gateway {
@@ -24,32 +25,42 @@ impl Gateway {
         deadline: Instant,
     ) {
         let mut hooks = Vec::new();
-        let route = lifecycle
-            .alias
+        let selected = lifecycle
+            .provider
             .as_deref()
-            .and_then(|alias| self.plans.route(&self.business, alias));
-        if let Some(route) = &route {
-            let (provider_steps, model_steps) = route.error_response();
+            .zip(lifecycle.alias.as_deref())
+            .and_then(|(provider, alias)| self.plans.error_response_steps(provider, alias));
+        if let Some((provider_steps, model_steps)) = selected {
             hooks.extend(
                 provider_steps
                     .iter()
                     .chain(model_steps)
-                    .map(|step| (step.executor, Some(step.name.as_str()))),
+                    .map(|step| (step.executor, Some(step.name.as_str()), step.scope)),
             );
         }
         if let Some(hook) = self.plans.on_error_response {
-            hooks.push((hook, None));
+            hooks.push((hook, None, limen_storage::PhaseScope::Global));
         }
-        for (hook, step) in hooks {
+        for (hook, step, scope) in hooks {
+            if !matches!(self.runtime.status(), RuntimeStatus::Ready) {
+                lifecycle
+                    .cleanup_timings
+                    .skip("onErrorResponse", scope, true);
+                continue;
+            }
             if Instant::now() >= deadline {
+                lifecycle
+                    .cleanup_timings
+                    .skip("onErrorResponse", scope, false);
                 tracing::warn!(
                     phase = "onErrorResponse",
                     step,
                     reason = "cleanup_budget",
                     "error response policy not executed"
                 );
-                break;
+                continue;
             }
+            lifecycle.scope = scope;
             if let Err(policy_error) = self
                 .error_response_hook(hook, step, failure, lifecycle, deadline)
                 .await
@@ -100,8 +111,8 @@ impl Gateway {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned),
         }));
-        let timings = Timings::default();
-        let measurement = timings.hook("onErrorResponse");
+        let timings = lifecycle.cleanup_timings.clone();
+        let measurement = timings.hook_scoped("onErrorResponse", lifecycle.scope);
         let report = self
             .runtime
             .invoke(HookCall {

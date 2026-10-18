@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use limen_storage::{Filter, GroupBy, Outcome, Position, RecordState, RequestQuery, UsageQuery};
+use limen_storage::{
+    Filter, GroupBy, Outcome, PerformanceOutcome, Position, RecordState, RequestQuery, UsageQuery,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::Error;
@@ -107,7 +109,16 @@ pub(super) fn requests(
     allowed(
         parameters,
         &[
-            "from", "to", "model", "provider", "state", "outcome", "limit", "cursor",
+            "from",
+            "to",
+            "model",
+            "provider",
+            "state",
+            "outcome",
+            "clientStream",
+            "upstreamMedia",
+            "limit",
+            "cursor",
         ],
     )?;
     let limit = limit(parameters, 50, 100)?;
@@ -148,13 +159,28 @@ pub(super) fn requests(
 }
 
 pub(super) fn usage(parameters: &Parameters) -> Result<UsageQuery, Error> {
-    allowed(parameters, &["from", "to", "model", "provider", "groupBy"])?;
+    allowed(
+        parameters,
+        &[
+            "from",
+            "to",
+            "model",
+            "provider",
+            "groupBy",
+            "clientStream",
+            "upstreamMedia",
+            "performanceOutcome",
+        ],
+    )?;
     let group_by = get(parameters, "groupBy")
         .map_or(Some(GroupBy::Day), GroupBy::parse)
         .ok_or(Error::InvalidQuery)?;
     Ok(UsageQuery {
         filter: filter(parameters, None)?,
         group_by,
+        performance_outcome: get(parameters, "performanceOutcome")
+            .map_or(Some(PerformanceOutcome::Success), PerformanceOutcome::parse)
+            .ok_or(Error::InvalidQuery)?,
     })
 }
 
@@ -190,6 +216,18 @@ fn filter(parameters: &Parameters, base: Option<&Filter>) -> Result<Filter, Erro
         provider: exact("provider", base.and_then(|filter| filter.provider.as_ref())),
         state,
         outcome,
+        client_stream: get(parameters, "clientStream")
+            .map(|value| match value {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                _ => Err(Error::InvalidQuery),
+            })
+            .transpose()?
+            .or(base.and_then(|filter| filter.client_stream)),
+        upstream_media: exact(
+            "upstreamMedia",
+            base.and_then(|filter| filter.upstream_media.as_ref()),
+        ),
     };
     validate_filter(&filter)?;
     Ok(filter)
@@ -202,6 +240,13 @@ fn time(value: &str) -> Result<i64, Error> {
 }
 
 fn validate_filter(filter: &Filter) -> Result<(), Error> {
+    if filter
+        .upstream_media
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "json" | "sse" | "other"))
+    {
+        return Err(Error::InvalidQuery);
+    }
     if filter.from_ms >= filter.to_ms
         || chrono::DateTime::from_timestamp_millis(filter.from_ms).is_none()
         || chrono::DateTime::from_timestamp_millis(filter.to_ms).is_none()

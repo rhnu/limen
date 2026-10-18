@@ -58,6 +58,7 @@ fn pending(id: &str, started_at_ms: i64) -> PendingRecord {
         started_at_ms,
         client_stream: true,
         input_bytes: 7,
+        client_parameters: limen_storage::GenerationParameters::default(),
     }
 }
 
@@ -76,7 +77,7 @@ async fn open(directory: &Path) -> Result<Storage> {
     Ok(tokio::task::spawn_blocking(move || Storage::open(options, deadline())).await??)
 }
 
-async fn get(storage: &StorageReader, id: &str) -> Result<Option<limen_storage::RequestRecord>> {
+async fn get(storage: &StorageReader, id: &str) -> Result<Option<limen_storage::RequestDetail>> {
     Ok(storage
         .get(
             id.into(),

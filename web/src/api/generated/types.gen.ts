@@ -124,10 +124,11 @@ export type RequestRecord = {
     requestMs: number | null;
     upstreamHeadersMs: number | null;
     firstOutputMs: number | null;
+    metrics: RequestMetrics;
 };
 
 export type RequestResponse = {
-    data: RequestRecord;
+    data: RequestDetail;
 };
 
 export type RequestsPage = {
@@ -185,6 +186,11 @@ export type UsageGroup = {
         unknown: number;
     };
     tokens: TokenTotals;
+    performance: PerformanceSummary;
+    phases: Array<PhaseAggregate>;
+    stages: {
+        [key: string]: DurationAggregate;
+    };
 };
 
 /**
@@ -211,6 +217,8 @@ export type UsageSummary = {
     groupBy: GroupBy;
     retention: Retention;
     groups: Array<UsageGroup>;
+    overall: UsageGroup;
+    performanceOutcome: PerformanceOutcome;
 };
 
 export type UsageResponse = {
@@ -250,7 +258,7 @@ export type LogEntry = {
     timestamp: string;
     level: LogLevel;
     logId: string;
-    event: 'processPanicked' | 'configurationRejected' | 'configurationFailed' | 'configurationLoading' | 'configurationLoaded' | 'runtimeStopped' | 'listenerStarted' | 'listenerStopping' | 'connectionFailed' | 'connectionDeadline' | 'requestFinished' | 'requestRejected' | 'requestFailed' | 'requestTiming' | 'requestPersistenceFailed' | 'hookStatistics' | 'scriptObservation' | 'scriptObservationsDropped' | 'observationSkipped' | 'observationCompleted' | 'observationFailed' | 'errorResponsePolicyFailed' | 'errorResponsePolicySkipped' | 'requestWorkerFailed' | 'fileLoggingFailed' | 'diagnostic';
+    event: 'processPanicked' | 'configurationRejected' | 'configurationFailed' | 'configurationLoading' | 'configurationLoaded' | 'runtimeStopped' | 'listenerStarted' | 'listenerStopping' | 'connectionFailed' | 'connectionDeadline' | 'requestFinished' | 'requestRejected' | 'requestFailed' | 'requestTiming' | 'requestPersistenceFailed' | 'hookStatistics' | 'scriptObservation' | 'scriptObservationsDropped' | 'observationSkipped' | 'observationCompleted' | 'observationFailed' | 'errorResponsePolicyFailed' | 'errorResponsePolicySkipped' | 'requestWorkerFailed' | 'fileLoggingFailed' | 'diagnostic' | 'requestPerformance' | 'requestPersistenceCompleted';
     /**
      * Associated request ID when supplied by the logging event.
      */
@@ -460,6 +468,98 @@ export type LogEntry = {
      */
     cancelled?: unknown;
     truncated?: boolean;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    configuredUpstreamModel?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    finalUpstreamModel?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamMedia?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    inputBytes?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    outboundBytes?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamBytes?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    outputBytes?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamHeadersMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    scope?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    storageBeginMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    storageFinishMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    preSendMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamElapsedMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    cleanupMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamTtftMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    downstreamTtftMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    upstreamFirstTextMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    downstreamFirstTextMs?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    averageOutputTps?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    generationTps?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    averageOutputTpsStatus?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    generationTpsStatus?: unknown;
+    /**
+     * Optional allowlisted diagnostic metadata, retained as JSON.
+     */
+    downstreamMode?: unknown;
 };
 
 /**
@@ -582,6 +682,227 @@ export type ApiError = {
     error: ApiErrorDetail;
 };
 
+export type MetricStatus = 'available' | 'not_reached' | 'not_sse' | 'incomplete' | 'missing_usage' | 'invalid_usage' | 'multiple_choices' | 'insufficient_tokens' | 'insufficient_observations' | 'zero_duration' | 'token_scope_mismatch';
+
+export type DownstreamMode = 'native_stream' | 'buffered' | 'not_streamed' | 'not_reached';
+
+export type PhaseScope = 'global' | 'provider' | 'model';
+
+export type PhaseExecutor = 'script' | 'native';
+
+export type PerformanceOutcome = 'all' | 'success' | 'failed' | 'cancelled';
+
+/**
+ * TTFT excludes role-only, usage and control events. Downstream time means body delivery by this gateway, not client network receipt. Buffered delivery is excluded from native downstream TTFT aggregates. TPS values are server-derived; null is not zero.
+ */
+export type RequestMetrics = {
+    upstreamTtftMs: number | null;
+    downstreamTtftMs: number | null;
+    upstreamFirstTextMs: number | null;
+    downstreamFirstTextMs: number | null;
+    averageOutputTps: number | null;
+    generationTps: number | null;
+    averageOutputTpsStatus: MetricStatus;
+    generationTpsStatus: MetricStatus;
+    downstreamMode: DownstreamMode;
+};
+
+/**
+ * Monotonic microseconds. Milestones and elapsed spans have separate meanings and cannot all be summed.
+ */
+export type RequestTimings = {
+    requestUs: number | null;
+    requestDecodeUs: number | null;
+    storageBeginUs: number | null;
+    preSendUs: number | null;
+    routingUs: number | null;
+    requestEncodeUs: number | null;
+    upstreamHeadersWaitUs: number | null;
+    upstreamFirstByteUs: number | null;
+    upstreamFirstChunkUs: number | null;
+    upstreamTotalUs: number | null;
+    downstreamFirstEventUs: number | null;
+    upstreamReadWaitUs: number | null;
+    downstreamQueueWaitUs: number | null;
+    downstreamDrainUs: number | null;
+    cleanupUs: number | null;
+};
+
+export type GenerationFacts = {
+    upstreamFirstContentUs: number | null;
+    upstreamLastContentUs: number | null;
+    upstreamFirstTextUs: number | null;
+    downstreamFirstContentUs: number | null;
+    downstreamFirstTextUs: number | null;
+    upstreamContentObservations: number;
+    choiceCount: number;
+    observedReasoning: boolean;
+    observedAudio: boolean;
+    contentQualified: boolean;
+    downstreamBuffered: boolean;
+    finishStop: number;
+    finishLength: number;
+    finishTool: number;
+    finishFiltered: number;
+    finishOther: number;
+};
+
+export type TimingSample = {
+    totalUs: number | null;
+    samples: number;
+};
+
+export type PhaseTiming = {
+    phase: string;
+    scope: PhaseScope;
+    executor: PhaseExecutor;
+    calls: number;
+    failedCalls: number;
+    interruptedCalls: number;
+    reportedCalls: number;
+    skippedBudgetCalls: number;
+    unavailableCalls: number;
+    wallUs: number | null;
+    queue: TimingSample;
+    initialCall: TimingSample;
+    pending: TimingSample;
+    inputBridge: TimingSample;
+    outputBridge: TimingSample;
+};
+
+export type DurationAggregate = {
+    sumMs: number | null;
+    meanMs: number | null;
+    samples: number;
+};
+
+export type PhaseAggregate = {
+    phase: string;
+    scope: PhaseScope;
+    executor: PhaseExecutor;
+    calls: number;
+    failedCalls: number;
+    interruptedCalls: number;
+    reportedCalls: number;
+    skippedBudgetCalls: number;
+    unavailableCalls: number;
+    wall: DurationAggregate;
+    queue: DurationAggregate;
+    initialCall: DurationAggregate;
+    pending: DurationAggregate;
+    inputBridge: DurationAggregate;
+    outputBridge: DurationAggregate;
+};
+
+/**
+ * Server-computed exact bounded sample statistics. Empty samples have null statistics. Do not average group percentiles.
+ */
+export type MetricSummary = {
+    samples: number;
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    p50: number | null;
+    p95: number | null;
+    p99: number | null;
+};
+
+export type PerformanceSummary = {
+    records: number;
+    requestMs: MetricSummary;
+    upstreamTtftMs: MetricSummary;
+    downstreamTtftMs: MetricSummary;
+    upstreamFirstTextMs: MetricSummary;
+    downstreamFirstTextMs: MetricSummary;
+    averageOutputTps: MetricSummary;
+    generationTps: MetricSummary;
+};
+
+/**
+ * Fixed allowlist projection, bounded to 4 KiB per snapshot. Excludes messages, tools, headers, credentials, stop strings and arbitrary extensions. An omitted field means not recorded, never a default value.
+ */
+export type GenerationParameters = {
+    [key: string]: unknown;
+};
+
+export type ParameterSnapshots = {
+    client: GenerationParameters;
+    upstream: GenerationParameters | null;
+};
+
+export type RequestDetail = {
+    recordId: number;
+    requestId: string;
+    runId: string;
+    /**
+     * UTC RFC3339 timestamp with millisecond precision.
+     */
+    startedAt: string;
+    /**
+     * UTC RFC3339 timestamp with millisecond precision.
+     */
+    finishedAt: string | null;
+    state: RecordState;
+    outcome: 'success' | 'failed' | 'cancelled' | null;
+    errorCode: string | null;
+    errorPhase: string | null;
+    errorStep: string | null;
+    model: string | null;
+    provider: string | null;
+    configuredUpstreamModel: string | null;
+    finalUpstreamModel: string | null;
+    clientStream: boolean;
+    upstreamStatus: number | null;
+    upstreamMedia: string | null;
+    upstreamCompleted: boolean | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    inputTokens: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    outputTokens: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    totalTokens: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    cachedInputTokens: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    reasoningOutputTokens: string | null;
+    usageSource: string | null;
+    usageQuality: 'missing' | 'partial' | 'reported' | 'invalid' | 'conflicting' | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    inputBytes: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    outboundBytes: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    upstreamBytes: string | null;
+    /**
+     * Unsigned decimal string; preserves integer precision. Null means unknown, not zero.
+     */
+    outputBytes: string | null;
+    requestMs: number | null;
+    upstreamHeadersMs: number | null;
+    firstOutputMs: number | null;
+    metrics: RequestMetrics;
+    timings: RequestTimings;
+    generation: GenerationFacts;
+    phases: Array<PhaseTiming>;
+    parameters: ParameterSnapshots;
+};
+
 /**
  * Inclusive request start time. Supply together with to; when both are absent, defaults to the last 24 hours. Maximum window is 31 days. Cursor pages inherit the original window.
  */
@@ -651,6 +972,21 @@ export type RequestId = string;
  * Includes this severity and all more severe levels; omitted means no level filter.
  */
 export type MinLevel = LogLevel;
+
+/**
+ * Exact original client stream intent. Only true or false.
+ */
+export type ClientStream = boolean;
+
+/**
+ * Exact upstream media classification (json/sse/other). Missing response media does not match any selected value.
+ */
+export type UpstreamMedia = 'json' | 'sse' | 'other';
+
+/**
+ * Filters only performance and phase samples. Token consumption, request states and outcomes retain all matching requests.
+ */
+export type PerformanceOutcome2 = PerformanceOutcome;
 
 export type GetStatusData = {
     body?: never;
@@ -741,6 +1077,14 @@ export type GetRequestsData = {
          * Opaque run-bound cursor. Later pages may supply only cursor and limit; explicitly repeated filters must match. Service restart expires the cursor.
          */
         cursor?: string;
+        /**
+         * Exact original client stream intent. Only true or false.
+         */
+        clientStream?: boolean;
+        /**
+         * Exact upstream media classification (json/sse/other). Missing response media does not match any selected value.
+         */
+        upstreamMedia?: 'json' | 'sse' | 'other';
     };
     url: '/admin/v1/requests';
 };
@@ -873,6 +1217,18 @@ export type GetUsageData = {
          * One aggregation dimension; day uses UTC calendar dates.
          */
         groupBy?: GroupBy;
+        /**
+         * Exact original client stream intent. Only true or false.
+         */
+        clientStream?: boolean;
+        /**
+         * Exact upstream media classification (json/sse/other). Missing response media does not match any selected value.
+         */
+        upstreamMedia?: 'json' | 'sse' | 'other';
+        /**
+         * Filters only performance and phase samples. Token consumption, request states and outcomes retain all matching requests.
+         */
+        performanceOutcome?: PerformanceOutcome;
     };
     url: '/admin/v1/usage';
 };

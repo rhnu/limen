@@ -211,6 +211,7 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
         source: ContentProjector::new(100),
         stages: vec![
             ContentStage {
+                scope: limen_storage::PhaseScope::Provider,
                 projector: ContentProjector::new(100),
                 name: "script".into(),
                 executor: ContentExecution::Script(0)

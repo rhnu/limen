@@ -6,7 +6,7 @@ use std::{
 use super::*;
 
 fn body() -> (
-    mpsc::Sender<Bytes>,
+    mpsc::Sender<QueuedFrame>,
     StreamBody,
     oneshot::Receiver<()>,
     Cancellation,
@@ -21,6 +21,8 @@ fn body() -> (
             finished: Some(finished),
             cancellation: cancellation.clone(),
             completed: false,
+            timings: Timings::default(),
+            started: Instant::now(),
         },
         drained,
         cancellation,
@@ -30,9 +32,17 @@ fn body() -> (
 #[test]
 fn bounded_body_applies_backpressure_and_acknowledges_only_after_drain() {
     let (sender, mut body, mut drained, cancellation) = body();
-    sender.try_send(Bytes::from_static(b"first")).unwrap();
+    sender
+        .try_send(QueuedFrame {
+            bytes: Bytes::from_static(b"first"),
+            content: limen_chat::GeneratedContent::default(),
+        })
+        .unwrap();
     assert!(matches!(
-        sender.try_send(Bytes::from_static(b"second")),
+        sender.try_send(QueuedFrame {
+            bytes: Bytes::from_static(b"second"),
+            content: limen_chat::GeneratedContent::default()
+        }),
         Err(mpsc::error::TrySendError::Full(_))
     ));
     assert!(matches!(
@@ -232,4 +242,60 @@ async fn success_preserves_native_terminator_metadata_after_validation() {
         bytes.unwrap().as_ref(),
         [b": first\n\n".as_slice(), terminal].concat()
     );
+}
+
+#[test]
+fn downstream_content_is_observed_only_when_the_body_yields_the_final_event() {
+    let (sender, mut body, _drained, _cancellation) = body();
+    let facts = limen_chat::GeneratedContent {
+        generation: true,
+        text: false,
+        ..limen_chat::GeneratedContent::default()
+    };
+    sender
+        .try_send(QueuedFrame {
+            bytes: Bytes::from_static(b"encoded tool"),
+            content: facts,
+        })
+        .unwrap();
+    assert_eq!(body.timings.owned().1.downstream_first_content_us, None);
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(Pin::new(&mut body).poll_frame(&mut cx).is_ready());
+    let observed = body.timings.owned().1;
+    assert!(observed.downstream_first_content_us.is_some());
+    assert!(observed.downstream_first_text_us.is_none());
+    sender
+        .try_send(QueuedFrame {
+            bytes: Bytes::from_static(b"encoded text"),
+            content: limen_chat::GeneratedContent {
+                text: true,
+                ..facts
+            },
+        })
+        .unwrap();
+    assert!(Pin::new(&mut body).poll_frame(&mut cx).is_ready());
+    let later = body.timings.owned().1;
+    assert_eq!(
+        later.downstream_first_content_us,
+        observed.downstream_first_content_us
+    );
+    assert!(later.downstream_first_text_us.is_some());
+}
+
+#[test]
+fn stream_completion_requires_done_and_a_body_eof_observed_within_deadline() {
+    let start = Instant::now();
+    let (reply, _receive) = oneshot::channel();
+    let mut delivery = Delivery::new(reply, Cancellation::new(), "test".into());
+    delivery
+        .timings
+        .drained(start + std::time::Duration::from_micros(15));
+    assert!(!delivery.completed(start + std::time::Duration::from_micros(20)));
+    delivery.done_sent = true;
+    assert!(delivery.completed(start + std::time::Duration::from_micros(20)));
+    assert!(!delivery.completed(start + std::time::Duration::from_micros(10)));
+    let (reply, _receive) = oneshot::channel();
+    let mut incomplete = Delivery::new(reply, Cancellation::new(), "test".into());
+    incomplete.done_sent = true;
+    assert!(!incomplete.completed(start + std::time::Duration::from_micros(20)));
 }

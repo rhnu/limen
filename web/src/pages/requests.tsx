@@ -27,6 +27,8 @@ import {
     recordStates,
     outcomes,
 } from "../routing/search";
+import { RequestPerformance } from "../components/performance";
+import { downstreamModes, tpsText, ttftText } from "../lib/metrics";
 import { Facts } from "../components/facts";
 
 export function Requests() {
@@ -113,6 +115,19 @@ export function Requests() {
                                         <th>结果</th>
                                         <th className="numeric">总词元</th>
                                         <th className="numeric">耗时</th>
+                                        <th className="numeric">
+                                            下游 TTFT{" "}
+                                            <HelpMark>
+                                                请求开始至网关交付首生成内容，不代表客户端网络接收。缓冲合成路径单独标明。
+                                            </HelpMark>
+                                        </th>
+                                        <th className="numeric">
+                                            平均 TPS{" "}
+                                            <HelpMark>
+                                                原生输出词元 /
+                                                上游总耗时；要求上游完整结束且用量可用。真实零值保留为零。
+                                            </HelpMark>
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -152,6 +167,18 @@ export function Requests() {
                                                     ? "未知"
                                                     : `${numberText(item.requestMs)} ms`}
                                             </td>
+                                            <td className="numeric">
+                                                {ttftText(item.metrics, "downstream")}
+                                                <div className="muted small">
+                                                    {downstreamModes[item.metrics.downstreamMode]}
+                                                </div>
+                                            </td>
+                                            <td className="numeric">
+                                                {tpsText(
+                                                    item.metrics.averageOutputTps,
+                                                    item.metrics.averageOutputTpsStatus,
+                                                )}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -175,7 +202,6 @@ export function Requests() {
     );
 }
 
-const ms = (value: number | null) => (value === null ? "未知" : `${numberText(value)} ms`);
 export function RequestDetail() {
     const { id = "" } = useParams();
     const location = useLocation();
@@ -251,21 +277,7 @@ export function RequestDetail() {
                                 ]}
                             />
                         </section>
-                        <section className="panel">
-                            <h2>
-                                耗时{" "}
-                                <HelpMark>
-                                    来自请求记录的已知计时。缺失值保留为未知，各项不保证可相加。
-                                </HelpMark>
-                            </h2>
-                            <Facts
-                                entries={[
-                                    ["请求耗时", ms(item.requestMs)],
-                                    ["上游响应头", ms(item.upstreamHeadersMs)],
-                                    ["首次输出", ms(item.firstOutputMs)],
-                                ]}
-                            />
-                        </section>
+                        <RequestPerformance item={item} />
                         <section className="panel">
                             <h2>
                                 用量{" "}

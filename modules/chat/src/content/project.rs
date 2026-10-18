@@ -14,13 +14,7 @@ pub(super) fn project_body(
     limit: usize,
 ) -> Result<(), ContentError> {
     let body = body.as_object().ok_or(ContentError::InvalidSource)?;
-    for (field, default_kind) in [
-        ("content", Kind::Text),
-        ("refusal", Kind::Refusal),
-        ("reasoning", Kind::Reasoning),
-        ("reasoning_content", Kind::Reasoning),
-        ("reasoning_details", Kind::Reasoning),
-    ] {
+    for &(field, ref default_kind) in super::CONTENT_FIELDS {
         let Some(value) = body.get(field) else {
             continue;
         };
@@ -54,7 +48,7 @@ pub(super) fn project_body(
                 bindings,
                 choice,
                 field,
-                &default_kind,
+                default_kind,
                 blocks,
                 &[],
                 field,
@@ -187,13 +181,8 @@ fn project_blocks(
     for (position, block) in blocks.iter().enumerate() {
         let object = block.as_object().ok_or(ContentError::InvalidSource)?;
         let typ = object.get("type").and_then(Value::as_str);
-        let (kind, leaf) = match typ {
-            Some("text") => (default_kind.clone(), "text"),
-            Some("reasoning.text") => (Kind::Reasoning, "text"),
-            Some("thinking") => (Kind::Reasoning, "thinking"),
-            Some("refusal") => (Kind::Refusal, "refusal"),
-            Some("reasoning.summary" | "summary") => (Kind::Reasoning, "summary"),
-            _ => continue,
+        let Some((kind, leaf)) = super::block_kind(typ, default_kind) else {
+            continue;
         };
         let Some(value) = object.get(leaf) else {
             continue;

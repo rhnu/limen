@@ -1,10 +1,14 @@
 //! Single-instance, bounded request persistence. Connections never cross worker threads.
 
 mod database;
+mod metrics;
+mod parameters;
 mod query;
 mod types;
 mod worker;
 
+pub use metrics::*;
+pub use parameters::*;
 pub use types::*;
 pub use worker::{Storage, StorageReader, StorageWriter};
 

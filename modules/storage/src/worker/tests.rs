@@ -44,6 +44,7 @@ fn pending() -> PendingRecord {
         started_at_ms: 1000,
         client_stream: false,
         input_bytes: 2,
+        client_parameters: crate::GenerationParameters::default(),
     }
 }
 

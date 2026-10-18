@@ -325,6 +325,22 @@ impl Fixture {
             .await
     }
 
+    /// Keep the body open so a test can observe a frame before releasing an upstream gate.
+    pub async fn streaming_request(&self, body: Value) -> Result<reqwest::Response> {
+        self.client
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                self.port
+            ))
+            .header("authorization", "Bearer synthetic-client-secret-0123456789")
+            .header("content-type", "application/json")
+            .header("connection", "close")
+            .body(serde_json::to_vec(&body).context("encode streaming experiment request")?)
+            .send()
+            .await
+            .context("open streaming experiment request")
+    }
+
     /// Read committed usage through the authenticated management boundary.
     pub async fn record(&self, request_id: &str) -> Result<Value> {
         let deadline = Instant::now() + Duration::from_secs(2);

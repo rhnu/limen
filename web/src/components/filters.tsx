@@ -59,6 +59,21 @@ export function Filters({
                 />
             </Field>
             {extra}
+            <Field label="客户端流式">
+                <select name="clientStream" defaultValue={params.get("clientStream") ?? ""}>
+                    <option value="">全部</option>
+                    <option value="true">是</option>
+                    <option value="false">否</option>
+                </select>
+            </Field>
+            <Field label="上游媒体">
+                <select name="upstreamMedia" defaultValue={params.get("upstreamMedia") ?? ""}>
+                    <option value="">全部</option>
+                    <option value="sse">SSE</option>
+                    <option value="json">JSON</option>
+                    <option value="other">其他</option>
+                </select>
+            </Field>
             {children}
             <Button type="submit" variant="outline">
                 应用筛选

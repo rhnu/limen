@@ -165,7 +165,10 @@ fn expanded_frames_emit_a_source_bom_once_and_preserve_both_data_events() {
     )
     .unwrap();
     tracker.finish().unwrap();
-    let bytes = frames.concat();
+    let bytes: Vec<_> = frames
+        .iter()
+        .flat_map(|frame| frame.bytes.iter().copied())
+        .collect();
     let mut decoder = limen_chat::FrameDecoder::new(4096);
     let mut data = Vec::new();
     for byte in bytes {
@@ -199,5 +202,5 @@ fn preserved_outer_fields_consume_the_shared_encoded_output_budget() {
     .consume(&[event.clone(), event], &mut EventBudget::new(), &limits)
     .unwrap_err();
     assert_eq!(failure.code, ErrorCode::HookFailed);
-    assert_eq!(frames, [] as [Vec<u8>; 0]);
+    assert!(frames.is_empty());
 }

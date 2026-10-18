@@ -12,7 +12,7 @@
 
 浏览器在当前站点的 localStorage 中保存 managerKey，刷新后重新验证。退出会清除保存的 key 和已加载的数据；凭据失效时也会退出。浏览器禁止或无法清理存储时，页面会显示具体提示。该存储不与其他站点共享。
 
-用量和请求查询支持时间窗口、模型与 Provider 筛选，帮助标记说明时间归属、质量和缺失值含义。日志按文件及窗口翻页；窗口为空且仍有下一页时可以继续。服务重启或文件淘汰造成游标失效后，使用页面提供的重新读取操作，不会自动切换到其他历史文件。
+用量和请求查询支持时间窗口、模型、Provider、客户端 stream 与上游媒体类型筛选，帮助标记说明时间归属、质量和缺失值含义。日志按文件及窗口翻页；窗口为空且仍有下一页时可以继续。服务重启或文件淘汰造成游标失效后，使用页面提供的重新读取操作，不会自动切换到其他历史文件。
 
 已应用的筛选条件保存在 hash 地址中，刷新或前进后退可恢复；分页游标只保留在当前页面，刷新或改变筛选后从第一页开始。重复、未知或非法的筛选参数会显示错误，并暂停对应查询，可清除或重新应用筛选后继续。
 
@@ -36,11 +36,23 @@
 
 ## 请求与 usage
 
-请求列表接受 `from`、`to`、`model`、`provider`、`state`、`outcome`、`limit`、`cursor`。from/to 同时提供，使用 RFC3339 的 `[from, to)` 窗口，按请求开始时间筛选，跨度最多 31 天；均省略时默认最近 24 小时。model/provider 为精确匹配，state 为 pending/finalized/interrupted，outcome 为 success/failed/cancelled。
+请求列表接受 `from`、`to`、`model`、`provider`、`state`、`outcome`、`clientStream`、`upstreamMedia`、`limit`、`cursor`。from/to 同时提供，使用 RFC3339 的 `[from, to)` 窗口，按请求开始时间筛选，跨度最多 31 天；均省略时默认最近 24 小时。model/provider 为精确匹配，state 为 pending/finalized/interrupted，outcome 为 success/failed/cancelled。clientStream 为 true/false，upstreamMedia 为 json/sse/other；两者表示原始客户端意图与实际上游媒体类型，不由 hook 的后续修改覆盖。
 
 列表默认 50 条、最多 100，按开始时间与记录序号倒序。后页可只传 cursor 和 limit，重复提供的过滤项必须与第一页一致。游标绑定当前运行，重启即失效；分页期间终态更新和保留清理仍可能改变记录，不承诺跨页快照。
 
-usage 接受 from/to、model/provider 和 `groupBy=none|day|model|provider`，默认按 UTC 日汇总。每次最多扫描 100000 条、产生 128 组，超过后缩小查询窗口。响应 data 含 from/to、groupBy、retention 和 groups。每组包含记录数、状态/结果/质量/上游完成分类与 tokens；例如 `input: {sum: "123", samples: 2}`。无样本时是 `{sum: null, samples: 0}`，不是零。失败或取消请求的已知消耗仍参与统计，未知路由保留 null 分组。
+usage 接受 from/to、model/provider、clientStream/upstreamMedia 和 `groupBy=none|day|model|provider`，默认按 UTC 日汇总。每次最多扫描 100000 条、产生 128 组，超过后缩小查询窗口。响应 data 含 from/to、groupBy、retention、groups、overall 和 performanceOutcome。每组及 overall 包含记录数、状态/结果/质量/上游完成分类、tokens 和性能统计；例如 `input: {sum: "123", samples: 2}`。无样本时是 `{sum: null, samples: 0}`，不是零。失败或取消请求的已知消耗仍参与统计，未知路由保留 null 分组。
+
+## 性能与生成参数
+
+请求列表展示交付 TTFT、平均输出 TPS 与传输模式；详情展示原生上游/网关交付的首内容和首正文时间、阶段计时、原始与发往上游的参数对照。耗时由单调时钟采集，数据库和详情中的 `*Us` 为整数微秒，界面换算为毫秒。未提供参数与显式 null 分开，未到达发送阶段时整份上游参数为空；不会补供应商默认值。生成内容与凭据不保存，具体参数范围见[设计契约](../design.md#请求性能与参数记录)。
+
+TTFT 只由非空生成内容触发，角色、ID、心跳、usage 和结束标记不触发。上游在脚本改写前观测，下游在最终内容被 HTTP body 消费方取走时观测；网关无法确认客户端实际收到的时间。首正文时间另列，推理内容不会提前触发正文指标。上游 JSON 不提供原生 TTFT；JSON 合成 SSE 的首内容等待标为缓冲交付，详情可看，但不进入原生下游 TTFT 汇总。
+
+平均输出 TPS 是原生 output tokens 除以上游完成耗时，包含首内容等待。生成 TPS 是首末生成内容区间内的估算速率，扣除第一个 token；要求完整原生 SSE、可信用量、单个实际 choice、至少两个独立读取时点及正时间区间。多 choice、单次成批返回、音频或隐藏推理范围不匹配等显示不可计算原因；不会对改写后的正文重新分词或用上游 token 冒充下游生成速率。
+
+`performanceOutcome=success|all|failed|cancelled` 默认 success，仅筛选性能样本，不改变 tokens 的消耗口径。主指标独立返回样本、均值、最小/最大、P50/P95/P99；分位数使用排序后的 nearest-rank，不插值，不平均分组分位数。阶段汇总返回累计、均值和样本；JS 细分的样本是取得该计时的调用数，阶段 wall 的样本是请求数。失败与中断次数可以重叠，各项耗时也可能包含同一时间段，不能直接相加。
+
+清理阶段独立记录 onErrorResponse、onError、onFinish 的执行、跳过和不可用事实。核心结果先冻结，有限清理结束后一次事务提交核心与明细；请求结束时间和核心耗时不包含清理。数据库最终写入自身耗时仅作运行诊断，不追加第二次更新。
 
 初始记录确认提交后才执行生成管线；数据库不能接收记录时拒绝新生成。终态提交失败不改写已经发送的网络结果，可能留下 pending。重启将遗留 pending 标记为 interrupted，不推断成功、结束时间或消耗。记录为 finalized 表示网关管线已终结，不证明客户端收到全部字节。
 

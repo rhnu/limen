@@ -13,8 +13,8 @@ use rusqlite::{Connection, OpenFlags};
 use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
 use crate::{
-    Error, FinalRecord, Health, HealthState, PendingRecord, RequestPage, RequestQuery,
-    RequestRecord, Result, StorageOptions, UsageQuery, UsageSummary, database, query,
+    Error, FinalRecord, Health, HealthState, PendingRecord, RequestDetail, RequestPage,
+    RequestQuery, Result, StorageOptions, UsageQuery, UsageSummary, database, query,
 };
 
 /// Owns startup and bounded shutdown of the shared storage workers.
@@ -66,8 +66,8 @@ enum ReadOperation {
 
 enum ReadResult {
     List(RequestPage),
-    Get(Box<Option<RequestRecord>>),
-    Usage(UsageSummary),
+    Get(Box<Option<RequestDetail>>),
+    Usage(Box<UsageSummary>),
 }
 
 struct ReadCommand {
@@ -357,7 +357,7 @@ impl StorageReader {
         request_id: String,
         deadline: Instant,
         permit: OwnedSemaphorePermit,
-    ) -> Result<Option<RequestRecord>> {
+    ) -> Result<Option<RequestDetail>> {
         match self
             .read(ReadOperation::Get(request_id), deadline, permit)
             .await?
@@ -381,7 +381,7 @@ impl StorageReader {
             .read(ReadOperation::Usage(query), deadline, permit)
             .await?
         {
-            ReadResult::Usage(value) => Ok(value),
+            ReadResult::Usage(value) => Ok(*value),
             _ => Err(Error::Worker),
         }
     }
@@ -594,7 +594,8 @@ fn reader_start(
                     query::get(&connection, &id).map(|record| ReadResult::Get(Box::new(record)))
                 },
                 ReadOperation::Usage(query) => {
-                    query::usage(&mut connection, &query, options, deadline).map(ReadResult::Usage)
+                    query::usage(&mut connection, &query, options, deadline)
+                        .map(|value| ReadResult::Usage(Box::new(value)))
                 },
             }
         })();

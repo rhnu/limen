@@ -49,6 +49,7 @@ impl Gateway {
         lifecycle.input_bytes = bytes.len();
         let (body, stream) = logic::parse_request(&bytes, &self.limits)?;
         drop(decode);
+        lifecycle.client_parameters = limen_storage::project_generation_parameters(&body);
         lifecycle.client_stream = Some(stream);
         Ok(body)
     }
@@ -76,6 +77,7 @@ impl Gateway {
             body = next_body;
         }
         lifecycle.phase = "routing";
+        let routing = lifecycle.statistics.timings.measure(WaitKind::Routing);
         let alias = body
             .get("model")
             .and_then(Value::as_str)
@@ -90,16 +92,23 @@ impl Gateway {
         lifecycle.provider = Some(model.provider.clone());
         lifecycle.configured_model = Some(model.upstream.clone());
         let body = logic::merge_body(provider, model, body)?;
+        drop(routing);
         let (body, url, mut headers) = self.before_send(&route, body, lifecycle).await?;
         lifecycle.phase = "beforeSend";
         lifecycle.step = None;
+        let encode = lifecycle.statistics.timings.measure(WaitKind::Encode);
         let bytes = protocol::encode_request(&body, &mut headers, &self.limits)?;
+        drop(encode);
+        lifecycle.upstream_parameters = Some(limen_storage::project_generation_parameters(&body));
         lifecycle.outbound_bytes = bytes.len();
         lifecycle.final_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
         lifecycle.target = Some(logic::safe_target(&url));
         drop(body);
         lifecycle.phase = "upstream_send";
-        lifecycle.statistics.timings.start_upstream(Instant::now());
+        lifecycle
+            .statistics
+            .timings
+            .start_upstream(lifecycle.started, Instant::now());
         let response = self.transport.send(url, headers, bytes).await?;
         self.receive(&route, response, lifecycle, delivery).await
     }
@@ -114,6 +123,7 @@ impl Gateway {
         let mut headers = logic::outbound_headers(route.provider)?;
         let (provider_steps, model_steps) = route.before_send();
         for step in provider_steps.iter().chain(model_steps) {
+            lifecycle.scope = step.scope;
             let request = RequestDraft {
                 body,
                 url,
@@ -124,7 +134,10 @@ impl Gateway {
                 BeforeSendExecutor::Native(policy) => {
                     lifecycle.phase = "beforeSend";
                     lifecycle.step = Some(step.name.clone());
-                    let measurement = lifecycle.statistics.timings.native("beforeSend");
+                    let measurement = lifecycle
+                        .statistics
+                        .timings
+                        .native_scoped("beforeSend", step.scope);
                     let result = (|| {
                         let mut context = lifecycle.context(HookInput::BeforeSend(request));
                         self.validate_native_draft(&context, "beforeSend", &step.name)?;
@@ -231,7 +244,12 @@ impl Gateway {
         let phase = context.input.phase().as_str();
         lifecycle.phase = phase;
         lifecycle.step = step.map(str::to_owned);
-        let measurement = lifecycle.statistics.timings.hook(phase);
+        let scope = if step.is_none() {
+            limen_storage::PhaseScope::Global
+        } else {
+            lifecycle.scope
+        };
+        let measurement = lifecycle.statistics.timings.hook_scoped(phase, scope);
         let report = self
             .runtime
             .invoke(HookCall {

@@ -55,6 +55,7 @@ fn runtime_defaults_and_bounds_are_enforced() {
         "[storage]\noperation_ms = 49",
         "[storage]\noperation_ms = 10001",
         "[storage]\noperation_ms = 1000\n[limits]\nshutdown_ms = 1000",
+        "[storage]\noperation_ms = 1000\n[limits]\ncleanup_ms = 200\nshutdown_ms = 1200",
         "[log]\nmax_file_bytes = 1048575",
         "[log]\nmax_file_bytes = 268435457",
         "[log]\nmax_files = 0",
@@ -84,6 +85,22 @@ fn runtime_defaults_and_bounds_are_enforced() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn shutdown_reserves_time_for_cleanup_and_final_commit() {
+    let config = ServerConfig::parse(
+        &format!(
+            "{AUTH}\n[storage]\noperation_ms = 1000\n[limits]\ncleanup_ms = 200\nshutdown_ms = 1201"
+        ),
+        ServerFormat::Toml,
+    )
+    .unwrap();
+    assert_eq!(config.limits.shutdown_ms, 1201);
+    let invalid = parse_yaml_config(
+        "auth: {api_key: test-api-key-01234567890123456789}\nstorage: {operation_ms: 1000}\nlimits: {cleanup_ms: 200, shutdown_ms: 1199}",
+    ).err().expect("cleanup and commit exceed shutdown budget");
+    assert_eq!(invalid.field, "storage.operation_ms");
 }
 
 #[test]

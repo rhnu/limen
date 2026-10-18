@@ -99,6 +99,12 @@
           },
           {
             "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/ClientStream"
+          },
+          {
+            "$ref": "#/components/parameters/UpstreamMedia"
           }
         ],
         "responses": {
@@ -246,6 +252,15 @@
           },
           {
             "$ref": "#/components/parameters/GroupBy"
+          },
+          {
+            "$ref": "#/components/parameters/ClientStream"
+          },
+          {
+            "$ref": "#/components/parameters/UpstreamMedia"
+          },
+          {
+            "$ref": "#/components/parameters/PerformanceOutcome"
           }
         ],
         "responses": {
@@ -665,6 +680,36 @@
         "schema": {
           "$ref": "#/components/schemas/LogLevel"
         }
+      },
+      "ClientStream": {
+        "name": "clientStream",
+        "in": "query",
+        "schema": {
+          "type": "boolean"
+        },
+        "description": "Exact original client stream intent. Only true or false."
+      },
+      "UpstreamMedia": {
+        "name": "upstreamMedia",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "json",
+            "sse",
+            "other"
+          ]
+        },
+        "description": "Exact upstream media classification (json/sse/other). Missing response media does not match any selected value."
+      },
+      "PerformanceOutcome": {
+        "name": "performanceOutcome",
+        "in": "query",
+        "schema": {
+          "$ref": "#/components/schemas/PerformanceOutcome",
+          "default": "success"
+        },
+        "description": "Filters only performance and phase samples. Token consumption, request states and outcomes retain all matching requests."
       }
     },
     "responses": {
@@ -1257,24 +1302,27 @@
           },
           "requestMs": {
             "type": [
-              "integer",
+              "number",
               "null"
             ],
             "minimum": 0
           },
           "upstreamHeadersMs": {
             "type": [
-              "integer",
+              "number",
               "null"
             ],
             "minimum": 0
           },
           "firstOutputMs": {
             "type": [
-              "integer",
+              "number",
               "null"
             ],
             "minimum": 0
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/RequestMetrics"
           }
         },
         "required": [
@@ -1309,7 +1357,8 @@
           "outputBytes",
           "requestMs",
           "upstreamHeadersMs",
-          "firstOutputMs"
+          "firstOutputMs",
+          "metrics"
         ],
         "additionalProperties": false,
         "description": "Persisted generation metadata. Nullable fields are always present; unknown results stay null. Finalized does not prove the client received every byte."
@@ -1318,7 +1367,7 @@
         "type": "object",
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/RequestRecord"
+            "$ref": "#/components/schemas/RequestDetail"
           }
         },
         "required": [
@@ -1528,6 +1577,21 @@
           },
           "tokens": {
             "$ref": "#/components/schemas/TokenTotals"
+          },
+          "performance": {
+            "$ref": "#/components/schemas/PerformanceSummary"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhaseAggregate"
+            }
+          },
+          "stages": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DurationAggregate"
+            }
           }
         },
         "required": [
@@ -1537,7 +1601,10 @@
           "outcomes",
           "qualities",
           "upstreamCompleted",
-          "tokens"
+          "tokens",
+          "performance",
+          "phases",
+          "stages"
         ],
         "additionalProperties": false
       },
@@ -1594,6 +1661,12 @@
               "$ref": "#/components/schemas/UsageGroup"
             },
             "maxItems": 128
+          },
+          "overall": {
+            "$ref": "#/components/schemas/UsageGroup"
+          },
+          "performanceOutcome": {
+            "$ref": "#/components/schemas/PerformanceOutcome"
           }
         },
         "required": [
@@ -1601,7 +1674,9 @@
           "to",
           "groupBy",
           "retention",
-          "groups"
+          "groups",
+          "overall",
+          "performanceOutcome"
         ],
         "additionalProperties": false
       },
@@ -1724,7 +1799,9 @@
               "errorResponsePolicySkipped",
               "requestWorkerFailed",
               "fileLoggingFailed",
-              "diagnostic"
+              "diagnostic",
+              "requestPerformance",
+              "requestPersistenceCompleted"
             ]
           },
           "requestId": {
@@ -1886,6 +1963,75 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "configuredUpstreamModel": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "finalUpstreamModel": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamMedia": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "inputBytes": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "outboundBytes": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamBytes": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "outputBytes": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamHeadersMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "scope": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "storageBeginMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "storageFinishMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "preSendMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamElapsedMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "cleanupMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamTtftMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamTtftMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "upstreamFirstTextMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamFirstTextMs": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "averageOutputTps": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "generationTps": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "averageOutputTpsStatus": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "generationTpsStatus": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
+          },
+          "downstreamMode": {
+            "description": "Optional allowlisted diagnostic metadata, retained as JSON."
           }
         },
         "required": [
@@ -2330,6 +2476,964 @@
         },
         "required": [
           "error"
+        ],
+        "additionalProperties": false
+      },
+      "MetricStatus": {
+        "type": "string",
+        "enum": [
+          "available",
+          "not_reached",
+          "not_sse",
+          "incomplete",
+          "missing_usage",
+          "invalid_usage",
+          "multiple_choices",
+          "insufficient_tokens",
+          "insufficient_observations",
+          "zero_duration",
+          "token_scope_mismatch"
+        ]
+      },
+      "DownstreamMode": {
+        "type": "string",
+        "enum": [
+          "native_stream",
+          "buffered",
+          "not_streamed",
+          "not_reached"
+        ]
+      },
+      "PhaseScope": {
+        "type": "string",
+        "enum": [
+          "global",
+          "provider",
+          "model"
+        ]
+      },
+      "PhaseExecutor": {
+        "type": "string",
+        "enum": [
+          "script",
+          "native"
+        ]
+      },
+      "PerformanceOutcome": {
+        "type": "string",
+        "enum": [
+          "all",
+          "success",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "RequestMetrics": {
+        "type": "object",
+        "properties": {
+          "upstreamTtftMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamTtftMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamFirstTextMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamFirstTextMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "averageOutputTps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "generationTps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "averageOutputTpsStatus": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "generationTpsStatus": {
+            "$ref": "#/components/schemas/MetricStatus"
+          },
+          "downstreamMode": {
+            "$ref": "#/components/schemas/DownstreamMode"
+          }
+        },
+        "required": [
+          "upstreamTtftMs",
+          "downstreamTtftMs",
+          "upstreamFirstTextMs",
+          "downstreamFirstTextMs",
+          "averageOutputTps",
+          "generationTps",
+          "averageOutputTpsStatus",
+          "generationTpsStatus",
+          "downstreamMode"
+        ],
+        "additionalProperties": false,
+        "description": "TTFT excludes role-only, usage and control events. Downstream time means body delivery by this gateway, not client network receipt. Buffered delivery is excluded from native downstream TTFT aggregates. TPS values are server-derived; null is not zero."
+      },
+      "RequestTimings": {
+        "type": "object",
+        "properties": {
+          "requestUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "requestDecodeUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "storageBeginUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "preSendUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "routingUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "requestEncodeUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamHeadersWaitUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamFirstByteUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamFirstChunkUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamTotalUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamFirstEventUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamReadWaitUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamQueueWaitUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamDrainUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cleanupUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "required": [
+          "requestUs",
+          "requestDecodeUs",
+          "storageBeginUs",
+          "preSendUs",
+          "routingUs",
+          "requestEncodeUs",
+          "upstreamHeadersWaitUs",
+          "upstreamFirstByteUs",
+          "upstreamFirstChunkUs",
+          "upstreamTotalUs",
+          "downstreamFirstEventUs",
+          "upstreamReadWaitUs",
+          "downstreamQueueWaitUs",
+          "downstreamDrainUs",
+          "cleanupUs"
+        ],
+        "additionalProperties": false,
+        "description": "Monotonic microseconds. Milestones and elapsed spans have separate meanings and cannot all be summed."
+      },
+      "GenerationFacts": {
+        "type": "object",
+        "properties": {
+          "upstreamFirstContentUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamLastContentUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamFirstTextUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamFirstContentUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "downstreamFirstTextUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamContentObservations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "choiceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "observedReasoning": {
+            "type": "boolean"
+          },
+          "observedAudio": {
+            "type": "boolean"
+          },
+          "contentQualified": {
+            "type": "boolean"
+          },
+          "downstreamBuffered": {
+            "type": "boolean"
+          },
+          "finishStop": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishLength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishTool": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishFiltered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishOther": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "upstreamFirstContentUs",
+          "upstreamLastContentUs",
+          "upstreamFirstTextUs",
+          "downstreamFirstContentUs",
+          "downstreamFirstTextUs",
+          "upstreamContentObservations",
+          "choiceCount",
+          "observedReasoning",
+          "observedAudio",
+          "contentQualified",
+          "downstreamBuffered",
+          "finishStop",
+          "finishLength",
+          "finishTool",
+          "finishFiltered",
+          "finishOther"
+        ],
+        "additionalProperties": false
+      },
+      "TimingSample": {
+        "type": "object",
+        "properties": {
+          "totalUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "totalUs",
+          "samples"
+        ],
+        "additionalProperties": false
+      },
+      "PhaseTiming": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PhaseScope"
+          },
+          "executor": {
+            "$ref": "#/components/schemas/PhaseExecutor"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "interruptedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skippedBudgetCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unavailableCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "wallUs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "queue": {
+            "$ref": "#/components/schemas/TimingSample"
+          },
+          "initialCall": {
+            "$ref": "#/components/schemas/TimingSample"
+          },
+          "pending": {
+            "$ref": "#/components/schemas/TimingSample"
+          },
+          "inputBridge": {
+            "$ref": "#/components/schemas/TimingSample"
+          },
+          "outputBridge": {
+            "$ref": "#/components/schemas/TimingSample"
+          }
+        },
+        "required": [
+          "phase",
+          "scope",
+          "executor",
+          "calls",
+          "failedCalls",
+          "interruptedCalls",
+          "reportedCalls",
+          "skippedBudgetCalls",
+          "unavailableCalls",
+          "wallUs",
+          "queue",
+          "initialCall",
+          "pending",
+          "inputBridge",
+          "outputBridge"
+        ],
+        "additionalProperties": false
+      },
+      "DurationAggregate": {
+        "type": "object",
+        "properties": {
+          "sumMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "meanMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "sumMs",
+          "meanMs",
+          "samples"
+        ],
+        "additionalProperties": false
+      },
+      "PhaseAggregate": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PhaseScope"
+          },
+          "executor": {
+            "$ref": "#/components/schemas/PhaseExecutor"
+          },
+          "calls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "interruptedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportedCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skippedBudgetCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unavailableCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "wall": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          },
+          "initialCall": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          },
+          "pending": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          },
+          "inputBridge": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          },
+          "outputBridge": {
+            "$ref": "#/components/schemas/DurationAggregate"
+          }
+        },
+        "required": [
+          "phase",
+          "scope",
+          "executor",
+          "calls",
+          "failedCalls",
+          "interruptedCalls",
+          "reportedCalls",
+          "skippedBudgetCalls",
+          "unavailableCalls",
+          "wall",
+          "queue",
+          "initialCall",
+          "pending",
+          "inputBridge",
+          "outputBridge"
+        ],
+        "additionalProperties": false
+      },
+      "MetricSummary": {
+        "type": "object",
+        "properties": {
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mean": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "p50": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "p95": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "p99": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "required": [
+          "samples",
+          "mean",
+          "min",
+          "max",
+          "p50",
+          "p95",
+          "p99"
+        ],
+        "additionalProperties": false,
+        "description": "Server-computed exact bounded sample statistics. Empty samples have null statistics. Do not average group percentiles."
+      },
+      "PerformanceSummary": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestMs": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "upstreamTtftMs": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "downstreamTtftMs": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "upstreamFirstTextMs": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "downstreamFirstTextMs": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "averageOutputTps": {
+            "$ref": "#/components/schemas/MetricSummary"
+          },
+          "generationTps": {
+            "$ref": "#/components/schemas/MetricSummary"
+          }
+        },
+        "required": [
+          "records",
+          "requestMs",
+          "upstreamTtftMs",
+          "downstreamTtftMs",
+          "upstreamFirstTextMs",
+          "downstreamFirstTextMs",
+          "averageOutputTps",
+          "generationTps"
+        ],
+        "additionalProperties": false
+      },
+      "GenerationParameters": {
+        "type": "object",
+        "additionalProperties": {},
+        "description": "Fixed allowlist projection, bounded to 4 KiB per snapshot. Excludes messages, tools, headers, credentials, stop strings and arbitrary extensions. An omitted field means not recorded, never a default value."
+      },
+      "ParameterSnapshots": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/GenerationParameters"
+          },
+          "upstream": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationParameters"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "client",
+          "upstream"
+        ],
+        "additionalProperties": false
+      },
+      "RequestDetail": {
+        "type": "object",
+        "properties": {
+          "recordId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "UTC RFC3339 timestamp with millisecond precision."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RecordState"
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "success",
+              "failed",
+              "cancelled",
+              null
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorPhase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorStep": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "configuredUpstreamModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finalUpstreamModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clientStream": {
+            "type": "boolean"
+          },
+          "upstreamStatus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "upstreamMedia": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstreamCompleted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "inputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "totalTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "cachedInputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "reasoningOutputTokens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "usageSource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usageQuality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "missing",
+              "partial",
+              "reported",
+              "invalid",
+              "conflicting",
+              null
+            ]
+          },
+          "inputBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outboundBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "upstreamBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "outputBytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+$",
+            "description": "Unsigned decimal string; preserves integer precision. Null means unknown, not zero."
+          },
+          "requestMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "upstreamHeadersMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "firstOutputMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/RequestMetrics"
+          },
+          "timings": {
+            "$ref": "#/components/schemas/RequestTimings"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationFacts"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhaseTiming"
+            }
+          },
+          "parameters": {
+            "$ref": "#/components/schemas/ParameterSnapshots"
+          }
+        },
+        "required": [
+          "recordId",
+          "requestId",
+          "runId",
+          "startedAt",
+          "finishedAt",
+          "state",
+          "outcome",
+          "errorCode",
+          "errorPhase",
+          "errorStep",
+          "model",
+          "provider",
+          "configuredUpstreamModel",
+          "finalUpstreamModel",
+          "clientStream",
+          "upstreamStatus",
+          "upstreamMedia",
+          "upstreamCompleted",
+          "inputTokens",
+          "outputTokens",
+          "totalTokens",
+          "cachedInputTokens",
+          "reasoningOutputTokens",
+          "usageSource",
+          "usageQuality",
+          "inputBytes",
+          "outboundBytes",
+          "upstreamBytes",
+          "outputBytes",
+          "requestMs",
+          "upstreamHeadersMs",
+          "firstOutputMs",
+          "metrics",
+          "timings",
+          "generation",
+          "phases",
+          "parameters"
         ],
         "additionalProperties": false
       }

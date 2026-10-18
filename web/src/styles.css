@@ -923,3 +923,24 @@ tbody tr:hover {
         scroll-behavior: auto !important;
     }
 }
+
+.metric-note {
+    margin: 22px 0 0;
+    line-height: 1.7;
+}
+.parameter-table td {
+    max-width: 380px;
+    overflow-wrap: anywhere;
+}
+
+.group-performance {
+    padding: 14px 0;
+    border-top: 1px solid var(--line);
+}
+.group-performance:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+}
+.group-performance:last-child {
+    padding-bottom: 0;
+}

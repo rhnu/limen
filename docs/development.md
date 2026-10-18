@@ -46,6 +46,8 @@ cargo xtask test --isolated --list
 cargo xtask test --isolated
 # 统一正文阶段的真实增量交付与截断边界
 cargo xtask test --isolated http/content-transform
+# 首内容识别、真实交付、参数与阶段落库、重启及取消
+cargo xtask test --isolated http/performance
 # 脚本 JSON 深度边界与原生线程栈预算
 cargo xtask test --isolated runtime/json-depth-startup runtime/json-depth-hook runtime/stack-limit
 # Windows 后代进程退出、独占文件句柄与取消后的清理

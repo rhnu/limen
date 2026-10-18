@@ -90,7 +90,7 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 `onErrorResponse`、错误写出、`onError` 和 `onFinish` 共享有限清理预算。错误响应策略逐次原子提交正文、状态、头、state 和观测；失败后停止当前适配链，保留主错误及最后有效响应，不递归处理。`onError`、`onFinish` 只观察已确定的终态，不能覆盖结果；VM 已不可用时不能承诺执行这些 hook。
 
-原生用量在脚本改写前提取，来源、计数质量和上游完成事实分别保留。请求统计在终态冻结，日志、观察上下文和离线断言使用同一份数据。耗时区分队列、初次调用、Promise 等待和桥接；共享微任务不能被当成某个请求的 CPU 时间。取消保留已等待的 wall 时间，未取得的细分用样本数表达，清理阶段不回写冻结的请求统计。
+原生用量在脚本改写前提取，来源、计数质量和上游完成事实分别保留。核心统计在推理终态冻结，日志、观察上下文和离线断言使用同一份数据；清理另行计时，不回写核心结果。数据库保存类型化计时、生成参数投影和固定阶段汇总，指标口径见[请求性能与参数记录](#请求性能与参数记录)。耗时区分队列、初次调用、Promise 等待和桥接；共享微任务不能被当成某个请求的 CPU 时间。取消保留已等待的 wall 时间，未取得的细分用样本数表达。
 
 受控观测只接受服务配置注册的事件名。每次 hook 先积累私有候选批次，经网关阶段校验后与状态一起提交；有效策略拒绝也提交，失败或失效调用不提交。事件只带 ID 跨线程，终结时由 Rust 补充关联元数据、聚合次数并输出。每调用与每请求均有容量限制，溢出只丢弃观测；观察 hook 的批次仍受共享清理预算约束。
 
@@ -202,16 +202,16 @@ timeout_ms = 2000
 
 省略 storage/log/management 的可选字段时采用上例默认值。保留现有 `[limits]`、`[script_context]` 和 `[observability]`；密钥不属于可被脚本读取的客户端头或上下文。
 
-| 字段                     | 可接受范围                               |
-| ------------------------ | ---------------------------------------- |
-| `storage.retention_days` | 1–3650 天                                |
-| `storage.max_records`    | 1000–10000000，且大于生成并发数          |
-| `storage.max_db_bytes`   | 64 MiB–64 GiB，4096 字节的整数倍         |
-| `storage.operation_ms`   | 50–10000 ms，且小于 `limits.shutdown_ms` |
-| `log.max_file_bytes`     | 1–256 MiB                                |
-| `log.max_files`          | 1–32 个备份文件                          |
-| `management.concurrency` | 1–16                                     |
-| `management.timeout_ms`  | 100–10000 ms                             |
+| 字段                     | 可接受范围                                      |
+| ------------------------ | ----------------------------------------------- |
+| `storage.retention_days` | 1–3650 天                                       |
+| `storage.max_records`    | 1000–10000000，且大于生成并发数                 |
+| `storage.max_db_bytes`   | 64 MiB–64 GiB，4096 字节的整数倍                |
+| `storage.operation_ms`   | 50–10000 ms，与 cleanup_ms 之和小于 shutdown_ms |
+| `log.max_file_bytes`     | 1–256 MiB                                       |
+| `log.max_files`          | 1–32 个备份文件                                 |
+| `management.concurrency` | 1–16                                            |
+| `management.timeout_ms`  | 100–10000 ms                                    |
 
 目录路径不得为空；相对路径以选定服务配置文件的父目录为基准。config、data、logs 解析到的目录必须分离，不能相同或互相包含，防止清理与权限作用域混淆。`serve` 创建缺失的 data/logs 目录，但不创建示例配置、不改 owner/group；现有路径和权限不满足要求则报错。
 
@@ -257,26 +257,48 @@ timeout_ms = 2000
 
 使用 WAL、`synchronous=FULL`、4096 字节页和单实例数据目录；不支持 NFS/SMB 等网络共享存储。启动持有 `limen.lock` 的操作系统排他文件锁至连接全部结束，采用标准库 `File::try_lock`；文件存在本身不代表锁被占用，不按 PID 猜测或删除锁来接管实例。[SQLite WAL](https://www.sqlite.org/wal.html)、[Rust 文件锁](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock)
 
-库不存在时在事务内创建当前 schema；已有库通过固定 application ID 和 `user_version` 校验，错误、损坏或版本不匹配均启动失败。不静默删库，不把“无法识别”当作空库。重构阶段改变不兼容 schema 就递增内部版本，由开发者显式重建数据。首个恢复部署版本所使用的 schema 成为受支持基线；之后遇到真实升级需求再提供对应向前迁移，不回补重构历史、不预建迁移框架。
+库不存在时在事务内创建当前 schema；当前 `user_version = 2`。已有库通过固定 application ID 和 `user_version` 校验，错误、损坏或版本不匹配均启动失败。不静默删库，不把“无法识别”当作空库。重构阶段改变不兼容 schema 就递增内部版本，由开发者显式重建数据。首个恢复部署版本所使用的 schema 成为受支持基线；之后遇到真实升级需求再提供对应向前迁移，不回补重构历史、不预建迁移框架。
 
-主表为 `requests`，没有日志表、密钥表、脚本表或预聚合表。请求 ID 为 `limen-r-{run_id}-{sequence}`，管理请求与日志分别使用 `limen-m-`、`limen-l-` 前缀和独立序号；run ID 是 UUID v4，不使用凭据或客户端输入生成 ID。数据库另有自增且不复用的 `record_id`，供分页与保留排序使用。
+主表为 `requests`，计时与阶段明细按请求关联；没有日志表、密钥表、脚本表或预聚合表。请求 ID 为 `limen-r-{run_id}-{sequence}`，管理请求与日志分别使用 `limen-m-`、`limen-l-` 前缀和独立序号；run ID 是 UUID v4，不使用凭据或客户端输入生成 ID。数据库另有自增且不复用的 `record_id`，供分页与保留排序使用。
 
-| 列组       | 确定内容                                                                                                                             |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 身份       | `record_id`、唯一 `request_id`、`run_id`                                                                                             |
-| 时间       | `started_at_ms`、可空 `finished_at_ms`；UTC Unix 毫秒，耗时来自单调时钟，不用墙钟相减                                                |
-| 记录状态   | `state = pending / finalized / interrupted`                                                                                          |
-| 管线结果   | 可空 `outcome = success / failed / cancelled`，可空受控 `error_code / error_phase / error_step`                                      |
-| 路由       | 可空 `model / provider / configured_upstream_model / final_upstream_model`                                                           |
-| 上游事实   | `client_stream`，可空 `upstream_status / upstream_media / upstream_completed`；媒体类型只保存规范化类型，不存原始头                  |
-| 原生 usage | 五个可空 token 计数，以及可空 `usage_source / usage_quality`                                                                         |
-| 摘要       | `input_bytes / outbound_bytes / upstream_bytes / output_bytes`、`request_ms / upstream_headers_ms / first_output_ms`，未取得的值为空 |
+| 列组       | 确定内容                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| 身份       | `record_id`、唯一 `request_id`、`run_id`                                                                            |
+| 时间       | `started_at_ms`、可空 `finished_at_ms`；UTC Unix 毫秒，耗时来自单调时钟，不用墙钟相减                               |
+| 记录状态   | `state = pending / finalized / interrupted`                                                                         |
+| 管线结果   | 可空 `outcome = success / failed / cancelled`，可空受控 `error_code / error_phase / error_step`                     |
+| 路由       | 可空 `model / provider / configured_upstream_model / final_upstream_model`                                          |
+| 上游事实   | `client_stream`，可空 `upstream_status / upstream_media / upstream_completed`；媒体类型只保存规范化类型，不存原始头 |
+| 原生 usage | 五个可空 token 计数，以及可空 `usage_source / usage_quality`                                                        |
+| 摘要       | 四类字节数、类型化微秒计时与生成观测事实；缺失值为空，性能摘要由统一函数派生                                        |
+| 参数       | 客户端原始值与实际发往上游的生成参数白名单投影，保留缺省与显式 null 的区别                                          |
+| 阶段       | 按固定阶段、global/provider/model scope 与 JS/native 执行器聚合的调用、耗时及样本                                   |
 
-`pending` 初始行仅有身份、开始时间、原始客户端 stream 和已读入站字节。终态提交一次性补齐允许字段并改为 finalized；finished 时间与 outcome 表示网关管线终态，不证明客户端已经收到所有字节。启动取得独占锁后，将遗留 pending 分批改为 interrupted，不伪造结束时间、结果、用量质量或上游完成事实。状态只允许 pending → finalized/interrupted；不使用覆盖式 upsert 隐藏重复终结，冲突返回受控存储错误。
+`pending` 初始行仅有身份、开始时间、原始客户端 stream、已读入站字节与客户端生成参数投影。终态提交一次性补齐允许字段并改为 finalized；finished 时间与 outcome 表示网关管线终态，不证明客户端已经收到所有字节。启动取得独占锁后，将遗留 pending 分批改为 interrupted，不伪造结束时间、结果、用量质量或上游完成事实。状态只允许 pending → finalized/interrupted；不使用覆盖式 upsert 隐藏重复终结，冲突返回受控存储错误。
 
-字符串列沿用业务标识约束；可能由 hook 改写的最终模型限定为 1024 字节，不符合时在对应草稿提交处拒绝。受控记录总编码上限 16 KiB，不存正文、完整 URL、任意请求头、原始 query、异常文案、`ctx.state` 或整个统计 JSON。上述列是持久化摘要；更细的已有 hook 耗时仍可由离线断言和安全诊断观察，不为落库复制整棵运行状态。
+字符串列沿用业务标识约束；可能由 hook 改写的最终模型限定为 1024 字节，不符合时在对应草稿提交处拒绝。主记录、参数与阶段 DTO 共享 64 KiB 编码额度，参数每份最多 4 KiB，阶段只接受固定维度且最多 60 项，不随 token、事件或 step 数增加记录。数据库不存正文、完整 URL、任意请求头、原始 query、异常文案、`ctx.state` 或整个运行状态 JSON。参数 JSON 只承载经类型与容量校验的固定投影。
 
 初始索引是唯一 request ID、`(started_at_ms, record_id)`、`(model, started_at_ms, record_id)`、`(provider, started_at_ms, record_id)`；状态和结果在有界时间查询中筛选，不为每种组合建索引。存储 DTO 使用类型化字段，SQL 参数绑定，API 参数不能成为 SQL 片段。
+
+#### 请求性能与参数记录
+
+本节为已确认并实现的契约。记录范围沿用通过认证、并发准入和结构校验的 Chat 生成请求；失败、取消和截断也保留已取得的性能事实。
+
+原始参数在请求解析后、onRequest 前取得，随 pending 提交；发出参数在 defaults 和全部 beforeSend 完成且编码成功后取得，未到达发送阶段时整个发出快照为空。投影保存模型、stream、temperature、top_p、n、max_tokens、max_completion_tokens、penalty、seed、logprobs、top_logprobs、parallel_tool_calls、reasoning_effort、verbosity、service_tier、modalities 等明确控制项，以及 response_format 类型、tool_choice 模式和工具数量。缺省不补供应商默认值。messages、prompt、图音频、工具定义/参数、schema、stop 字符串、任意 metadata 和凭据不保存；内容型参数只可保存是否设置或数量摘要。非法或未知投影值不得影响原有请求成功语义，也不能借同名字段保存任意对象或文本。
+
+耗时以单调时钟测量并保存整数微秒，墙钟仍用 UTC 毫秒。核心保存请求总耗时、请求读取与校验、初始落库、发送前处理、上游响应头/首字节/首事件/完成，以及上游读取、下游队列和排空等等待；清理独立保存。里程碑与阶段执行累计可能包含同一段时间，不能堆叠为可相加总耗时。网关不声称能测得模型内部排队、prefill、decode 或客户端网络接收时间。
+
+上游 TTFT 是上游发送至首个非空生成内容的观测时间，发生在脚本改写前；网关交付 TTFT 是请求处理开始至最终生成内容被 HTTP body 消费方取走的时间。正文、推理、拒绝文本、工具名称/参数及音频数据可触发；角色、ID、usage、心跳、空增量和结束标记不能触发。另存首个正文文本时间，以区分开始推理与开始回答。同一次网络读取中的多个事件共享读取时点，不将 hook 或逐事件处理时间伪造成生成间隔。
+
+上游 JSON 没有原生 token 时序，不推测上游 TTFT 或流式生成 TPS。JSON 合成 SSE 的下游首内容等待标为缓冲交付，并与原生流分开汇总；SSE 聚合 JSON 仍保留上游观测。请求级 TTFT 取任一实际 choice 的首内容，不用请求 n 推断实际 choice 数。
+
+平均输出 TPS 为原生上游已知 output tokens 除以上游调用完成耗时，包含首内容等待。流式生成 TPS 以 `(outputTokens - 1) / (lastContent - firstContent)` 估算，要求完整原生流、可信输出计数、单个实际 choice、至少两个独立读取时点、输出大于一个 token 且区间为正；隐藏推理或音频导致 token 范围无法对齐时不计算。脚本改写后不使用上游 token 数冒充下游 TPS，不引入 tokenizer 估算。各指标独立判断样本资格，未达到、不适用、未完成、无用量及范围不匹配保留可解释状态，不填零。
+
+阶段以 phase、global/provider/model scope 和 script/native executor 聚合，保存调用、失败、中断、已报告数及 wall 时间。JS 另存 queue、initialCall、pending、inputBridge、outputBridge 的累计时间与独立样本数；wall 不是 CPU 时间，细项不能当作互斥分段。onErrorResponse、onError、onFinish 使用独立清理计时，并区分执行、预算耗尽、VM 不可用及中断；停止等待不表示 Promise 已停止。
+
+请求列表只返回性能摘要；详情另返回参数对照、整数微秒计时与阶段明细。管理用量汇总同时返回服务端 overall 和每组 performance，性能样本默认 success，可选择 all/failed/cancelled，不能改变 usage 对全部已知消耗的统计。主指标返回 samples、mean、min、max、P50/P95/P99，采用明确的精确分位数规则；阶段返回累计、均值与样本。无样本为 null，零样本不能伪装成零耗时。分组分位数不由前端再次平均，缓冲交付不混入原生流 TTFT 样本。
+
+聚合保留 31 天、100000 请求、128 组、管理期限及响应大小边界。精确分位数的样本数组按固定指标数和扫描上限显式限量，查询只投影需要的列，不加载参数与逐请求阶段详情；排序与聚合受相同期限约束。列表与用量支持区分客户端 stream 和实际上游 JSON/SSE。请求详情的时间线、阶段表和参数表沿用管理页面风格，缺失值与指标解释贴近对应字段。
 
 #### usage 口径
 
@@ -299,15 +321,15 @@ WAL 自动 checkpoint 阈值为 1000 页，复用后保留目标为 16 MiB。`jo
 ```text
 HTTP 分派 → apiKey 认证 → 生成并发许可 → 有界请求校验
   → pending 提交确认 → onRequest → 一次路由 → 原有生成管线
-  → 冻结统计与管线结果
-      ├─ 终态持久化（storage.operation_ms）
-      └─ 响应/错误适配及观察 hook（原有 cleanup_ms）
-  → 两支均结束或到期 → 释放生成许可
+  → 冻结核心统计、结束时间与管线结果
+  → 响应/错误适配及观察 hook，独立清理计时（cleanup_ms）
+  → 一次事务提交核心与清理明细（storage.operation_ms）
+  → 提交确认或到期 → 释放生成许可
 ```
 
 这里只接纳通过认证、并发准入、媒体类型和请求结构校验的 Chat 生成请求。其他请求不建立 usage 行；`onRequest` 拒绝、未知模型、上游错误、取消与截断仍有终态记录。初始写入确认前不执行 hook、不发送上游；过期后收到确认也不能恢复请求。`GET /v1/models` 仅需 apiKey 和已加载业务配置，不依赖数据库健康，不执行生成 hook。
 
-初始写入等待使用 `min(剩余请求时间, storage.operation_ms)`；冻结时的请求耗时包含这一等待。提交期间客户端断开或服务取消不会丢弃确认等待；有界确认完成后先复核取消与期限，已取消只记录终态，不进入生成管线，不能把正常取消误判为数据库故障。冻结后在同一受跟踪请求任务内并行等待 owned 终态写入与原有响应清理，不产生脱管后台任务。两支各用自己的预算，持久化不抢占当前默认仅 100 ms 的观察清理时间；它也不依赖 `onFinish` 成功或 VM 存活。清理耗时不回写冻结统计。
+初始写入等待使用 `min(剩余请求时间, storage.operation_ms)`；冻结时的请求耗时包含这一等待。提交期间客户端断开或服务取消不会丢弃确认等待；有界确认完成后先复核取消与期限，已取消只记录终态，不进入生成管线，不能把正常取消误判为数据库故障。冻结后先捕获 owned 核心终态，成功响应保持原交付时机；错误仍先执行有界错误适配再交付。清理使用原有共享绝对期限，结束或到期后执行唯一终态事务，原结束时间、结果和用量不被清理覆盖；VM 不可用或观察 hook 失败也必须提交已有记录。不追加补写或等待迟到 Promise。尾部预算为 cleanup_ms 加 storage.operation_ms，shutdown_ms 应为两者及排空留余量；超预算沿用有限关闭失败和 pending 恢复语义。最终事务自身的确认耗时只作诊断，不回写自身记录。
 
 | 条件                                   | 行为                                                                                         |
 | -------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -378,7 +400,7 @@ config 的 `section` 为 `server`（默认）、`models` 或 `providers`。serve
 
 #### 请求查询
 
-from/to 是 RFC3339 时间，采用 `[from, to)`，要求 from 小于 to，按请求开始时间归属；二者都省略时取最近 24 小时，否则必须同时提供，最大跨度 31 天。额外过滤项只有 `model`、`provider`、`state`、`outcome`，各接受单值精确匹配；不支持正则、通配或自由排序。字段缺省意味着不筛选，未知/重复参数、非法枚举直接 400。
+from/to 是 RFC3339 时间，采用 `[from, to)`，要求 from 小于 to，按请求开始时间归属；二者都省略时取最近 24 小时，否则必须同时提供，最大跨度 31 天。额外过滤项为 `model`、`provider`、`state`、`outcome`、`clientStream` 和 `upstreamMedia`，各接受单值精确匹配；clientStream 为 true/false，upstreamMedia 为 json/sse/other。不支持正则、通配或自由排序。字段缺省意味着不筛选，未知/重复参数、非法枚举直接 400。
 
 列表默认 50 条、最多 100，按 `(started_at_ms, record_id)` 倒序；先达到 1 MiB 响应上限时缩短本页并保留 nextCursor。首个页面保存 record ID 上界，后页排除新插入记录；游标同时绑定已解析的时间窗口、有效过滤条件和最后排序位置。后页可仅传 cursor 与 limit，若重复给过滤项则必须与游标一致，不能重新计算“最近 24 小时”。每页是独立读取，不跨请求持有事务；期间终态更新、保留清理可能使结果变化，不承诺跨页历史快照。request ID 查询不受默认时间窗口限制。
 
@@ -386,11 +408,11 @@ from/to 是 RFC3339 时间，采用 `[from, to)`，要求 from 小于 to，按�
 
 #### usage 汇总
 
-from/to、model、provider 与请求列表相同；默认最近 24 小时，最大 31 天。`groupBy` 仅支持 `none / day / model / provider`，默认 day，每次只能选一个维度，day 按 UTC 日边界；不按请求成功与否默认过滤。未知路由为 null 分组，不丢弃这类记录。
+from/to、model、provider、clientStream、upstreamMedia 与请求列表相同；默认最近 24 小时，最大 31 天。`groupBy` 仅支持 `none / day / model / provider`，默认 day，每次只能选一个维度，day 按 UTC 日边界。用量不按请求成功与否默认过滤；`performanceOutcome = success / all / failed / cancelled` 仅筛选性能样本，默认 success。未知路由为 null 分组，不丢弃这类记录。
 
-每次最多扫描 100000 条匹配记录、最多 128 组。读取在单个只读事务内逐行处理，Rust 侧只保留有界分组计数；超过任一上限返回 422，用户可缩小窗口，不自动分片或后台重试。SQL 和聚合循环共享该管理请求的剩余期限。
+每次最多扫描 100000 条匹配请求、6000000 条固定阶段明细、最多 128 组。读取在单个只读事务内分两次有界扫描，不逐请求追加查询；Rust 侧保留固定分组计数及七个主指标的精确样本数组。overall 与分组合计最多 1400000 个浮点样本，数据约 11.2 MB，Vec 扩容容量另按小于约 22.4 MB 加固定分组结构预算。超过条数或组数上限返回 422，用户可缩小窗口，不自动分片或后台重试。SQL、聚合与排序共享该管理请求的剩余期限，超时不返回部分结果。
 
-响应 data 含 `from / to / groupBy / retention / groups`。retention 返回保留策略与当前最早保留开始时间，不承诺其之前的完整性。每组含 `key / records / states / outcomes / qualities / upstreamCompleted / tokens`；后五者按固定枚举统计，未知与缺失独立表达。tokens 每项形如 `input: {sum: "123", samples: 2}`，无样本为 `{sum: null, samples: 0}`。pending/interrupted 计入 records 和 states，终态才计入 outcome/quality，未知上游完成单独计数。
+响应 data 含 `from / to / groupBy / retention / groups / overall / performanceOutcome`。retention 返回保留策略与当前最早保留开始时间，不承诺其之前的完整性。每组及 overall 含 `key / records / states / outcomes / qualities / upstreamCompleted / tokens / performance / stages / phases`。用量分类按固定枚举统计，未知与缺失独立表达；性能结果筛选不影响用量。tokens 每项形如 `input: {sum: "123", samples: 2}`，无样本为 `{sum: null, samples: 0}`。pending/interrupted 计入 records 和 states，终态才计入 outcome/quality，未知上游完成单独计数。性能分位数采用 nearest-rank，即排序后第 ceil(p × samples) 个真实样本，不插值。
 
 #### 日志检视
 

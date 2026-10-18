@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, time::Instant};
 use limen_chat::{NativeContentError, NativeContentLimits, NativeContentTemplate};
 use limen_config::{BusinessConfig, ConfigError, Model, PipelineStep, Provider, ResourceLimits};
 use limen_script::HookId;
+use limen_storage::PhaseScope;
 
 use super::native::NativeBeforeSend;
 
@@ -19,9 +20,12 @@ pub(crate) enum Error {
 }
 
 pub(super) struct Step<T> {
+    pub scope: PhaseScope,
     pub name: String,
     pub executor: T,
 }
+
+type ScriptSteps<'a> = (&'a [Step<HookId>], &'a [Step<HookId>]);
 
 pub(super) enum BeforeSendExecutor {
     Script(HookId),
@@ -60,7 +64,7 @@ impl ExecutionPlans {
         observation_names: &[String],
         deadline: Instant,
     ) -> Result<Self, Error> {
-        let compile = |steps: &[PipelineStep]| {
+        let compile = |steps: &[PipelineStep], scope: PhaseScope| {
             let mut plan = PipelinePlan::default();
             for step in steps {
                 active(deadline)?;
@@ -68,6 +72,7 @@ impl ExecutionPlans {
                     let stages = policy.stages();
                     if let Some(policy) = stages.before_send {
                         plan.before_send.push(Step {
+                            scope,
                             name: step.name.clone(),
                             executor: BeforeSendExecutor::Native(NativeBeforeSend::compile(
                                 policy,
@@ -94,6 +99,7 @@ impl ExecutionPlans {
                             }
                         })?;
                         plan.content.push(Step {
+                            scope,
                             name: step.name.clone(),
                             executor: ContentExecutor::Native(template),
                         });
@@ -101,12 +107,14 @@ impl ExecutionPlans {
                 } else {
                     if let Some(hook) = step.before_send {
                         plan.before_send.push(Step {
+                            scope,
                             name: step.name.clone(),
                             executor: BeforeSendExecutor::Script(hook),
                         });
                     }
                     if let Some(hook) = step.on_content {
                         plan.content.push(Step {
+                            scope,
                             name: step.name.clone(),
                             executor: ContentExecutor::Script(hook),
                         });
@@ -120,6 +128,7 @@ impl ExecutionPlans {
                     ] {
                         if let Some(hook) = hook {
                             stage.push(Step {
+                                scope,
                                 name: step.name.clone(),
                                 executor: hook,
                             });
@@ -133,12 +142,19 @@ impl ExecutionPlans {
             providers: config
                 .providers
                 .iter()
-                .map(|(name, provider)| Ok((name.clone(), compile(&provider.pipeline)?)))
+                .map(|(name, provider)| {
+                    Ok((
+                        name.clone(),
+                        compile(&provider.pipeline, PhaseScope::Provider)?,
+                    ))
+                })
                 .collect::<Result<_, Error>>()?,
             models: config
                 .models
                 .iter()
-                .map(|(name, model)| Ok((name.clone(), compile(&model.pipeline)?)))
+                .map(|(name, model)| {
+                    Ok((name.clone(), compile(&model.pipeline, PhaseScope::Model)?))
+                })
                 .collect::<Result<_, Error>>()?,
             on_request: config.on_request,
             on_error_response: config.on_error_response,
@@ -147,6 +163,17 @@ impl ExecutionPlans {
         };
         active(deadline)?;
         Ok(plans)
+    }
+
+    pub(super) fn error_response_steps(
+        &self,
+        provider: &str,
+        alias: &str,
+    ) -> Option<ScriptSteps<'_>> {
+        Some((
+            &self.providers.get(provider)?.error_response,
+            &self.models.get(alias)?.error_response,
+        ))
     }
 
     /// Routing looks up each half once; all later phases borrow the same pair.
@@ -225,13 +252,6 @@ impl RoutePlan<'_> {
         (
             &self.provider_plan.stream_event,
             &self.model_plan.stream_event,
-        )
-    }
-
-    pub fn error_response(&self) -> (&[Step<HookId>], &[Step<HookId>]) {
-        (
-            &self.provider_plan.error_response,
-            &self.model_plan.error_response,
         )
     }
 }

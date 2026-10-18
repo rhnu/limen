@@ -51,6 +51,58 @@ fn usage_has_one_dimension_and_no_success_filter() {
     let query = usage(&parameters("groupBy=provider").unwrap()).unwrap();
     assert_eq!(query.group_by, GroupBy::Provider);
     assert!(query.filter.outcome.is_none());
+    assert_eq!(query.performance_outcome, PerformanceOutcome::Success);
     assert!(usage(&parameters("state=finalized").unwrap()).is_err());
     assert!(usage(&parameters("groupBy=day,model").unwrap()).is_err());
+}
+
+#[test]
+fn transport_filters_and_performance_outcome_are_independent() {
+    let query = usage(
+        &parameters("clientStream=false&upstreamMedia=json&performanceOutcome=cancelled").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(query.filter.client_stream, Some(false));
+    assert_eq!(query.filter.upstream_media.as_deref(), Some("json"));
+    assert_eq!(query.performance_outcome, PerformanceOutcome::Cancelled);
+    assert!(query.filter.outcome.is_none());
+    for raw in [
+        "clientStream=0",
+        "clientStream=True",
+        "upstreamMedia=application/json",
+        "performanceOutcome=pending",
+    ] {
+        assert!(usage(&parameters(raw).unwrap()).is_err());
+    }
+    assert!(requests(&parameters("performanceOutcome=failed").unwrap(), "run").is_err());
+}
+
+#[test]
+fn cursor_keeps_transport_filters_and_rejects_changes() {
+    let (request, _) = requests(
+        &parameters("clientStream=true&upstreamMedia=sse").unwrap(),
+        "run",
+    )
+    .unwrap();
+    let encoded = encode(&RequestCursor {
+        version: 1,
+        run_id: "run".into(),
+        filter: request.filter.clone(),
+        high_watermark: 1,
+        position: Position {
+            record_id: 1,
+            started_at_ms: request.filter.from_ms,
+        },
+    })
+    .unwrap();
+    let page = vec![("cursor".into(), encoded)];
+    assert_eq!(requests(&page, "run").unwrap().0.filter, request.filter);
+    for (key, value) in [("clientStream", "false"), ("upstreamMedia", "json")] {
+        let mut changed = page.clone();
+        changed.push((key.into(), value.into()));
+        assert!(matches!(
+            requests(&changed, "run"),
+            Err(Error::InvalidQuery)
+        ));
+    }
 }

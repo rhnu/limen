@@ -94,3 +94,56 @@ fn whitelist_rejects_body_and_dynamic_messages_before_queueing() {
         chrono::DateTime::parse_from_rfc3339(records[0]["timestamp"].as_str().unwrap()).is_ok()
     );
 }
+
+#[test]
+fn request_metadata_and_performance_survive_the_shared_encoder() {
+    let capture = Capture::default();
+    let (layer, guards) = LogLayer::capture(capture.clone());
+    let subscriber = tracing_subscriber::registry().with(layer);
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(
+            request_id = "limen-r-test-2",
+            configured_model = "configured",
+            final_model = "sent",
+            upstream_media = "sse",
+            input_bytes = 42_u64,
+            outbound_bytes = 45_u64,
+            upstream_bytes = 120_u64,
+            output_bytes = 90_u64,
+            authorization = "private-credential",
+            body = "private-content",
+            "request finished"
+        );
+        tracing::info!(
+            request_id = "limen-r-test-2",
+            upstream_ttft_ms = 12.25_f64,
+            downstream_ttft_ms = 14.5_f64,
+            average_output_tps = 30f64,
+            generation_tps_status = "insufficient_observations",
+            downstream_mode = "native_stream",
+            "request performance"
+        );
+    });
+    drop(guards);
+    let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(!output.contains("private-"));
+    let records: Vec<serde_json::Value> = output
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records[0]["configuredUpstreamModel"], "configured");
+    assert_eq!(records[0]["finalUpstreamModel"], "sent");
+    assert_eq!(records[0]["upstreamMedia"], "sse");
+    assert_eq!(records[0]["inputBytes"], 42);
+    assert_eq!(records[0]["outboundBytes"], 45);
+    assert_eq!(records[0]["upstreamBytes"], 120);
+    assert_eq!(records[0]["outputBytes"], 90);
+    assert_eq!(records[1]["event"], "requestPerformance");
+    assert_eq!(records[1]["upstreamTtftMs"], 12.25);
+    assert_eq!(records[1]["downstreamTtftMs"], 14.5);
+    assert_eq!(records[1]["averageOutputTps"], 30.0);
+    assert_eq!(
+        records[1]["generationTpsStatus"],
+        "insufficient_observations"
+    );
+}

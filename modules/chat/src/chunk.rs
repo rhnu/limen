@@ -173,14 +173,20 @@ pub(crate) fn generation_choice(choice: &Value) -> bool {
 /// Bounded per-choice completion state, independent of transfer and aggregation.
 pub struct ChunkTracker {
     choices: BTreeMap<u64, Option<String>>,
+    finishes: FinishCounts,
     max_choices: usize,
     failed: bool,
 }
 
 impl ChunkTracker {
+    pub fn finish_counts(&self) -> FinishCounts { self.finishes }
+
+    pub fn choice_count(&self) -> usize { self.choices.len() }
+
     pub fn new(max_choices: usize) -> Self {
         Self {
             choices: BTreeMap::new(),
+            finishes: FinishCounts::default(),
             max_choices,
             failed: false,
         }
@@ -218,8 +224,9 @@ impl ChunkTracker {
             if !self.choices.contains_key(&index) && self.choices.len() >= self.max_choices {
                 return Err(Error::ChoiceLimit);
             }
-            self.choices
-                .insert(index, choice["finish_reason"].as_str().map(str::to_owned));
+            let finish = choice["finish_reason"].as_str();
+            self.finishes.observe(finish);
+            self.choices.insert(index, finish.map(str::to_owned));
         }
         Ok(())
     }
@@ -236,6 +243,43 @@ impl ChunkTracker {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Fixed finish categories contain no provider-specific reason strings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FinishCounts {
+    pub stop: u64,
+    pub length: u64,
+    pub tool: u64,
+    pub filtered: u64,
+    pub other: u64,
+}
+
+impl FinishCounts {
+    /// Complete JSON is an open object; absent or malformed fields stay unobserved.
+    pub fn from_response(value: &Value) -> Self {
+        let mut counts = Self::default();
+        if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+            for choice in choices {
+                counts.observe(choice.get("finish_reason").and_then(Value::as_str));
+            }
+        }
+        counts
+    }
+
+    fn observe(&mut self, reason: Option<&str>) {
+        let Some(reason) = reason else {
+            return;
+        };
+        let count = match reason {
+            "stop" => &mut self.stop,
+            "length" => &mut self.length,
+            "tool_calls" | "function_call" => &mut self.tool,
+            "content_filter" => &mut self.filtered,
+            _ => &mut self.other,
+        };
+        *count = count.saturating_add(1);
     }
 }
 

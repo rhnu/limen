@@ -9,7 +9,6 @@ use super::{
     Gateway,
     error::{ErrorCode, Failure},
     lifecycle::Lifecycle,
-    stats::Timings,
 };
 
 impl Gateway {
@@ -33,6 +32,9 @@ impl Gateway {
                 continue;
             };
             if !matches!(self.runtime.status(), RuntimeStatus::Ready) {
+                lifecycle
+                    .cleanup_timings
+                    .skip(phase_name, limen_storage::PhaseScope::Global, true);
                 self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
@@ -43,6 +45,11 @@ impl Gateway {
                 continue;
             }
             if Instant::now() >= deadline {
+                lifecycle.cleanup_timings.skip(
+                    phase_name,
+                    limen_storage::PhaseScope::Global,
+                    false,
+                );
                 self.transport.observation_failed().await;
                 tracing::warn!(
                     request_id = lifecycle.request_id,
@@ -68,7 +75,7 @@ impl Gateway {
                 HookInput::OnFinish(input)
             };
             let context = lifecycle.context(input);
-            let timings = Timings::default();
+            let timings = lifecycle.cleanup_timings.clone();
             let measurement = timings.hook(phase_name);
             let report = self
                 .runtime

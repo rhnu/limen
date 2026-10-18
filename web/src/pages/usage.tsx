@@ -16,6 +16,7 @@ import { Filters } from "../components/filters";
 import { useSession } from "../session/store";
 import { label, numberText, safeChartValue, timeText, usageTotals } from "../lib/values";
 import { PageTitle, Refresh, Field, Loading, Failure, Empty, HelpMark } from "../components/common";
+import { PerformanceTable, PhaseAggregates, StageAggregates } from "../components/performance";
 import type { UsageGroup } from "../api/generated/types.gen";
 
 function Quality({ group }: { group: UsageGroup }) {
@@ -65,7 +66,7 @@ export function Usage() {
     const invalid = search.error;
     const result = useQuery(queries.usage(epoch, search.filters));
     const summary = result.data?.data;
-    const totals = summary ? usageTotals(summary.groups) : null;
+    const totals = summary ? usageTotals([summary.overall]) : null;
     const chart = summary?.groups.map((item) => ({
         name: item.key ?? (groupBy === "none" ? "全部" : "未知"),
         input: safeChartValue(item.tokens.input.sum),
@@ -94,14 +95,31 @@ export function Usage() {
             <Filters
                 kind="usage"
                 extra={
-                    <Field label="分组">
-                        <select name="groupBy" defaultValue={groupBy}>
-                            <option value="day">按日</option>
-                            <option value="model">按模型</option>
-                            <option value="provider">按 Provider</option>
-                            <option value="none">不分组</option>
-                        </select>
-                    </Field>
+                    <>
+                        <Field
+                            label="性能样本"
+                            help="仅筛选性能与策略阶段样本，不改变已知用量消耗。默认成功请求；失败和取消可以独立检视。"
+                        >
+                            <select
+                                name="performanceOutcome"
+                                defaultValue={search.filters?.performanceOutcome ?? ""}
+                            >
+                                <option value="">成功（默认）</option>
+                                <option value="success">成功</option>
+                                <option value="failed">失败</option>
+                                <option value="cancelled">已取消</option>
+                                <option value="all">全部结果</option>
+                            </select>
+                        </Field>
+                        <Field label="分组">
+                            <select name="groupBy" defaultValue={groupBy}>
+                                <option value="day">按日</option>
+                                <option value="model">按模型</option>
+                                <option value="provider">按 Provider</option>
+                                <option value="none">不分组</option>
+                            </select>
+                        </Field>
+                    </>
                 }
             />
             {invalid ? (
@@ -152,6 +170,29 @@ export function Usage() {
                                 。保留边界不保证此前历史完整。
                             </HelpMark>
                         </div>
+                        <section className="panel">
+                            <h2>
+                                整体性能{" "}
+                                <HelpMark>
+                                    当前性能样本：{label(summary.performanceOutcome)}，共{" "}
+                                    {numberText(summary.overall.performance.records)}{" "}
+                                    条。各指标按可计算样本独立统计，空值不是零。分位数由服务端对完整范围计算，未平均分组结果。原生
+                                    TTFT 不含缓冲下游交付；失败样本仅在选择后参与。
+                                </HelpMark>
+                            </h2>
+                            <PerformanceTable performance={summary.overall.performance} />
+                            <details className="metric-note">
+                                <summary>整体阶段与里程碑</summary>
+                                <StageAggregates stages={summary.overall.stages} />
+                            </details>
+                            <details className="metric-note">
+                                <summary>整体策略阶段</summary>
+                                <p className="muted small">
+                                    每格依次为累计 ms / 平均 ms / 独立样本数；各细分样本分母不同。
+                                </p>
+                                <PhaseAggregates phases={summary.overall.phases} />
+                            </details>
+                        </section>
                         {!summary.groups.length ? (
                             <Empty>此时间范围没有用量记录。</Empty>
                         ) : (
@@ -220,7 +261,7 @@ export function Usage() {
                                     <h2>
                                         用量汇总{" "}
                                         <HelpMark>
-                                            表内只展示已知值。展开统计详情可查看样本数、记录状态、结果和用量质量。
+                                            用量统计包含全部结果。性能详情只使用当前性能样本筛选，各组独立计算。
                                         </HelpMark>
                                     </h2>
                                     <div className="table-scroll">
@@ -269,6 +310,40 @@ export function Usage() {
                                         </table>
                                     </div>
                                 </section>
+                                {groupBy !== "none" && (
+                                    <section className="panel">
+                                        <h2>
+                                            分组性能{" "}
+                                            <HelpMark>
+                                                按当前分组显示服务端统计。各组分位数不相加或平均；整体性能使用上方完整范围统计。
+                                            </HelpMark>
+                                        </h2>
+                                        {summary.groups.map((item, index) => (
+                                            <details
+                                                className="group-performance"
+                                                key={item.key ?? index}
+                                            >
+                                                <summary>
+                                                    {item.key ?? "未知"} ·{" "}
+                                                    {numberText(item.performance.records)}{" "}
+                                                    条性能记录
+                                                </summary>
+                                                <PerformanceTable performance={item.performance} />
+                                                <details className="metric-note">
+                                                    <summary>阶段与里程碑</summary>
+                                                    <StageAggregates stages={item.stages} />
+                                                </details>
+                                                <details className="metric-note">
+                                                    <summary>策略阶段</summary>
+                                                    <p className="muted small">
+                                                        每格：累计 ms / 平均 ms / 独立样本数。
+                                                    </p>
+                                                    <PhaseAggregates phases={item.phases} />
+                                                </details>
+                                            </details>
+                                        ))}
+                                    </section>
+                                )}
                             </>
                         )}
                     </>

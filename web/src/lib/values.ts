@@ -75,6 +75,8 @@ const labels: Record<string, string> = {
     day: "日期",
     model: "模型",
     provider: "Provider",
+    global: "全局",
+    all: "全部结果",
 };
 export function label(value: string | boolean | null | undefined): string {
     return value === null || value === undefined
