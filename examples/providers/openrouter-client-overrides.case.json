@@ -1,0 +1,121 @@
+{
+  "name": "openrouter-client-overrides",
+  "request": {
+    "model": "router-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": false,
+    "provider": {
+      "require_parameters": false
+    },
+    "reasoning": null,
+    "temperature": 0,
+    "extension": {
+      "keep": [
+        1,
+        null
+      ]
+    }
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "preset",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "synthetic-source",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 1,
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://openrouter.example.invalid/api/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-openrouter-token"
+        ],
+        "http-referer": [
+          "https://example.invalid/limen"
+        ],
+        "x-openrouter-title": [
+          "Limen example"
+        ]
+      },
+      "body": {
+        "model": "synthetic/router",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "provider": {
+          "require_parameters": false
+        },
+        "reasoning": null,
+        "temperature": 0,
+        "extension": {
+          "keep": [
+            1,
+            null
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "preset",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "router-chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2,
+          "completion_tokens": 1,
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "name": "deepseek-sse-to-json",
+  "request": {
+    "model": "deepseek-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "response.sse"
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://deepseek.example.invalid/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-deepseek-token"
+        ]
+      },
+      "body": {
+        "model": "synthetic-deepseek",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "max_tokens": 32,
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "high"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "preset",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "deepseek-chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2,
+          "completion_tokens": 1,
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

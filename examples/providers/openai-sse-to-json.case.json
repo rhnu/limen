@@ -1,0 +1,85 @@
+{
+  "name": "openai-sse-to-json",
+  "request": {
+    "model": "openai-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "response.sse"
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://openai.example.invalid/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-openai-token"
+        ],
+        "openai-organization": [
+          "example-org"
+        ],
+        "openai-project": [
+          "example-project"
+        ]
+      },
+      "body": {
+        "model": "synthetic-openai",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "temperature": 0.6,
+        "max_completion_tokens": 32,
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "store": false,
+        "parallel_tool_calls": false
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "preset",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai-chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2,
+          "completion_tokens": 1,
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

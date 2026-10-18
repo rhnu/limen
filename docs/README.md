@@ -6,7 +6,7 @@ Limen 是供个人与私网使用的 Chat Completions 网关。Rust 负责 HTTP�
 
 | 目标                                      | 文档                                     |
 | ----------------------------------------- | ---------------------------------------- |
-| 配置监听、认证、provider 与模型别名       | [配置与接入](features/configuration.md)  |
+| 配置监听、认证、内置 provider 与模型别名  | [配置与接入](features/configuration.md)  |
 | 编写 hook、统一正文变换、使用策略库与观测 | [JavaScript 脚本](features/scripting.md) |
 | 理解 JSON/SSE 转换、流结束和错误          | [响应与流协议](features/transport.md)    |
 | 用合成上游验证自己的配置与脚本            | [离线测试](features/testing.md)          |
@@ -28,4 +28,4 @@ cargo run --locked -- test --config examples/testing/server.toml --cases example
 - [开发指引](development.md)：构建、检查和测试入口。
 - [路线图](roadmap.md)：尚未完成的仓库事项与验收。
 
-配置完整类型见 [`sdk/limen.d.ts`](../sdk/limen.d.ts)，可运行素材见 [`examples/`](../examples/)。类型声明帮助编辑与静态检查，运行时校验仍以 Rust 实现为准。
+配置完整类型见 [`sdk/limen.d.ts`](../sdk/limen.d.ts)，可运行素材见 [`examples/`](../examples/)。类型声明帮助编辑与静态检查；内置 provider 工厂验证专有 options，展开后的配置继续经过 Rust 宿主校验。

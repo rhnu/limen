@@ -1,0 +1,75 @@
+{
+  "name": "openai-ordered-pipeline",
+  "request": {
+    "model": "openai",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "max_completion_tokens": 128
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "model": "synthetic-model",
+      "extension": {
+        "preserved": true
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer synthetic-openai"
+        ]
+      },
+      "body": {
+        "model": "synthetic-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "max_completion_tokens": 16,
+        "order": [
+          "provider",
+          "model"
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "model": "openai",
+        "extension": {
+          "preserved": true
+        }
+      }
+    },
+    "stats": {
+      "hookCalls": {
+        "beforeSend": 2
+      },
+      "nativeCalls": {
+        "beforeSend": 2
+      }
+    }
+  }
+}

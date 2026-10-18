@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Limen is a Rust Chat Completions gateway for personal and private-network use. Local JavaScript adapts providers and request/response handling, while explicit model aliases give clients stable names.
+Limen is a Rust Chat Completions gateway for personal and private-network use. Local JavaScript adapts providers and request/response handling, while explicit model aliases give clients stable names. Built-in OpenAI, DeepSeek and OpenRouter factories provide typed provider options; see the [provider guide](docs/features/configuration.md#内置-provider) and [offline examples](examples/providers/).
 
 ## Quick start
 

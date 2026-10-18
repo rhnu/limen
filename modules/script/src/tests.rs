@@ -15,6 +15,7 @@ mod diagnostics;
 mod gateway;
 mod observations;
 mod policies;
+mod providers;
 mod runtime;
 mod runtime_module;
 mod timings;

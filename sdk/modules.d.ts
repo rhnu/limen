@@ -21,9 +21,12 @@ declare module "limen:gateway" {
     /**
      * Provider pipeline and owned-model registration.
      * @typeParam State - Per-request JSON state.
+     * @typeParam Options - Factory-specific static model options; raw providers default to never.
      */
-    export type ProviderScope<State extends JsonObject = JsonObject> =
-        import("./limen").ProviderScope<State>;
+    export type ProviderScope<
+        State extends JsonObject = JsonObject,
+        Options = never,
+    > = import("./limen").ProviderScope<State, Options>;
     /**
      * Model pipeline registration.
      * @typeParam State - Per-request JSON state.
@@ -38,8 +41,8 @@ declare module "limen:gateway" {
         import("./limen").StepScope<State>;
     /** Upstream endpoint, credentials, headers and shallow request defaults. */
     export type ProviderOptions = import("./limen").ProviderOptions;
-    /** Upstream model name and model-specific shallow request defaults. */
-    export type ModelOptions = import("./limen").ModelOptions;
+    /** Upstream model name, shallow defaults and optional factory-specific static fields. */
+    export type ModelOptions<Options = never> = import("./limen").ModelOptions<Options>;
     /**
      * Synchronous startup callback.
      * @typeParam State - Per-request JSON state.
@@ -64,6 +67,148 @@ declare module "limen:gateway" {
     export function defineGateway<State extends JsonObject = JsonObject>(
         setup: GatewaySetup<State>,
     ): GatewayFactory;
+}
+
+/** Explicit provider presets; credentials are supplied by the caller, never read from the environment. */
+declare module "limen:providers" {
+    type JsonObject = import("./limen").JsonObject;
+    type GatewayScope<State extends JsonObject> = import("./limen").GatewayScope<State>;
+    type ProviderScope<State extends JsonObject, Options> = import("./limen").ProviderScope<
+        State,
+        Options
+    >;
+    /** Supported static reasoning effort values; model availability remains upstream-owned. */
+    export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    /** Connection settings shared by explicit provider factories. */
+    export interface BuiltinProviderOptions<Options> {
+        /** Required nonempty upstream Bearer token, independent of client authentication. */
+        apiKey: string;
+        /** Complete Chat Completions HTTP(S) URL overriding the preset; no path is appended. */
+        endpoint?: string;
+        /** Static business headers; dedicated credential/attribution header collisions reject. */
+        headers?: Record<string, string>;
+        /** Open JSON request defaults, with the same shallow provider/model/client precedence. */
+        defaults?: import("./limen").Defaults;
+        /** Static typed fields lowered into defaults; same-layer raw wire-field collisions reject. */
+        options?: Options;
+    }
+    /** Selected OpenAI Chat fields; the upstream validates support for the chosen model. */
+    export interface OpenAIOptions {
+        /** Lowers to `reasoning_effort`. */
+        reasoningEffort?: ReasoningEffort;
+        /** Desired answer verbosity. */
+        verbosity?: "low" | "medium" | "high";
+        /** Lowers to `service_tier`; no tier is injected when absent. */
+        serviceTier?: "auto" | "default" | "flex" | "scale" | "priority" | "fast";
+        /** Whether the upstream may store the completion. */
+        store?: boolean;
+        /** Lowers to `parallel_tool_calls`. */
+        parallelToolCalls?: boolean;
+    }
+    /** OpenAI connection and optional dedicated organization/project headers. */
+    export interface OpenAIProviderOptions extends BuiltinProviderOptions<OpenAIOptions> {
+        /** Sends `OpenAI-Organization`. */
+        organization?: string;
+        /** Sends `OpenAI-Project`. */
+        project?: string;
+    }
+    /** Selected DeepSeek Chat fields. */
+    export interface DeepSeekOptions {
+        /** Lowers to `thinking: { type }`. */
+        thinking?: "enabled" | "disabled";
+        /** Lowers to `reasoning_effort`; support remains model-specific. */
+        reasoningEffort?: ReasoningEffort;
+    }
+    /** DeepSeek connection and static defaults. */
+    export interface DeepSeekProviderOptions extends BuiltinProviderOptions<DeepSeekOptions> {}
+    /** OpenRouter provider routing preferences, applied as one shallow `provider` field. */
+    export interface OpenRouterRoutingOptions {
+        /** Preferred provider order. */
+        order?: readonly string[];
+        /** Only permit these providers. */
+        only?: readonly string[];
+        /** Exclude these providers. */
+        ignore?: readonly string[];
+        /** Lowers to `allow_fallbacks`; controls upstream routing only, not gateway retries. */
+        allowFallbacks?: boolean;
+        /** Lowers to `require_parameters`. */
+        requireParameters?: boolean;
+        /** Zero data retention preference. */
+        zdr?: boolean;
+        /** Lowers to `data_collection`. */
+        dataCollection?: "allow" | "deny";
+        /** Provider sorting criterion. */
+        sort?: "price" | "throughput" | "latency";
+    }
+    /** Reasoning selection uses either an effort level or a positive safe integer token budget. */
+    export type OpenRouterReasoningOptions = {
+        /** Exclude reasoning text from the upstream answer. */
+        exclude?: boolean;
+        /** Explicit upstream reasoning switch. */
+        enabled?: boolean;
+    } & (
+        | {
+              /** Reasoning effort; cannot coexist with maxTokens. */ effort?: ReasoningEffort;
+              maxTokens?: never;
+          }
+        | {
+              effort?: never;
+              /** Positive safe integer, lowered to `max_tokens`. */ maxTokens?: number;
+          }
+    );
+    /** Selected OpenRouter fields, each lowered as one shallow request default. */
+    export interface OpenRouterOptions {
+        /** Static provider routing preference object. */
+        provider?: OpenRouterRoutingOptions;
+        /** Static reasoning preference object. */
+        reasoning?: OpenRouterReasoningOptions;
+    }
+    /** OpenRouter connection and optional application attribution headers. */
+    export interface OpenRouterProviderOptions extends BuiltinProviderOptions<OpenRouterOptions> {
+        /** Sends `HTTP-Referer`. */
+        appUrl?: string;
+        /** Sends `X-OpenRouter-Title`. */
+        appTitle?: string;
+    }
+    /**
+     * Registers OpenAI at `https://api.openai.com/v1/chat/completions` unless overridden.
+     * @param gateway - Open startup scope, preserving its request state type.
+     * @param id - Explicit provider ID, unique within the gateway.
+     * @param config - Credentials, connection overrides and static typed defaults.
+     * @returns Frozen provider scope supporting the same typed options on owned models.
+     * @throws On unknown keys, invalid typed options or same-layer defaults/header collisions.
+     */
+    export function createOpenAI<State extends JsonObject = JsonObject>(
+        gateway: GatewayScope<State>,
+        id: string,
+        config: OpenAIProviderOptions,
+    ): ProviderScope<State, OpenAIOptions>;
+    /**
+     * Registers DeepSeek at `https://api.deepseek.com/chat/completions` unless overridden.
+     * @param gateway - Open startup scope, preserving its request state type.
+     * @param id - Explicit provider ID.
+     * @param config - Credentials, connection overrides and static typed defaults.
+     * @returns Frozen provider scope with DeepSeek model options; no dynamic hooks are injected.
+     * @throws On malformed options or same-layer defaults/header collisions.
+     */
+    export function createDeepSeek<State extends JsonObject = JsonObject>(
+        gateway: GatewayScope<State>,
+        id: string,
+        config: DeepSeekProviderOptions,
+    ): ProviderScope<State, DeepSeekOptions>;
+    /**
+     * Registers OpenRouter at `https://openrouter.ai/api/v1/chat/completions` unless overridden.
+     * @param gateway - Open startup scope, preserving its request state type.
+     * @param id - Explicit provider ID.
+     * @param config - Credentials, attribution, connection overrides and static typed defaults.
+     * @returns Frozen scope; model options replace whole nested defaults, without recursive merging.
+     * @throws On malformed options or same-layer defaults/header collisions.
+     */
+    export function createOpenRouter<State extends JsonObject = JsonObject>(
+        gateway: GatewayScope<State>,
+        id: string,
+        config: OpenRouterProviderOptions,
+    ): ProviderScope<State, OpenRouterOptions>;
 }
 
 declare module "limen:policies" {

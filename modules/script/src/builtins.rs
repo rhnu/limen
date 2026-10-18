@@ -18,6 +18,10 @@ const MODULES: &[BuiltinModule] = &[
         body: Body::JavaScript(include_bytes!("../dist/gateway.js")),
     },
     BuiltinModule {
+        name: "limen:providers",
+        body: Body::JavaScript(include_bytes!("../dist/providers.js")),
+    },
+    BuiltinModule {
         name: "limen:policies",
         body: Body::JavaScript(include_bytes!("../dist/policies.js")),
     },

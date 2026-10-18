@@ -92,6 +92,56 @@ cargo run --locked -- serve --config local/config/server.toml
 
 `check` 会执行顶层 JS、导入模块、调用同步 setup 并验证注册结果，不调用请求 hook、不监听端口、不请求上游。服务只在启动时加载配置；修改后需重启。setup 与 `step` 注册回调必须同步返回 `undefined`；默认导出普通对象、异步 setup、重复注册或 setup 后追加策略都会失败，详见[显式组合与生命周期](scripting.md#显式组合与生命周期)。
 
+## 内置 provider
+
+`limen:providers` 提供 `createOpenAI`、`createDeepSeek` 和 `createOpenRouter`。工厂显式接收 gateway、provider 标识和连接选项，返回支持 `model()`、`use()`、`step()` 的 provider scope。普通兼容端点仍可通过 `gateway.provider()` 注册。
+
+```js
+import { defineGateway } from "limen:gateway";
+import { createDeepSeek } from "limen:providers";
+import { env } from "limen:runtime";
+
+export default defineGateway((gateway) => {
+  const deepseek = createDeepSeek(gateway, "primary", {
+    apiKey: env("DEEPSEEK_API_KEY") ?? "",
+    options: { thinking: "enabled" },
+  });
+  deepseek.model("reasoner", {
+    upstream: "deepseek-v4-pro",
+    defaults: { max_tokens: 8192 },
+    options: { reasoningEffort: "high" },
+  });
+});
+```
+
+三家工厂都要求显式提供非空 `apiKey`，不会读取默认环境变量或客户端凭据。缺失环境变量时，上例的空 key 会使启动失败。可选的 `endpoint` 替换完整 URL，不追加路径；`headers` 添加静态上游头；`defaults` 保留开放的上游 JSON 字段；provider 级和 model 级 `options` 分别提供有类型的专有默认参数。
+
+| 工厂               | 缺省 endpoint                                   | 额外连接选项                                                         |
+| ------------------ | ----------------------------------------------- | -------------------------------------------------------------------- |
+| `createOpenAI`     | `https://api.openai.com/v1/chat/completions`    | `organization` → `OpenAI-Organization`；`project` → `OpenAI-Project` |
+| `createDeepSeek`   | `https://api.deepseek.com/chat/completions`     | 无                                                                   |
+| `createOpenRouter` | `https://openrouter.ai/api/v1/chat/completions` | `appUrl` → `HTTP-Referer`；`appTitle` → `X-OpenRouter-Title`         |
+
+专有 options 在启动时展开为原生请求字段，不在客户端正文增加包装层，也不安装隐藏的请求 hook。未提供的 option 不会补供应商默认值；模型仍需显式注册，上游对具体模型支持哪些参数负责。
+
+| options 类型        | 首版字段与展开                                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `OpenAIOptions`     | `reasoningEffort` → `reasoning_effort`；`verbosity`；`serviceTier` → `service_tier`；`store`；`parallelToolCalls` → `parallel_tool_calls` |
+| `DeepSeekOptions`   | `thinking: "enabled" \| "disabled"` → `thinking: {type: ...}`；`reasoningEffort` → `reasoning_effort`                                     |
+| `OpenRouterOptions` | `provider` 路由偏好与 `reasoning` 推理控制对象，见下文                                                                                    |
+
+OpenAI 与 DeepSeek 的 `reasoningEffort` 接受 `none / minimal / low / medium / high / xhigh / max`；具体模型不一定支持全部值。OpenAI 的 `verbosity` 接受 `low / medium / high`，`serviceTier` 接受 `auto / default / flex / scale / priority / fast`，`store` 与 `parallelToolCalls` 为布尔值。字段依据见 [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) 与 [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+OpenRouter 的 `provider` 接受字符串数组 `order / only / ignore`，布尔值 `allowFallbacks / requireParameters / zdr`，`dataCollection: "allow" | "deny"`，以及 `sort: "price" | "throughput" | "latency"`；展开时将 camelCase 字段改为上游的 snake_case。`reasoning` 接受 `effort`（与上述推理强度取值相同）或正安全整数 `maxTokens`（展开为 `max_tokens`），二者互斥；还可提供布尔值 `enabled / exclude`。这些参数只转交 OpenRouter，不在 Limen 中执行路由或故障转移，Limen 仍只发送一次上游请求。依据见 [OpenRouter 路由偏好](https://openrouter.ai/docs/guides/routing/provider-selection)、[推理控制](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)与[应用标识](https://openrouter.ai/docs/app-attribution)。
+
+工厂配置与已知 options（包括嵌套对象）拒绝未知字段、非法类型、非法枚举及 accessor。`headers` 与 `apiKey` 或额外连接选项生成的同名头按大小写无关规则判冲突；URL、头部限制、开放 defaults 的 JSON 与保留字段仍由宿主检查。同一层的 options 与 defaults 写入同一上游顶层字段也会使启动失败，即使值相同；例如 `options.reasoningEffort` 不能与该层 `defaults.reasoning_effort` 并存。
+
+展开后沿用[模型别名与默认值](#模型别名与默认值)的浅合并与优先级：客户端正文 > model > provider。`options` 表达可覆盖的默认值，需要强制限制时显式挂载策略。OpenRouter 的 model 或客户端只要提供自己的 `provider` 对象，就会整体替换低优先级对象，不会保留其中的隐私或路由设置。
+
+`ModelOptions<Options>` 与 `ProviderScope<State, Options>` 支持泛型；三家工厂分别返回绑定上述 options 类型的 scope，同时保留 hook 的 `State` 推导。普通 `gateway.provider()` 的 options 类型为 `never`，不接受未经展开的 `options`。泛型用于复用类型声明和组合函数，未封装的上游扩展字段通过 `defaults` 传递。
+
+完整类型见 [`sdk/modules.d.ts`](../../sdk/modules.d.ts)。[`examples/providers/`](../../examples/providers/)同时演示三家工厂、完整 endpoint 覆盖、模型默认值、专有参数和显式输出限制；其中凭据、上游模型和域名都是合成值，可直接运行[离线用例](testing.md#运行示例)。
+
 ## 环境变量
 
 从 `limen:runtime` 导入 `env`，通过 `env(name)` 读取进程环境变量。变量不存在时返回 `undefined`，存在但为空时返回 `""`；`??` 只处理前者。名称必须非空且不含 `=` 或 NUL，名称与值受字节限制，非 Unicode 值会抛错。

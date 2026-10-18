@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-Limen 是供个人与私网使用的 Rust Chat Completions 网关。通过本地 JavaScript 适配 provider 和请求响应处理，以显式模型别名为客户端提供稳定名称。
+Limen 是供个人与私网使用的 Rust Chat Completions 网关。通过本地 JavaScript 适配 provider 和请求响应处理，以显式模型别名为客户端提供稳定名称。内置 OpenAI、DeepSeek 和 OpenRouter 工厂，提供有类型的专有 options；用法见[内置 provider](docs/features/configuration.md#内置-provider)与[离线示例](examples/providers/)。
 
 ## 快速开始
 

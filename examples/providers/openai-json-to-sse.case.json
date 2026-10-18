@@ -1,0 +1,142 @@
+{
+  "name": "openai-json-to-sse",
+  "request": {
+    "model": "openai-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "preset",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "synthetic-source",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 1,
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://openai.example.invalid/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "text/event-stream"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-openai-token"
+        ],
+        "openai-organization": [
+          "example-org"
+        ],
+        "openai-project": [
+          "example-project"
+        ]
+      },
+      "body": {
+        "model": "synthetic-openai",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": true,
+        "temperature": 0.6,
+        "max_completion_tokens": 32,
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "store": false,
+        "parallel_tool_calls": false
+      }
+    },
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "openai-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "openai-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "hello"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "openai-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "openai-chat",
+          "choices": [],
+          "usage": {
+            "prompt_tokens": 2,
+            "completion_tokens": 1,
+            "total_tokens": 3
+          }
+        }
+      ],
+      "done": true
+    }
+  }
+}

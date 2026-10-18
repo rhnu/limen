@@ -1,0 +1,88 @@
+{
+  "name": "openrouter-sse-to-json",
+  "request": {
+    "model": "router-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": false
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "text/event-stream"
+      ]
+    },
+    "bodyFile": "response.sse"
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://openrouter.example.invalid/api/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "application/json"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-openrouter-token"
+        ],
+        "http-referer": [
+          "https://example.invalid/limen"
+        ],
+        "x-openrouter-title": [
+          "Limen example"
+        ]
+      },
+      "body": {
+        "model": "synthetic/router",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": false,
+        "provider": {
+          "sort": "latency",
+          "allow_fallbacks": false,
+          "data_collection": "deny"
+        },
+        "reasoning": {
+          "effort": "high",
+          "exclude": false
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "preset",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "router-chat",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "hello"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2,
+          "completion_tokens": 1,
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+}

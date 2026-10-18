@@ -810,12 +810,17 @@ export interface ProviderOptions {
     /** Provider fallback request fields, overridden by model defaults and client values. */
     defaults?: Defaults;
 }
-/** Model settings; provider ownership comes from the scope used to register it. */
-export interface ModelOptions {
+/**
+ * Model settings; provider ownership comes from the scope used to register it.
+ * @typeParam Options - Factory-specific static fields; raw providers accept no typed options.
+ */
+export interface ModelOptions<Options = never> {
     /** Nonempty upstream model name substituted for the client-facing alias after routing. */
     upstream: string;
     /** Shallow defaults overriding the provider's defaults; client values still win. */
     defaults?: Defaults;
+    /** Typed static provider options, lowered into shallow defaults by a provider factory. */
+    options?: Options;
 }
 /**
  * Synchronous gateway assembly callback invoked once at startup.
@@ -912,8 +917,12 @@ export interface ModelScope<State extends JsonObject = JsonObject> {
 /**
  * Provider pipeline registration and creation of models owned by that provider.
  * @typeParam State - Per-request JSON state type shared with the gateway setup.
+ * @typeParam Options - Factory-specific static model options; unavailable on raw providers.
  */
-export interface ProviderScope<State extends JsonObject = JsonObject> extends ModelScope<State> {
+export interface ProviderScope<
+    State extends JsonObject = JsonObject,
+    Options = never,
+> extends ModelScope<State> {
     /**
      * Declares a client-facing model alias in this provider.
      * @param alias - Nonempty, globally unique model name exposed in the explicit model list.
@@ -921,7 +930,7 @@ export interface ProviderScope<State extends JsonObject = JsonObject> extends Mo
      * @returns A model scope for registering steps after the provider pipeline.
      * @throws On duplicate alias or closed scope; the host validates options at startup.
      */
-    readonly model: (alias: string, options: ModelOptions) => ModelScope<State>;
+    readonly model: (alias: string, options: ModelOptions<Options>) => ModelScope<State>;
 }
 /**
  * Startup-only provider/global-hook registration; each global hook may be registered once.

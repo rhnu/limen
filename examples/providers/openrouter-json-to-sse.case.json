@@ -1,0 +1,145 @@
+{
+  "name": "openrouter-json-to-sse",
+  "request": {
+    "model": "router-chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "stream": true
+  },
+  "upstream": {
+    "status": 200,
+    "headers": {
+      "content-type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "id": "preset",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "synthetic-source",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "hello"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 1,
+        "total_tokens": 3
+      }
+    }
+  },
+  "expect": {
+    "sent": true,
+    "outbound": {
+      "url": "https://openrouter.example.invalid/api/v1/chat/completions",
+      "headers": {
+        "accept": [
+          "text/event-stream"
+        ],
+        "content-type": [
+          "application/json"
+        ],
+        "authorization": [
+          "Bearer example-openrouter-token"
+        ],
+        "http-referer": [
+          "https://example.invalid/limen"
+        ],
+        "x-openrouter-title": [
+          "Limen example"
+        ]
+      },
+      "body": {
+        "model": "synthetic/router",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello"
+          }
+        ],
+        "stream": true,
+        "provider": {
+          "sort": "latency",
+          "allow_fallbacks": false,
+          "data_collection": "deny"
+        },
+        "reasoning": {
+          "effort": "high",
+          "exclude": false
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "events": [
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "router-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "role": "assistant"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "router-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {
+                "content": "hello"
+              },
+              "finish_reason": null
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "router-chat",
+          "choices": [
+            {
+              "index": 0,
+              "delta": {},
+              "finish_reason": "stop"
+            }
+          ]
+        },
+        {
+          "id": "preset",
+          "object": "chat.completion.chunk",
+          "created": 1,
+          "model": "router-chat",
+          "choices": [],
+          "usage": {
+            "prompt_tokens": 2,
+            "completion_tokens": 1,
+            "total_tokens": 3
+          }
+        }
+      ],
+      "done": true
+    }
+  }
+}

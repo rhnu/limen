@@ -12,6 +12,15 @@ cargo run --locked -- test --config examples/testing/server.toml --cases example
 
 该目录演示全部四种 JSON/SSE 组合。`--cases` 可指向一个 `.case.json` 文件或目录；目录只扫描本层文件，按文件名排序。每个用例创建新的服务和 VM 生命周期，不继承前一用例的闭包状态。
 
+内置 provider 示例覆盖 OpenAI、DeepSeek 和 OpenRouter 的四种 JSON/SSE 组合、客户端与模型默认值覆盖，以及显式输出限制：
+
+```sh
+cargo run --locked -- check --config examples/providers/server.toml
+cargo run --locked -- test --config examples/providers/server.toml --cases examples/providers
+```
+
+示例使用合成凭据、上游模型及 endpoint 覆盖，不请求真实供应商。工厂与 options 契约见[内置 provider](configuration.md#内置-provider)。
+
 统一正文策略示例使用同一套 `onContent` 策略处理四种传输组合，包含跨 delta 文本替换和合成文本工具解析：
 
 ```sh

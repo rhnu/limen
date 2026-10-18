@@ -96,9 +96,11 @@ SSE 成功必须同时满足协议结束和所有生成 choice 完成；尾部�
 
 ### 内置模块与策略扩展
 
-脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:gateway`、`limen:policies`、`limen:content` 与 `limen:runtime`；后者提供运行环境能力，当前导出 `env`，不注入全局宿主命名空间。未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，与本地模块共用模块数量限额；内嵌 JavaScript 计入共享源码大小限额，Rust 原生模块没有 JavaScript 源码字节，导出函数仍遵守各自资源限制。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
+脚本标准库使用保留的 `limen:` 模块命名空间，由 `modules/script` 的固定注册表解析并随二进制提供。当前公开模块为 `limen:gateway`、`limen:providers`、`limen:policies`、`limen:content` 与 `limen:runtime`；后者提供运行环境能力，当前导出 `env`，不注入全局宿主命名空间。未知名称直接失败，不回退到磁盘、包管理器或网络。内置模块每个 VM 只加载一次，与本地模块共用模块数量限额；内嵌 JavaScript 计入共享源码大小限额，Rust 原生模块没有 JavaScript 源码字节，导出函数仍遵守各自资源限制。本地相对 ESM 导入保持独立，不允许覆盖内置模块。外部 `sdk/` 仅承担编辑类型契约，不是运行时部署依赖。
 
 JavaScript 实现的公开内置模块使用显式 ESM 导入复用私有实现，构建时各自打包为独立入口，再由 Rust 注册表嵌入；私有依赖不注册为可导入的 `limen:` 名称。源码预算以 VM 实际加载的打包字节计量，不隐式追加共享 prelude。`limen:runtime` 由同一注册表加载 Rust 原生 ESM 导出，其环境读取限额绑定所属 VM。请求上下文桥接仍由宿主在用户代码运行前私有装配，不进入公开模块加载路径。
+
+内置 provider 是启动期的显式组合函数，沿普通 gateway/provider scope 注册连接和模型；专有 options 校验后展开为现有 defaults，连接选项展开为 endpoint、独立上游认证和静态头。工厂不增加请求阶段或供应商名称分支，不改变浅合并、路由、原生用量提取或四种 JSON/SSE 路径。供应商差异通过泛型 options 类型表达，工厂与已知 options 中的未知字段及同层上游字段冲突在启动时拒绝；开放 defaults 的 JSON、保留字段、URL 与头约束仍由宿主建立。配置投影沿用现有白名单，不输出 options、凭据或额外头。公开用法见[内置 provider](features/configuration.md#内置-provider)。
 
 工具的公开接口与实现语言分离：普通脚本辅助函数可以由内嵌 JS 实现；参与请求管线的确定性策略返回冻结的 `{name, builtin: {kind, ...options}}` 描述，由 Rust 在启动时校验并选择执行器。自定义 step 仍提供 JS hook。一个 step 不能同时声明原生策略和 JS hook，组合通过相邻 step 表达；不建立插件动态加载、兼容别名或任意执行器名称回退。
 

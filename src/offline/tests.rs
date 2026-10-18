@@ -13,6 +13,7 @@ mod content;
 mod observation_output;
 mod policies;
 mod protocol;
+mod providers;
 mod statistics;
 mod transport;
 
