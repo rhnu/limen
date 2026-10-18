@@ -1,1 +1,5 @@
-export default { onRequest() { throw null; } };
+export default {
+  onRequest() {
+    throw null;
+  },
+};

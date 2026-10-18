@@ -8,7 +8,6 @@
     "build": "tsc --noEmit && vite build",
     "check:types": "tsc --noEmit",
     "lint": "oxlint --config .oxlintrc.json --ignore-path .oxlintignore --max-warnings 0 src vite.config.ts",
-    "format:check": "oxfmt --check --ignore-path .oxfmtignore .",
     "test": "vitest run"
   },
   "dependencies": {
@@ -27,7 +26,6 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
-    "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
     "oxlint-tsgolint": "7.0.2004",
     "typescript": "7.0.2",

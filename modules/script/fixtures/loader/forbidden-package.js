@@ -1,1 +1,2 @@
-import 'synthetic-package'; export default {};
+import "synthetic-package";
+export default {};

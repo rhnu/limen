@@ -6,22 +6,9 @@ use crate::{RuntimeOptions, ScriptErrorKind, ScriptRuntime};
 #[tokio::test]
 async fn embedded_factories_snapshot_frozen_native_descriptors() -> TestResult {
     let fixture = Fixture::new()?;
-    let (runtime, config) = fixture.start(r#"
-        import { capCompletionTokens, dropRequestFields, forwardClientHeader } from "limen:policies";
-        import { replaceText, syntheticTextTool } from "limen:content";
-        const fields = ["store", "metadata"];
-        const options = { name: "drop", fields, onChange: "changed" };
-        const drop = dropRequestFields(options);
-        fields[0] = "messages"; fields.push("stream"); options.onChange = "later";
-        const capOptions = { name: "cap", max: 16 };
-        const cap = capCompletionTokens(capOptions); capOptions.max = 1;
-        const steps = [cap, drop,
-          forwardClientHeader({ name: "header", from: "X-Profile", to: "x-upstream" }),
-          replaceText({ name: "replace", search: "abc", replacement: "x", maxBufferedChars: 2 }),
-          syntheticTextTool({ name: "tool", maxBufferedChars: 512 })];
-        export default { steps, frozen: steps.every(step => Object.isFrozen(step) && Object.isFrozen(step.builtin))
-          && Object.isFrozen(drop.builtin.fields) };
-    "#).await?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/policies/descriptors.js"))
+        .await?;
     ensure(
         config
             == json!({
@@ -42,24 +29,9 @@ async fn embedded_factories_snapshot_frozen_native_descriptors() -> TestResult {
 async fn embedded_factories_reject_unknown_options_without_exporting_private_helpers() -> TestResult
 {
     let fixture = Fixture::new()?;
-    let (runtime, config) = fixture.start(r#"
-        import * as policies from "limen:policies";
-        import * as content from "limen:content";
-        const factories = [
-          [policies.capCompletionTokens, {name:"cap", max:1}],
-          [policies.dropRequestFields, {name:"drop", fields:["store"]}],
-          [policies.forwardClientHeader, {name:"header", from:"x-profile", to:"x-upstream"}],
-          [content.replaceText, {name:"replace", search:"a", replacement:"b", maxBufferedChars:1}],
-          [content.syntheticTextTool, {name:"tool", maxBufferedChars:512}]];
-        let rejected = 0;
-        for (const [factory, options] of factories) {
-          for (const value of [null, [], 1, "private-value", Object.create({name:"inherited"}),
-              {...options, stateKey:"old-state"}, {...options, unknown:true}, {...options, [Symbol()]:true}]) {
-            try { factory(value); } catch (error) { if (error instanceof TypeError) rejected++; }
-          }
-        }
-        export default {rejected, hidden: policies.descriptor === undefined && content.descriptor === undefined};
-    "#).await?;
+    let (runtime, config) = fixture
+        .start(include_str!("../../fixtures/policies/invalid-options.js"))
+        .await?;
     ensure(
         config == json!({"rejected":40,"hidden":true}),
         "native factories accepted malformed or unknown options, or exported private helpers",
@@ -75,14 +47,7 @@ async fn embedded_modules_share_esm_cache_and_reserve_exact_names() -> TestResul
         "reexport.js",
         "export { capCompletionTokens } from 'limen:policies';",
     )?;
-    let source = r#"
-        import * as first from "limen:policies";
-        import { capCompletionTokens as repeated } from "./reexport.js";
-        import { capCompletionTokens as local } from "./policies.js";
-        const dynamic = await import("limen:policies");
-        export default { same: first === dynamic && first.capCompletionTokens === repeated,
-          local, kind: repeated({ name:"cap", max:1 }).builtin.kind };
-    "#;
+    let source = include_str!("../../fixtures/policies/module-cache.js");
     let path = fixture.write("config.js", source)?;
     let options = RuntimeOptions {
         max_modules: 4,
@@ -153,16 +118,7 @@ async fn embedded_module_sources_and_count_share_startup_budgets() -> TestResult
 async fn bundled_private_dependencies_share_the_public_modules_byte_and_count_budget() -> TestResult
 {
     let fixture = Fixture::new()?;
-    let source = r#"
-        import * as policies from "limen:policies";
-        import * as content from "limen:content";
-        const repeated = await import("limen:policies");
-        export default {
-          same: policies === repeated,
-          policy: policies.capCompletionTokens({name:"cap",max:1}).builtin.kind,
-          content: content.replaceText({name:"replace",search:"a",replacement:"b",maxBufferedChars:1}).builtin.kind
-        };
-    "#;
+    let source = include_str!("../../fixtures/policies/bundle-budget.js");
     let path = fixture.write("config.js", source)?;
     // Measure the embedded data, so build formatting can change without changing the contract.
     let bytes = source.len()
@@ -213,12 +169,7 @@ async fn bundled_private_dependencies_share_the_public_modules_byte_and_count_bu
 async fn embedded_factory_failures_keep_sanitized_module_coordinates() -> TestResult {
     let fixture = Fixture::new()?;
     let result = fixture
-        .start(
-            r#"
-        import { replaceText } from "limen:content";
-        export default replaceText({name:"private-value", stateKey:"removed"});
-    "#,
-        )
+        .start(include_str!("../../fixtures/policies/invalid-factory.js"))
         .await;
     match result {
         Err(error) => {

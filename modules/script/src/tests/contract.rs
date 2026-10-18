@@ -73,16 +73,10 @@ fn call(hook_id: u64, input: HookInput, state: ScriptState) -> HookCall {
 #[tokio::test]
 async fn typed_invocations_preserve_phase_effects_and_open_protocol_objects() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.write("config.js", r"export default { onRequest(ctx) {
-        ctx.observe.record('accepted');
-        if (ctx.meta.phase === 'onRequest') { ctx.body.extension.custom.push('kept'); ctx.reject(403); }
-        else if (ctx.meta.phase === 'beforeSend') { ctx.url = 'https://fictional.invalid/changed'; ctx.headers.append('x-owned','value'); ctx.reject(422); }
-        else if (ctx.meta.phase === 'afterReceive') ctx.status=201;
-        else if (ctx.meta.phase === 'onErrorResponse') {ctx.status=503;ctx.body=null;ctx.contentType='text/plain';}
-        else if (ctx.meta.phase === 'onContent' || ctx.meta.phase === 'onUpstreamEvent' || ctx.meta.phase === 'onStreamEvent') ctx.replaceEvents([ctx.event, {extra:'open'}]);
-        if (ctx.meta.phase === 'onError' || ctx.meta.phase === 'onFinish') {if (!Object.isFrozen(ctx.state)) throw Error();}
-        else ctx.state.committed = true;
-    }};")?;
+    let path = fixture.write(
+        "config.js",
+        include_str!("../../fixtures/contract/phases.js"),
+    )?;
     let (runtime, config) = ScriptRuntime::start(
         path,
         RuntimeOptions {

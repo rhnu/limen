@@ -29,21 +29,30 @@ export const content = {
 
 /** @type {import("../limen").PipelineStep[]} */
 export const policies = [
-  mapPartText({ name: "whole", kinds: ["text", "tool"], maxBufferedChars: 4096,
+  mapPartText({
+    name: "whole",
+    kinds: ["text", "tool"],
+    maxBufferedChars: 4096,
     transform(value, info) {
       // @ts-expect-error callback metadata is immutable.
       info.part = "changed";
       return info.kind === "tool" ? value : value.trim();
-    } }),
+    },
+  }),
   replaceText({ name: "redact", search: "public", replacement: "visible", maxBufferedChars: 16 }),
   syntheticTextTool({ name: "unwrap", toolName: "emit_text", maxBufferedChars: 512 }),
 ];
-// @ts-expect-error complete-part callbacks must be synchronous.
-mapPartText({ name: "bad", kinds: ["text"], maxBufferedChars: 1, transform: async value => value });
+mapPartText({
+  name: "bad",
+  kinds: ["text"],
+  maxBufferedChars: 1,
+  // @ts-expect-error complete-part callbacks must be synchronous.
+  transform: async (value) => value,
+});
 // @ts-expect-error complete-part callbacks must return text.
 mapPartText({ name: "bad", kinds: ["text"], maxBufferedChars: 1, transform: () => 1 });
 // @ts-expect-error only semantic text-bearing part kinds can be selected.
-mapPartText({ name: "bad", kinds: ["audio"], maxBufferedChars: 1, transform: value => value });
+mapPartText({ name: "bad", kinds: ["audio"], maxBufferedChars: 1, transform: (value) => value });
 // @ts-expect-error retained buffering bound must be explicit.
 replaceText({ name: "redact", search: "a", replacement: "b" });
 // @ts-expect-error replacement is literal text, never a callback.
@@ -57,11 +66,23 @@ export const missingTool = { type: "part_start", choice: 0, part: "tool", kind: 
 // @ts-expect-error control markers remain gateway owned.
 export const done = { type: "done" };
 
-// @ts-expect-error Native state is private to Rust.
-replaceText({ name: "bad", search: "a", replacement: "b", maxBufferedChars: 1, stateKey: "custom" });
+replaceText({
+  name: "bad",
+  search: "a",
+  replacement: "b",
+  maxBufferedChars: 1,
+  // @ts-expect-error Native state is private to Rust.
+  stateKey: "custom",
+});
 // @ts-expect-error Native tool state is private to Rust.
 syntheticTextTool({ name: "bad", maxBufferedChars: 512, stateKey: "custom" });
 // Callback policies retain explicit request-state configuration.
-mapPartText({ name: "custom", kinds: ["text"], stateKey: "custom", maxBufferedChars: 8, transform: value => value });
+mapPartText({
+  name: "custom",
+  kinds: ["text"],
+  stateKey: "custom",
+  maxBufferedChars: 8,
+  transform: (value) => value,
+});
 // @ts-expect-error Only explicitly registered embedded modules exist.
 import { unknown } from "limen:unknown";

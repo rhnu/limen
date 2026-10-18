@@ -5,28 +5,36 @@
 export const syncReturn = {
   name: "sync-return",
   // @ts-expect-error Hooks cannot return a replacement draft.
-  beforeSend() { return { model: "replacement" }; },
+  beforeSend() {
+    return { model: "replacement" };
+  },
 };
 
 /** @type {import("../limen").PipelineStep} */
 export const asyncReturn = {
   name: "async-return",
   // @ts-expect-error Promise completion values must be undefined.
-  async beforeSend() { return { model: "replacement" }; },
+  async beforeSend() {
+    return { model: "replacement" };
+  },
 };
 
 /** @type {import("../limen").PipelineStep} */
 export const nullReturn = {
   name: "null-return",
   // @ts-expect-error null is not the no-return completion value.
-  afterReceive() { return null; },
+  afterReceive() {
+    return null;
+  },
 };
 
 /** @type {import("../limen").PipelineStep} */
 export const arrayReturn = {
   name: "array-return",
   // @ts-expect-error Streaming output uses replaceEvents, not returned arrays.
-  async onStreamEvent() { return []; },
+  async onStreamEvent() {
+    return [];
+  },
 };
 
 /** @type {import("../limen").Config<RequestState>} */
@@ -249,7 +257,9 @@ export const emptyStep = { name: "empty" };
 export const errorResponseReturn = {
   name: "error-return",
   // @ts-expect-error Error response hooks cannot return replacement bodies.
-  onErrorResponse() { return "replacement"; },
+  onErrorResponse() {
+    return "replacement";
+  },
 };
 
 /** @type {import("../limen").Config} */
@@ -257,7 +267,9 @@ export const errorResponseAsyncReturn = {
   providers: {},
   models: {},
   // @ts-expect-error Async error response completion must be undefined.
-  async onErrorResponse() { return {}; },
+  async onErrorResponse() {
+    return {};
+  },
 };
 
 // @ts-expect-error Optional state generics must describe JSON objects.

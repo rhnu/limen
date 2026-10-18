@@ -1,1 +1,5 @@
-export default { onRequest() { while (true) {} } };
+export default {
+  onRequest() {
+    while (true) {}
+  },
+};

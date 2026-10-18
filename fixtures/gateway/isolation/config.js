@@ -11,12 +11,14 @@ export default {
   providers: {
     p: {
       endpoint,
-      pipeline: [{
-        name: "request-state",
-        onResponse(ctx) {
-          ctx.body.choices[0].message.content += ctx.state.suffix;
+      pipeline: [
+        {
+          name: "request-state",
+          onResponse(ctx) {
+            ctx.body.choices[0].message.content += ctx.state.suffix;
+          },
         },
-      }],
+      ],
     },
   },
   models: { chat: { provider: "p", upstream: "real-model" } },

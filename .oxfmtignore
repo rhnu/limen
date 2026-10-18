@@ -1,0 +1,6 @@
+# Generated API clients retain the generator's formatting.
+/web/src/api/generated/**
+
+# Intentionally invalid JavaScript used to test syntax diagnostics.
+/modules/script/fixtures/diagnostics/startup-syntax.js
+/modules/script/fixtures/diagnostics/import-syntax.mjs

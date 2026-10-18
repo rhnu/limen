@@ -29,13 +29,15 @@ export default {
   providers: {
     p: {
       endpoint,
-      pipeline: [{
-        name: "report",
-        onResponse(ctx) {
-          ctx.body.waiting = waiting;
-          ctx.body.cancelled = cancelled;
+      pipeline: [
+        {
+          name: "report",
+          onResponse(ctx) {
+            ctx.body.waiting = waiting;
+            ctx.body.cancelled = cancelled;
+          },
         },
-      }],
+      ],
     },
   },
   models: { chat: { provider: "p", upstream: "real-model" } },

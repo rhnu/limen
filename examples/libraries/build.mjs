@@ -4,7 +4,10 @@ import { build } from "esbuild";
 
 // Node.js runs this development tool only; Limen loads the resulting plain ESM.
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const license = await readFile(new URL("../../node_modules/valibot/LICENSE.md", import.meta.url), "utf8");
+const license = await readFile(
+  new URL("../../node_modules/valibot/LICENSE.md", import.meta.url),
+  "utf8",
+);
 
 await build({
   absWorkingDir: root,

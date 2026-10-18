@@ -5,14 +5,16 @@ export default {
   providers: {
     demo: {
       endpoint: "https://example.invalid/v1/chat/completions",
-      pipeline: [{
-        name: "request-policy",
-        async beforeSend(ctx) {
-          await Promise.resolve();
-          delete ctx.body.store;
-          ctx.headers.set("X-Policy", "checked");
+      pipeline: [
+        {
+          name: "request-policy",
+          async beforeSend(ctx) {
+            await Promise.resolve();
+            delete ctx.body.store;
+            ctx.headers.set("X-Policy", "checked");
+          },
         },
-      }],
+      ],
     },
   },
   models: { chat: { provider: "demo", upstream: "demo-model" } },

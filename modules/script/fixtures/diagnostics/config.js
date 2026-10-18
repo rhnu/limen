@@ -1,1 +1,2 @@
-import './private-module.mjs'; export default {};
+import "./private-module.mjs";
+export default {};

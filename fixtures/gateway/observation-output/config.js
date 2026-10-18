@@ -32,72 +32,86 @@ export default {
   providers: {
     p: {
       endpoint,
-      pipeline: [{
-        name: "provider",
-        beforeSend(ctx) {
-          ctx.state.committed = "provider";
-          record(ctx, "provider");
-        },
-        afterReceive(ctx) {
-          record(ctx, "response");
-          if (ctx.state.mode === "status") {
-            record(ctx, "extra");
-            record(ctx, "overflow");
-            ctx.state.discarded = true;
-            ctx.status = 204;
-          }
-        },
-        onResponse(ctx) {
-          record(ctx, "response");
-        },
-        onUpstreamEvent(ctx) {
-          record(ctx, "upstream");
-          if (ctx.state.mode === "overflow") {
+      pipeline: [
+        {
+          name: "provider",
+          beforeSend(ctx) {
+            ctx.state.committed = "provider";
+            record(ctx, "provider");
+          },
+          afterReceive(ctx) {
+            record(ctx, "response");
+            if (ctx.state.mode === "status") {
+              record(ctx, "extra");
+              record(ctx, "overflow");
+              ctx.state.discarded = true;
+              ctx.status = 204;
+            }
+          },
+          onResponse(ctx) {
+            record(ctx, "response");
+          },
+          onUpstreamEvent(ctx) {
             record(ctx, "upstream");
-            record(ctx, "extra");
-            record(ctx, "overflow");
-          }
+            if (ctx.state.mode === "overflow") {
+              record(ctx, "upstream");
+              record(ctx, "extra");
+              record(ctx, "overflow");
+            }
+          },
+          onStreamEvent(ctx) {
+            record(ctx, "stream");
+          },
         },
-        onStreamEvent(ctx) {
-          record(ctx, "stream");
-        },
-      }],
+      ],
     },
   },
   models: {
     chat: {
       provider: "p",
       upstream: "real-model",
-      pipeline: [{
-        name: "model",
-        async beforeSend(ctx) {
-          record(ctx, "model");
-          ctx.state.committed = "model";
-          const mode = ctx.state.mode;
-          if (["throw", "observer_error", "observer_budget", "promise", "cycle", "url", "header"].includes(mode)) {
-            record(ctx, "extra");
-            record(ctx, "overflow");
-          }
-          if (["throw", "observer_error", "observer_budget"].includes(mode)) {
-            throw new Error("synthetic-private-value");
-          }
-          if (mode === "promise") await Promise.reject(new Error("synthetic-private-value"));
-          if (mode === "cycle") ctx.body.cycle = ctx.body;
-          if (mode === "url") ctx.url = "file:///synthetic-private-value";
-          if (mode === "header") ctx.headers.set("content-type", "synthetic-private-value");
-          if (mode === "reject") ctx.reject(403);
+      pipeline: [
+        {
+          name: "model",
+          async beforeSend(ctx) {
+            record(ctx, "model");
+            ctx.state.committed = "model";
+            const mode = ctx.state.mode;
+            if (
+              [
+                "throw",
+                "observer_error",
+                "observer_budget",
+                "promise",
+                "cycle",
+                "url",
+                "header",
+              ].includes(mode)
+            ) {
+              record(ctx, "extra");
+              record(ctx, "overflow");
+            }
+            if (["throw", "observer_error", "observer_budget"].includes(mode)) {
+              throw new Error("synthetic-private-value");
+            }
+            if (mode === "promise") await Promise.reject(new Error("synthetic-private-value"));
+            if (mode === "cycle") ctx.body.cycle = ctx.body;
+            if (mode === "url") ctx.url = "file:///synthetic-private-value";
+            if (mode === "header") ctx.headers.set("content-type", "synthetic-private-value");
+            if (mode === "reject") ctx.reject(403);
+          },
+          onUpstreamEvent(ctx) {
+            if (ctx.state.mode === "overflow") return;
+            record(ctx, "model");
+            if (ctx.state.mode === "event") {
+              record(ctx, "extra");
+              record(ctx, "overflow");
+              ctx.state.discarded = true;
+              ctx.event.choices[0].delta.content = 7;
+            }
+          },
         },
-        onUpstreamEvent(ctx) {
-          if (ctx.state.mode === "overflow") return;
-          record(ctx, "model");
-          if (ctx.state.mode === "event") {
-            record(ctx, "extra");
-            record(ctx, "overflow");
-            ctx.state.discarded = true;
-            ctx.event.choices[0].delta.content = 7;
-          }
-        },
-      }],
+      ],
     },
   },
 };

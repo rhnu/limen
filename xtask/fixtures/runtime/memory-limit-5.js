@@ -1,1 +1,5 @@
-export default { onRequest() { return Promise.reject({ message: 'out of memory' }); } };
+export default {
+  onRequest() {
+    return Promise.reject({ message: "out of memory" });
+  },
+};

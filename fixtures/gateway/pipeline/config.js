@@ -25,8 +25,7 @@ export default {
             ctx.headers.set("X-Draft", "provider");
           },
           onResponse(ctx) {
-            ctx.body.choices[0].message.content =
-              "hello " + ctx.body.choices[0].message.content;
+            ctx.body.choices[0].message.content = "hello " + ctx.body.choices[0].message.content;
           },
         },
       ],
@@ -61,9 +60,7 @@ export default {
                   ...ctx.body.choices[0],
                   message: {
                     ...ctx.body.choices[0].message,
-                    content:
-                      ctx.body.choices[0].message.content.toUpperCase() +
-                      ctx.state.suffix,
+                    content: ctx.body.choices[0].message.content.toUpperCase() + ctx.state.suffix,
                   },
                 },
               ],

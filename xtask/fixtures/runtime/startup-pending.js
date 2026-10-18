@@ -1,1 +1,2 @@
-await new Promise(() => {}); export default {};
+await new Promise(() => {});
+export default {};

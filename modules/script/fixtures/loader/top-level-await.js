@@ -4,5 +4,5 @@ export default {
   onRequest(ctx) {
     ctx.state.answer = answer;
     ctx.state.hostApis = [typeof fetch, typeof process, typeof setTimeout];
-  }
+  },
 };

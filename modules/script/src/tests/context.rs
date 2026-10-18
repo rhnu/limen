@@ -417,15 +417,7 @@ async fn stream() -> TestResult {
 async fn stream_envelope_is_an_owned_readonly_view_independent_of_data_edits() -> TestResult {
     let fixture = Fixture::new()?;
     let (runtime, config) = fixture
-        .start(
-            r"
-        export default { providers:{}, models:{}, onRequest(ctx) {
-            if (ctx.meta.operation === 'field') ctx.sse.event = 'changed';
-            else if (ctx.meta.operation === 'replace') ctx.sse = null;
-            else { ctx.state.envelope = ctx.sse; ctx.event = {annotations:[]}; }
-        }};
-    ",
-        )
+        .start(include_str!("../../fixtures/context/stream-envelope.js"))
         .await?;
     let id = hook(&config, "onRequest")?;
     let envelope = json!({"event":"annotation","id":"frame-1","retry":"1500"});
@@ -534,7 +526,7 @@ fn private_projection_preserves_readonly_facts_for_every_stage() -> TestResult {
             let input = ctx.json_parse(input.to_string())?;
             let prepare = bridge.prepare.clone().restore(&ctx)?;
             let draft: rquickjs::Value = prepare.call((input, phase))?;
-            let inspect: Function = ctx.eval("(ctx => { if (!Object.isFrozen(ctx.meta) || !Object.isFrozen(ctx.client) || !Object.isFrozen(ctx.client.headers)) throw Error(); const values=ctx.client.headers.getAll('x-original'); values[0]='changed'; if(ctx.client.headers.getAll('X-Original')[0]!=='first') throw Error(); })")?;
+            let inspect: Function = ctx.eval(include_str!("../../fixtures/context/inspect-readonly.js"))?;
             inspect.call::<_, ()>((draft.clone(),))?;
             let project = bridge.project.clone().restore(&ctx)?;
             let envelope: Object = project.call((draft,))?;

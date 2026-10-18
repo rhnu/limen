@@ -1,1 +1,2 @@
-missingSyntheticBinding(); export default {};
+missingSyntheticBinding();
+export default {};

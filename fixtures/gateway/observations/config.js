@@ -19,12 +19,14 @@ export default {
   providers: {
     p: {
       endpoint,
-      pipeline: [{
-        name: "failure",
-        beforeSend(ctx) {
-          if (ctx.state.mode === "bad") throw new Error("synthetic-body-secret");
+      pipeline: [
+        {
+          name: "failure",
+          beforeSend(ctx) {
+            if (ctx.state.mode === "bad") throw new Error("synthetic-body-secret");
+          },
         },
-      }],
+      ],
     },
   },
   models: { chat: { provider: "p", upstream: "real-model" } },

@@ -1,1 +1,2 @@
-await Promise.reject(new RangeError('synthetic-secret')); export default {};
+await Promise.reject(new RangeError("synthetic-secret"));
+export default {};

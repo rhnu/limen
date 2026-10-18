@@ -36,8 +36,7 @@ export default {
             if (typeof delta?.content === "string") delta.content = "[" + delta.content;
           },
           onResponse(ctx) {
-            ctx.body.choices[0].message.content =
-              "[" + ctx.body.choices[0].message.content;
+            ctx.body.choices[0].message.content = "[" + ctx.body.choices[0].message.content;
           },
         },
       ],

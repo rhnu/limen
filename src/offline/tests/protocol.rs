@@ -143,24 +143,12 @@ async fn named_frame_metadata_is_frozen_and_provider_model_hooks_stay_ordered() 
     let bytes = format!(
         ": heartbeat\n\nevent: update\nid: frame-1\nretry: 1500\ndata: {event}\n\ndata: [DONE]\n\n"
     );
-    let provider = r"{ name: 'provider',
-        onUpstreamEvent(ctx) {
-            if (!Object.isFrozen(ctx.sse)) throw new Error('metadata not frozen');
-            let rejected = false;
-            try { ctx.sse.id = 'changed'; } catch { rejected = true; }
-            if (!rejected) throw new Error('metadata writable');
-            ctx.state.order = ['provider-upstream'];
-            ctx.state.metadata = ctx.sse;
-        },
-        onStreamEvent(ctx) {
-            ctx.state.order.push('provider-stream');
-            ctx.state.streamMetadata = ctx.sse;
-        }
-    }";
-    let model = r"{ name: 'model',
-        onUpstreamEvent(ctx) { ctx.state.order.push('model-upstream'); },
-        onStreamEvent(ctx) { ctx.state.order.push('model-stream'); }
-    }";
+    let provider = include_str!("../../../fixtures/gateway/protocol-unit/provider-metadata.js")
+        .trim()
+        .trim_end_matches(';');
+    let model = include_str!("../../../fixtures/gateway/protocol-unit/model-metadata.js")
+        .trim()
+        .trim_end_matches(';');
     let metadata = json!({"event":"update","id":"frame-1","retry":"1500"});
     let expect = json!({"sent":true,"response":{"status":200,"events":aliased(&[event]),"done":true},
         "state":{"order":["provider-upstream","model-upstream","provider-stream","model-stream"],
@@ -223,16 +211,9 @@ async fn json_conversion_exposes_all_semantic_fields_to_stream_hooks() {
         json!({"content":[{"token":"hello","logprob":-0.1,"bytes":[104],"top_logprobs":[]}]});
     let body = json!({"id":"protocol","object":"chat.completion","created":1,"model":"real-model",
         "choices":[{"index":0,"message":message,"annotations":annotations,"logprobs":logprobs,"finish_reason":"stop"}]});
-    let inspect = r"{ name: 'inspect', onStreamEvent(ctx) {
-        if (ctx.sse !== null) throw new Error('synthetic transport metadata');
-        const choice = ctx.event.choices[0];
-        if (!choice) return;
-        ctx.state.message ||= {};
-        Object.assign(ctx.state.message, choice.delta || {});
-        if ('annotations' in choice) ctx.state.annotations = choice.annotations;
-        if ('logprobs' in choice) ctx.state.logprobs = choice.logprobs;
-        if (choice.finish_reason) ctx.state.finish = choice.finish_reason;
-    } }";
+    let inspect = include_str!("../../../fixtures/gateway/protocol-unit/inspect-conversion.js")
+        .trim()
+        .trim_end_matches(';');
     assert_passed(&run(Input::Json(body), true, [inspect,""],
         json!({"response":{"status":200,"done":true},
             "state":{"message":message,"annotations":annotations,"logprobs":logprobs,"finish":"stop"},

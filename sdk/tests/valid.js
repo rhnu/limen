@@ -10,43 +10,46 @@ export const config = {
       auth: { bearer: limen.env("UPSTREAM_API_KEY") ?? "example-upstream-token" },
       headers: { "X-App-Name": "Limen" },
       defaults: { temperature: 0.7, extension: { enabled: true, values: [null, 1] } },
-      pipeline: [{
-        name: "provider",
-        beforeSend(ctx) {
-          if (ctx.client.headers.getAll("x-client-name").includes("unsupported")) return ctx.reject(403);
-          ctx.state.calls = (ctx.state.calls ?? 0) + 1;
-          ctx.state.details = { tags: [ctx.meta.provider] };
-          ctx.body.max_completion_tokens = 1024;
-          delete ctx.body.store;
-          ctx.url = "https://fictional.invalid/custom/chat/completions";
-          ctx.headers.append("x-trace", ctx.meta.requestId);
-          ctx.headers.set("authorization", "Bearer example-upstream-token");
-          ctx.headers.delete("x-obsolete");
-          ctx.headers.getAll("x-trace").push("detached-array");
-          /** @type {null} */
-          const status = ctx.meta.upstreamStatus;
-          void status;
+      pipeline: [
+        {
+          name: "provider",
+          beforeSend(ctx) {
+            if (ctx.client.headers.getAll("x-client-name").includes("unsupported"))
+              return ctx.reject(403);
+            ctx.state.calls = (ctx.state.calls ?? 0) + 1;
+            ctx.state.details = { tags: [ctx.meta.provider] };
+            ctx.body.max_completion_tokens = 1024;
+            delete ctx.body.store;
+            ctx.url = "https://fictional.invalid/custom/chat/completions";
+            ctx.headers.append("x-trace", ctx.meta.requestId);
+            ctx.headers.set("authorization", "Bearer example-upstream-token");
+            ctx.headers.delete("x-obsolete");
+            ctx.headers.getAll("x-trace").push("detached-array");
+            /** @type {null} */
+            const status = ctx.meta.upstreamStatus;
+            void status;
+          },
+          async afterReceive(ctx) {
+            await Promise.resolve();
+            if (ctx.meta.upstreamStatus === 429) ctx.status = 503;
+            ctx.headers.set("retry-after", "3");
+            ctx.state.calls = 2;
+          },
+          onResponse(ctx) {
+            ctx.body.extension = { source: ctx.meta.upstreamContentType, values: [null, true] };
+            ctx.body = { ...ctx.body, model: ctx.meta.model };
+          },
+          async onUpstreamEvent(ctx) {
+            await Promise.resolve();
+            ctx.event.extension = { phase: ctx.meta.phase };
+            ctx.replaceEvents([ctx.event, { ...ctx.event, choices: [] }]);
+          },
+          onStreamEvent(ctx) {
+            if (ctx.event.choices?.length === 0) ctx.replaceEvents([]);
+            else ctx.event.model = ctx.meta.model;
+          },
         },
-        async afterReceive(ctx) {
-          await Promise.resolve();
-          if (ctx.meta.upstreamStatus === 429) ctx.status = 503;
-          ctx.headers.set("retry-after", "3");
-          ctx.state.calls = 2;
-        },
-        onResponse(ctx) {
-          ctx.body.extension = { source: ctx.meta.upstreamContentType, values: [null, true] };
-          ctx.body = { ...ctx.body, model: ctx.meta.model };
-        },
-        async onUpstreamEvent(ctx) {
-          await Promise.resolve();
-          ctx.event.extension = { phase: ctx.meta.phase };
-          ctx.replaceEvents([ctx.event, { ...ctx.event, choices: [] }]);
-        },
-        onStreamEvent(ctx) {
-          if (ctx.event.choices?.length === 0) ctx.replaceEvents([]);
-          else ctx.event.model = ctx.meta.model;
-        },
-      }],
+      ],
     },
   },
   models: {
@@ -78,7 +81,15 @@ export const config = {
     const code = ctx.error.code;
     /** @type {string | null} */
     const model = ctx.meta.model;
-    void [outcome, code, model, ctx.error.status, ctx.error.request_id, ctx.error.phase, ctx.error.step];
+    void [
+      outcome,
+      code,
+      model,
+      ctx.error.status,
+      ctx.error.request_id,
+      ctx.error.phase,
+      ctx.error.step,
+    ];
   },
   async onErrorResponse(ctx) {
     await Promise.resolve();
@@ -106,11 +117,23 @@ export const config = {
     const tags = ctx.state.details?.tags;
     const usage = ctx.stats.usage;
     const timing = ctx.stats.timings.hooks.beforeSend;
-    void [usage.quality, usage.cachedInputTokens, ctx.stats.timings.requestMs, timing?.queue.samples];
-    tags?.map(tag => tag.toUpperCase());
-    void [ctx.stats.inputBytes, ctx.stats.outboundBytes, ctx.stats.upstreamBytes,
-      ctx.stats.outputBytes, ctx.stats.upstreamHeadersMs, ctx.stats.elapsedMs,
-      ctx.stats.finalUpstreamModel, ctx.stats.target];
+    void [
+      usage.quality,
+      usage.cachedInputTokens,
+      ctx.stats.timings.requestMs,
+      timing?.queue.samples,
+    ];
+    tags?.map((tag) => tag.toUpperCase());
+    void [
+      ctx.stats.inputBytes,
+      ctx.stats.outboundBytes,
+      ctx.stats.upstreamBytes,
+      ctx.stats.outputBytes,
+      ctx.stats.upstreamHeadersMs,
+      ctx.stats.elapsedMs,
+      ctx.stats.finalUpstreamModel,
+      ctx.stats.target,
+    ];
   },
 };
 
@@ -131,18 +154,27 @@ export const event = {
   object: "chat.completion.chunk",
   created: 1,
   model: "chat",
-  choices: [{
-    index: 0,
-    delta: {
-      role: "assistant",
-      content: null,
-      refusal: null,
-      tool_calls: [{ index: 0, id: "call", type: "function", function: { name: "example", arguments: "{}" } }],
-      extension: [true],
+  choices: [
+    {
+      index: 0,
+      delta: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          {
+            index: 0,
+            id: "call",
+            type: "function",
+            function: { name: "example", arguments: "{}" },
+          },
+        ],
+        extension: [true],
+      },
+      finish_reason: "tool_calls",
+      extension: { ok: true },
     },
-    finish_reason: "tool_calls",
-    extension: { ok: true },
-  }],
+  ],
   usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   extension: [null, "preserved"],
 };

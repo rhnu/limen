@@ -26,9 +26,16 @@ capCompletionTokens({ name: "bad", max: 64, onRequest() {} });
 policies[0].beforeSend({});
 /** @type {import("../limen").PipelineStep} */
 // @ts-expect-error A step must choose native execution or JavaScript hooks.
-export const mixed = { name: "mixed", builtin: { kind: "capCompletionTokens", max: 1 }, beforeSend() {} };
+export const mixed = {
+  name: "mixed",
+  builtin: { kind: "capCompletionTokens", max: 1 },
+  beforeSend() {},
+};
 /** @type {import("../limen").PipelineStep} */
 // @ts-expect-error Unknown native descriptor kinds are rejected.
 export const unknown = { name: "unknown", builtin: { kind: "unknown" } };
 /** @type {import("../limen").PipelineStep} */
-export const descriptor = { name: "literal", builtin: { kind: "dropRequestFields", fields: ["store"] } };
+export const descriptor = {
+  name: "literal",
+  builtin: { kind: "dropRequestFields", fields: ["store"] },
+};

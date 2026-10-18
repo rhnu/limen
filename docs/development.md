@@ -71,12 +71,12 @@ pnpm api:check
 pnpm build:examples
 pnpm check:types
 pnpm lint:web
-pnpm format:web:check
+pnpm format:check
 pnpm test:web
 pnpm build:web
 ```
 
-需要格式化前端时运行 `pnpm format:web`。Oxlint 的显式配置启用 React Hooks、可访问性、导入、Promise、Vitest 及类型感知检查，警告和失效的禁用注释都会导致失败；Oxfmt 统一负责格式。生成目录由生成器维护，不手工格式化或修补，仍参与 TypeScript 和生成一致性检查。前端启用 `exactOptionalPropertyTypes`、索引可空、返回路径和未使用声明等检查；缺省可选字段时省略属性，只有契约明确允许时才传 `undefined`，不能用 lint ignore 或 `skipLibCheck` 绕过导入源码的编译。
+需要格式化时运行根目录的 `pnpm format`。Oxfmt 由根包管理，覆盖仓库中的 JavaScript、TypeScript 和前端资源，包括 Rust 通过 `include_str!` 内嵌的桥接脚本、内置模块源码、SDK、示例、构建工具与测试素材；遵守 `.gitignore`，并通过根 `.oxfmtignore` 排除生成客户端与故意语法错误的诊断素材。独立脚本应放在 JS 文件中再由 Rust 引用，避免格式检查遗漏字符串中的实现。生成目录由生成器维护，不手工格式化或修补，仍参与 TypeScript 和生成一致性检查。Oxlint 的显式配置启用 React Hooks、可访问性、导入、Promise、Vitest 及类型感知检查，警告和失效的禁用注释都会导致失败。前端启用 `exactOptionalPropertyTypes`、索引可空、返回路径和未使用声明等检查；缺省可选字段时省略属性，只有契约明确允许时才传 `undefined`，不能用 lint ignore 或 `skipLibCheck` 绕过导入源码的编译。
 
 路由层维护 hash 路由、懒加载、错误边界和 URL 参数；Valibot 将筛选输入解析为规范化状态。查询定义集中管理查询键、API 参数和取消信号，页面组合查询与呈现，不另建 loader 数据缓存。会话层维护凭据和恢复验证，退出时取消请求并清空查询数据；游标状态独立于展示组件，最多保留 100 页。新增能力应沿这些职责接入，避免在页面中重新解析同一参数或存储一份服务端状态。
 
@@ -91,6 +91,8 @@ pnpm build:web
 公开模块的源入口位于 `modules/script/src/builtins/`，共享实现放在其 `internal/` 子目录，通过显式 ESM 导入引用。运行 `pnpm build:scripts` 使用现有 esbuild 生成 `modules/script/dist/`，该目录不提交；修改入口或私有依赖后须重新打包，再运行 Rust 检查。Rust 固定注册表嵌入打包入口，新增入口须同时登记公开模块名。CI 在 Rust 编译前打包；Docker 的 Node 构建阶段生成相同产物，并交给 cargo-chef 与最终 Rust 构建。
 
 请求级注入能力与公开 ESM 工具分开维护。新增上下文能力应在私有桥接装配中显式接入，明确适用阶段、每调用状态和候选输出；需要跨调用复用的 ECMAScript 内置函数在用户模块执行前捕获。JSON 编解码与调度器不承担具体能力的实现，能力本身不得提前提交请求状态。核心桥接 JS 与公开内置模块都参加脚本类型检查，运行行为继续由真实 QuickJS 测试验证。
+
+桥接脚本在顶层启用严格模式，在块中声明带 JSDoc 的工厂，以块末尾的工厂函数引用作为 `eval` 的结果；严格模式的块作用域避免工厂名进入全局。不要改成注释位于括号内的匿名函数表达式：Oxfmt 会移动注释，使 TypeScript 丢失参数类型。
 
 新增 SDK 工具先判断它是否参与管线执行。普通辅助函数通过内置模块导出；确定性管线策略使用 `builtin.kind` 的显式枚举，保留自定义 JS hook 作为独立 step。不要为某个工具另开全局命名空间、私有加载器或绕过网关校验的执行路径。模块注册、外部类型和运行时实现保持单一来源，不复制运行时 JS 到 `sdk/`、示例或 `local/`。
 

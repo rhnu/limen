@@ -15,12 +15,13 @@
     "dev:web": "pnpm --filter @limen/web dev",
     "check:types": "tsc --project tsconfig.json && tsc --project modules/script/tsconfig.json && tsc --project examples/libraries/tsconfig.json && pnpm --filter @limen/web check:types",
     "lint:web": "pnpm --filter @limen/web lint",
-    "format:web": "pnpm --filter @limen/web exec oxfmt --write --ignore-path .oxfmtignore .",
-    "format:web:check": "pnpm --filter @limen/web format:check",
+    "format": "oxfmt --write --ignore-path .gitignore --ignore-path .oxfmtignore \"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}\" web",
+    "format:check": "oxfmt --check --ignore-path .gitignore --ignore-path .oxfmtignore \"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}\" web",
     "test:web": "pnpm --filter @limen/web test"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
+    "oxfmt": "0.73.0",
     "typescript": "7.0.2",
     "valibot": "1.5.0"
   }

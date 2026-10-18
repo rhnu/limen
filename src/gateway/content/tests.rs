@@ -7,9 +7,10 @@ use super::{super::observations::Observations, *};
 use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
 async fn configured() -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
-    configured_with(r"export default {
-        providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'replace',builtin:{kind:'replaceText',search:'ab',replacement:'ZZ',maxBufferedChars:1}}]}},
-        models:{chat:{provider:'p',upstream:'native'}}};").await
+    configured_with(include_str!(
+        "../../../fixtures/gateway/content-unit/config.js"
+    ))
+    .await
 }
 
 async fn configured_with(script: &str) -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
@@ -222,10 +223,10 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separate() {
-    let (_directory, loaded, gateway) = configured_with(r"export default {
-        providers:{p:{endpoint:'https://synthetic.invalid/chat',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'ab',replacement:'bc',maxBufferedChars:1}}]}},
-        models:{chat:{provider:'p',upstream:'first',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'bc',replacement:'ZZ',maxBufferedChars:1}}]},
-        alias:{provider:'p',upstream:'second',pipeline:[{name:'same',builtin:{kind:'replaceText',search:'bc',replacement:'ZZ',maxBufferedChars:1}}]}}};").await;
+    let (_directory, loaded, gateway) = configured_with(include_str!(
+        "../../../fixtures/gateway/content-unit/aliases.js"
+    ))
+    .await;
     let first_route = gateway.plans.route(&gateway.business, "chat").unwrap();
     let second_route = gateway.plans.route(&gateway.business, "alias").unwrap();
     let mut first = gateway.content_projector(&first_route).unwrap();

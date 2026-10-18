@@ -7,5 +7,7 @@ export default {
     }
     ctx.state.done = true;
   },
-  onError(ctx) { ctx.state.started = started; }
+  onError(ctx) {
+    ctx.state.started = started;
+  },
 };

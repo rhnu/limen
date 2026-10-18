@@ -152,27 +152,7 @@ async fn non_json_empty_and_binary_errors_do_not_require_chat_schema() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn error_policy_commits_provider_model_global_in_order_before_readonly_observers() {
-    let policy = r#"
-        config.providers.p.pipeline = [{name:"provider", onErrorResponse(ctx) {
-            ctx.state.order = ["provider"]; ctx.status = 422;
-            const body = JSON.parse(ctx.body); body.provider = true; ctx.body = JSON.stringify(body);
-            ctx.headers.set("x-adapted", "yes"); ctx.observe.record("adapted");
-        }}];
-        config.models.chat.pipeline = [{name:"model", onErrorResponse(ctx) {
-            ctx.state.order.push("model"); const body = JSON.parse(ctx.body);
-            body.model = true; ctx.body = JSON.stringify(body);
-        }}];
-        config.onErrorResponse = async ctx => {
-            await Promise.resolve(); ctx.state.order.push("global"); ctx.status = 409;
-            ctx.contentType = "application/problem+json";
-        };
-        config.onError = ctx => {
-            if (ctx.error.code !== "upstream_failed" || ctx.error.status !== 409
-                || ctx.meta.upstreamStatus !== 429 || ctx.state.order.join() !== "provider,model,global") throw Error();
-            ctx.observe.record("adapted");
-        };
-        config.onFinish = ctx => { if (ctx.outcome !== "failed") throw Error(); };
-    "#;
+    let policy = include_str!("../../../fixtures/gateway/error-response-unit/ordered-policy.js");
     let output = run(
         policy,
         upstream(
@@ -252,14 +232,13 @@ async fn invalid_failed_and_timed_out_error_policies_keep_last_commit_without_re
 
 #[tokio::test(flavor = "current_thread")]
 async fn global_error_policy_handles_unrouted_gateway_failures() {
-    let output = run(r#"
-        config.onRequest = ctx => ctx.reject(403);
-        config.providers.p.pipeline = [{name:"unused", onErrorResponse(ctx) { ctx.state.routed = true; }}];
-        config.onErrorResponse = ctx => {
-            if (ctx.error.code !== "request_rejected" || ctx.meta.provider !== null) throw Error();
-            ctx.status = 422; ctx.body = JSON.stringify({error:{code:"tenant_required"}});
-        };
-    "#, upstream(200, Some("application/json"), b"{}"), false, 4096).await;
+    let output = run(
+        include_str!("../../../fixtures/gateway/error-response-unit/unrouted-policy.js"),
+        upstream(200, Some("application/json"), b"{}"),
+        false,
+        4096,
+    )
+    .await;
     assert_eq!(output.status, 422);
     assert_eq!(
         serde_json::from_slice::<Value>(&output.body).unwrap(),

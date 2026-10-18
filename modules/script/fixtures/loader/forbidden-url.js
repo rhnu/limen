@@ -1,1 +1,2 @@
-import 'https://fictional.invalid/config.js'; export default {};
+import "https://fictional.invalid/config.js";
+export default {};

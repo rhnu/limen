@@ -1,1 +1,2 @@
-import 'node:fs'; export default {};
+import "node:fs";
+export default {};

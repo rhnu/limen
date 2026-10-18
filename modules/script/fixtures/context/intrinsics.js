@@ -1,9 +1,21 @@
 const NativeError = Error;
 const reflectSet = Reflect.set;
 let touched = 0;
-const trap = () => { touched++; throw new NativeError("intrinsic replacement invoked"); };
+const trap = () => {
+  touched++;
+  throw new NativeError("intrinsic replacement invoked");
+};
 // Replace globals during module evaluation, before configuration hooks are extracted.
-for (const key of ["getPrototypeOf", "getOwnPropertyDescriptor", "defineProperty", "freeze", "seal", "create", "setPrototypeOf"]) Object[key] = trap;
+for (const key of [
+  "getPrototypeOf",
+  "getOwnPropertyDescriptor",
+  "defineProperty",
+  "freeze",
+  "seal",
+  "create",
+  "setPrototypeOf",
+])
+  Object[key] = trap;
 Reflect.ownKeys = trap;
 Array.isArray = trap;
 JSON.stringify = trap;
@@ -14,7 +26,8 @@ RegExp.prototype.test = trap;
 Function.prototype.call = trap;
 export default {
   onRequest(ctx) {
-    if (touched !== 0 || reflectSet(ctx.meta, "phase", "forged")) throw new NativeError("intrinsics or readonly facts changed");
+    if (touched !== 0 || reflectSet(ctx.meta, "phase", "forged"))
+      throw new NativeError("intrinsics or readonly facts changed");
     ctx.observe.record("changed");
     if (ctx.meta.phase === "beforeSend") {
       ctx.headers.set("X-Example", "isolated");

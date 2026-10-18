@@ -1,1 +1,2 @@
-while (true) {} export default {};
+while (true) {}
+export default {};

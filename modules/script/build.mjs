@@ -8,8 +8,8 @@ import { build } from "esbuild";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const sources = await readdir(new URL("src/builtins/", import.meta.url), { withFileTypes: true });
 const entryPoints = sources
-  .filter(entry => entry.isFile() && entry.name.endsWith(".js"))
-  .map(entry => `modules/script/src/builtins/${entry.name}`)
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+  .map((entry) => `modules/script/src/builtins/${entry.name}`)
   .sort();
 
 // Remove only this fixed generated directory, never a caller-selected path.

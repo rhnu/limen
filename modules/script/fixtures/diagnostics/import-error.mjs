@@ -1,2 +1,2 @@
 // synthetic module
-throw new Error('synthetic-secret');
+throw new Error("synthetic-secret");

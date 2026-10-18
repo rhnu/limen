@@ -4,9 +4,13 @@ import { descriptor } from "./internal/descriptor.js";
 /** @typedef {import("../../../../sdk/limen").JsonObject} JsonObject */
 
 /** @returns {never} */
-function invalid() { throw new TypeError("invalid content policy configuration"); }
+function invalid() {
+  throw new TypeError("invalid content policy configuration");
+}
 /** @returns {never} */
-function failed() { throw new Error("invalid content policy input"); }
+function failed() {
+  throw new Error("invalid content policy input");
+}
 /** @param {unknown} value @returns {number} */
 function positive(value) {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) invalid();
@@ -14,20 +18,28 @@ function positive(value) {
 }
 /** @param {unknown} value @returns {string} */
 function name(value) {
-  if (typeof value !== "string" || value.length === 0 || value.length > 128
-      || /[^A-Za-z0-9._/-]/.test(value)) invalid();
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 128 ||
+    /[^A-Za-z0-9._/-]/.test(value)
+  )
+    invalid();
   return value;
 }
 /** @param {JsonObject} state @param {string} key @returns {JsonObject[]} */
 function parts(state, key) {
   const value = state[key];
-  if (value === undefined) { state[key] = []; return /** @type {JsonObject[]} */ (state[key]); }
+  if (value === undefined) {
+    state[key] = [];
+    return /** @type {JsonObject[]} */ (state[key]);
+  }
   if (!Array.isArray(value)) failed();
   return /** @type {JsonObject[]} */ (value);
 }
 /** @param {JsonObject[]} entries @param {{choice:number,part:string}} event */
 function find(entries, event) {
-  return entries.findIndex(entry => entry.choice === event.choice && entry.part === event.part);
+  return entries.findIndex((entry) => entry.choice === event.choice && entry.part === event.part);
 }
 
 /**
@@ -43,7 +55,11 @@ export function mapPartText(options) {
   const key = options.stateKey === undefined ? `content/map/${step}` : name(options.stateKey);
   if (!Array.isArray(options.kinds) || options.kinds.length === 0) invalid();
   const kinds = Object.freeze([...options.kinds]);
-  if (new Set(kinds).size !== kinds.length || kinds.some(kind => !["text", "reasoning", "refusal", "tool"].includes(kind))) invalid();
+  if (
+    new Set(kinds).size !== kinds.length ||
+    kinds.some((kind) => !["text", "reasoning", "refusal", "tool"].includes(kind))
+  )
+    invalid();
   const transform = options.transform;
   if (typeof transform !== "function") invalid();
   return Object.freeze({
@@ -66,16 +82,22 @@ export function mapPartText(options) {
           ctx.replaceEvents(event.tool === undefined ? [] : [{ ...event, text: "" }]);
         } else {
           const info = {
-            choice: event.choice, part: event.part,
+            choice: event.choice,
+            part: event.part,
             kind: /** @type {import("limen:content").PartTextKind} */ (entry.kind),
             ...(event.finishReason === undefined ? {} : { finishReason: event.finishReason }),
           };
           const mapped = transform(text, Object.freeze(info));
           if (typeof mapped !== "string") failed();
           entries.splice(index, 1);
-          ctx.replaceEvents(mapped === "" ? [event] : [
-            { type: "part_delta", choice: event.choice, part: event.part, text: mapped }, event,
-          ]);
+          ctx.replaceEvents(
+            mapped === ""
+              ? [event]
+              : [
+                  { type: "part_delta", choice: event.choice, part: event.part, text: mapped },
+                  event,
+                ],
+          );
         }
       } else if (event.type === "response_end") {
         if (entries.length !== 0) failed();
@@ -85,12 +107,21 @@ export function mapPartText(options) {
   });
 }
 
-
 /** @param {import("limen:content").ReplaceTextOptions} options */
 export function replaceText(options) {
-  return descriptor(options, "replaceText", ["search", "replacement", "maxBufferedChars", "maxParts"]);
+  return descriptor(options, "replaceText", [
+    "search",
+    "replacement",
+    "maxBufferedChars",
+    "maxParts",
+  ]);
 }
 /** @param {import("limen:content").SyntheticTextToolOptions} options */
 export function syntheticTextTool(options) {
-  return descriptor(options, "syntheticTextTool", ["toolName", "maxBufferedChars", "maxParts", "maxPendingEvents"]);
+  return descriptor(options, "syntheticTextTool", [
+    "toolName",
+    "maxBufferedChars",
+    "maxParts",
+    "maxPendingEvents",
+  ]);
 }

@@ -77,25 +77,7 @@ pub(super) async fn startup(fixture: &Fixture) -> TestResult {
 pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
     let path = fixture.write(
         "config.js",
-        r"
-        function deep(ctx) {
-            if (ctx.state.input) {
-                let value = (ctx.meta.phase === 'onStreamEvent' ? ctx.event : ctx.body).nested, depth = 0;
-                while (Array.isArray(value)) { value = value[0]; depth++; }
-                ctx.state.inputArrays = depth;
-                if (ctx.meta.phase === 'onStreamEvent') ctx.event = {};
-                else ctx.body = {};
-                return;
-            }
-            let nested = null;
-            for (let i = 0; i < ctx.state.arrays; i++) nested = [nested];
-            if (ctx.meta.phase === 'onStreamEvent') ctx.event = {nested};
-            else ctx.body = {nested};
-        }
-        export default {providers: {p: {endpoint: 'https://example.invalid',
-            pipeline: [{name: 'deep', onStreamEvent: deep}]}},
-            models: {m: {provider: 'p', upstream: 'm'}}, onRequest: deep};
-        ",
+        include_str!("../../fixtures/runtime/json-depth-hooks.js"),
     )?;
     let (runtime, config) = ScriptRuntime::start(path, options()).await?;
     let stream_hook = config["providers"]["p"]["pipeline"][0]["onStreamEvent"]
@@ -167,18 +149,7 @@ pub(super) async fn hooks(fixture: &Fixture) -> TestResult {
 pub(super) async fn stack_limit(fixture: &Fixture) -> TestResult {
     let path = fixture.write(
         "config.js",
-        r"
-        function recurse(left) { return left === 0 ? 0 : 1 + recurse(left - 1); }
-        export default {onRequest(ctx) {
-            if (ctx.state.recurse) ctx.state.value = recurse(100000);
-            else if (ctx.state.deep) {
-                let nested = null;
-                for (let i = 0; i < 125; i++) nested = [nested];
-                ctx.body = {nested};
-            }
-            else ctx.state.value = 1;
-        }};
-        ",
+        include_str!("../../fixtures/runtime/stack-limit.js"),
     )?;
     // Exercise the standalone default, service default and service upper bound.
     for stack_limit in [

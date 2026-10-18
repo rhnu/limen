@@ -88,10 +88,10 @@ jobs:
         run: pnpm api:check
       - name: Check JavaScript and declaration contracts
         run: pnpm check:types
-      - name: Lint and format frontend
+      - name: Lint frontend and check JavaScript formatting
         run: |
           pnpm lint:web
-          pnpm format:web:check
+          pnpm format:check
       - name: Frontend logic tests
         run: pnpm test:web
 

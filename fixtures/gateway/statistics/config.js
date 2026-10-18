@@ -18,14 +18,28 @@ function checkStats(ctx) {
   require(typeof timings.requestMs === "number");
   require(!("onError" in timings.hooks) && !("onFinish" in timings.hooks));
   for (const mutate of [
-    () => { usage.inputTokens = 999; },
-    () => { timings.requestMs = 999; },
-    () => { timings.hooks.onRequest.queue.samples = 999; },
-    () => { delete usage.quality; },
-    () => { ctx.stats.usage = {}; },
+    () => {
+      usage.inputTokens = 999;
+    },
+    () => {
+      timings.requestMs = 999;
+    },
+    () => {
+      timings.hooks.onRequest.queue.samples = 999;
+    },
+    () => {
+      delete usage.quality;
+    },
+    () => {
+      ctx.stats.usage = {};
+    },
   ]) {
     let rejected = false;
-    try { mutate(); } catch { rejected = true; }
+    try {
+      mutate();
+    } catch {
+      rejected = true;
+    }
     require(rejected);
   }
   return { usage, timings };
@@ -53,25 +67,27 @@ export default {
   providers: {
     p: {
       endpoint,
-      pipeline: [{
-        name: "statistics-transform",
-        beforeSend() {},
-        afterReceive() {},
-        onResponse(ctx) {
-          if (ctx.state.mode === "rewrite") ctx.body.usage = rewrittenUsage();
-          else delete ctx.body.usage;
-        },
-        onUpstreamEvent(ctx) {
-          if (ctx.event.usage && ctx.state.mode === "rewrite") {
-            ctx.event.usage = rewrittenUsage();
-          } else {
+      pipeline: [
+        {
+          name: "statistics-transform",
+          beforeSend() {},
+          afterReceive() {},
+          onResponse(ctx) {
+            if (ctx.state.mode === "rewrite") ctx.body.usage = rewrittenUsage();
+            else delete ctx.body.usage;
+          },
+          onUpstreamEvent(ctx) {
+            if (ctx.event.usage && ctx.state.mode === "rewrite") {
+              ctx.event.usage = rewrittenUsage();
+            } else {
+              delete ctx.event.usage;
+            }
+          },
+          onStreamEvent(ctx) {
             delete ctx.event.usage;
-          }
+          },
         },
-        onStreamEvent(ctx) {
-          delete ctx.event.usage;
-        },
-      }],
+      ],
     },
   },
   models: { chat: { provider: "p", upstream: "real-model" } },
