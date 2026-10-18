@@ -53,44 +53,46 @@ async fn serve(
 
 /// Resolve only the public build outputs; never decode or normalize URL paths.
 fn resource(path: &str) -> Option<(&str, &'static str, &'static str)> {
-    match path {
-        "/" => Some(("index.html", "text/html; charset=utf-8", "no-cache")),
-        "/favicon.svg" => Some(("favicon.svg", "image/svg+xml", "no-cache")),
-        _ => {
-            let asset = path.strip_prefix("/assets/")?;
-            if asset.split('/').any(|part| {
-                part.is_empty()
-                    || part.starts_with('.')
-                    || !part.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                    })
-            }) {
-                return None;
-            }
-            let (_, extension) = asset.rsplit_once('.')?;
-            let content_type = match extension {
-                "js" => "text/javascript; charset=utf-8",
-                "css" => "text/css; charset=utf-8",
-                "svg" => "image/svg+xml",
-                "woff" => "font/woff",
-                "woff2" => "font/woff2",
-                "ttf" => "font/ttf",
-                "otf" => "font/otf",
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "gif" => "image/gif",
-                "webp" => "image/webp",
-                "avif" => "image/avif",
-                "ico" => "image/vnd.microsoft.icon",
-                _ => return None,
-            };
-            Some((
-                &path[1..],
-                content_type,
-                "public, max-age=31536000, immutable",
-            ))
-        },
-    }
+    let (file_path, cache) = match path {
+        "/" => return Some(("index.html", "text/html; charset=utf-8", "no-cache")),
+        "/favicon.svg" => ("favicon.svg", "no-cache"),
+        _ => (asset_path(path)?, "public, max-age=31536000, immutable"),
+    };
+    Some((file_path, asset_content_type(file_path)?, cache))
+}
+
+/// Accept literal asset paths with nonempty, nonhidden ASCII components.
+fn asset_path(path: &str) -> Option<&str> {
+    let asset = path.strip_prefix("/assets/")?;
+    let valid = asset.split('/').all(|part| {
+        !part.is_empty()
+            && !part.starts_with('.')
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    });
+    valid.then_some(&path[1..])
+}
+
+/// This MIME whitelist also limits which embedded asset types are public.
+fn asset_content_type(path: &str) -> Option<&'static str> {
+    let (_, extension) = path.rsplit_once('.')?;
+    Some(match extension {
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/vnd.microsoft.icon",
+        _ => return None,
+    })
 }
 
 fn empty_response(status: StatusCode) -> Response {

@@ -12,6 +12,11 @@ static FILES: Dir<'_> = Dir::new(
         DirEntry::File(File::new("assets/icon-12345678.svg", b"<svg/>")),
         DirEntry::File(File::new("assets/font-12345678.woff2", b"font")),
         DirEntry::File(File::new("assets/image-12345678.png", b"image")),
+        DirEntry::File(File::new(
+            "assets/icons.v2/logo_dark-12345678.svg",
+            b"<svg/>",
+        )),
+        DirEntry::File(File::new("assets/page-12345678.html", b"<html></html>")),
         DirEntry::File(File::new("assets/app-12345678.js.map", b"private")),
         DirEntry::File(File::new("assets/runtime-config.json", b"private")),
         DirEntry::File(File::new("openapi.json", b"private")),
@@ -78,6 +83,7 @@ async fn compiled_assets_have_correct_mime_and_immutable_cache() {
         ("/assets/icon-12345678.svg", "image/svg+xml"),
         ("/assets/font-12345678.woff2", "font/woff2"),
         ("/assets/image-12345678.png", "image/png"),
+        ("/assets/icons.v2/logo_dark-12345678.svg", "image/svg+xml"),
     ] {
         let response = send(Method::GET, path, Body::empty()).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -128,6 +134,7 @@ async fn unknown_and_private_paths_never_fall_back_to_the_shell() {
         "/requests",
         "/assets/",
         "/assets/missing.js",
+        "/assets/page-12345678.html",
         "/assets/app-12345678.js.map",
         "/assets/runtime-config.json",
         "/openapi.json",
