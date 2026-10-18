@@ -52,12 +52,17 @@ jobs:
           sudo apt-get install --no-install-recommends -y build-essential cmake pkg-config
       - name: Install Rusteward
         uses: rhnu/rusteward@main
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.148
+          fallback: none
       - name: Compile check
-        run: cargo check --workspace --all-targets --locked
+        run: cargo check --workspace --all-targets --features isolated-tests --locked
       - name: Format check
         run: cargo dev format --check --diff --locked
       - name: Lint
-        run: cargo dev lint --locked --deny-warnings
+        run: cargo dev lint --features isolated-tests --locked --deny-warnings
       - name: Regular tests
         run: cargo test --workspace --lib --bins --locked
       - name: Bundle the library example

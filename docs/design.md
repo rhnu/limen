@@ -14,7 +14,7 @@
 | `web/`            | 同源只读管理界面、浏览器凭据存储和 hash 导航                           |
 | `sdk/`            | 外部维护的业务脚本类型声明与类型契约检查                               |
 | `api/`            | 管理 API 的 OpenAPI 契约及独立客户端生成工具                           |
-| `xtask`           | 受父进程监督的隔离测试与进程树清理                                     |
+| `xtask`           | nextest 隔离测试入口、进程边界 fixture 与临时目录清理                  |
 
 主应用组合四个职责库；库不初始化进程日志或决定进程退出。依赖和 lint 在 workspace 根集中管理，工程规则见 [`AGENTS.md`](../AGENTS.md)。
 
@@ -404,4 +404,6 @@ logs 参数仅有 `fileId / cursor / limit / minLevel / requestId`，默认 100 
 
 已查注册表与上游的版本快照：rusqlite 0.40.2、tracing-appender 0.2.5、rolling-file 0.2.0、uuid 1.28.0、chrono 0.4.45、subtle 2.6.1。SQLx 不再作为本次实施候选。这里不固定未来 Cargo 的 patch 版本；实际接入重新核对，不因收敛设计就跳过依赖与工具链验证。[注册表](https://crates.io/)、[rusqlite 发布](https://github.com/rusqlite/rusqlite/releases/tag/v0.40.2)、[tracing 发布](https://github.com/tokio-rs/tracing/releases/tag/tracing-appender-0.2.5)、[rolling-file 上游](https://github.com/Axcient/rolling-file-rs)、[UUID 发布](https://github.com/uuid-rs/uuid/releases/tag/v1.28.0)、[chrono 发布](https://github.com/chronotope/chrono/releases/tag/v0.4.45)、[subtle 上游](https://github.com/dalek-cryptography/subtle)
 
-本节额度是首版默认契约，不是性能测试结果。确定性常规测试覆盖配置、权限矩阵、记录转换、汇总/null 语义、游标以及四种 JSON/SSE 离线组合；数据库逻辑可用内存 SQLite。临时文件持久化、锁、磁盘错误、轮换、进程中断、真实 HTTP 和关闭边界放入受监督隔离测试，容器权限与停止宽限单独验证。不编写断言源码或文件布局的测试，不用文档检查代替这些行为验收。未完成的环境验收只记录在路线图。
+本节额度是首版默认契约，不是性能测试结果。确定性常规测试覆盖配置、权限矩阵、记录转换、汇总/null 语义、游标以及四种 JSON/SSE 离线组合；数据库逻辑可用内存 SQLite。临时文件持久化、锁、磁盘错误、轮换、进程中断、真实 HTTP 和关闭边界放入 nextest 监督的隔离测试，容器权限与停止宽限单独验证。不编写断言源码或文件布局的测试，不用文档检查代替这些行为验收。未完成的环境验收只记录在路线图。
+
+隔离测试由 nextest 逐用例启动进程并施加外部期限；可能失控的 VM 工作不进入常规测试进程。Windows 测试进程在派生后代前加入关闭即终止成员的 Job，父进程正常退出或被终止都不能遗留后代。fixture 显式等待真实进程退出，完成后才清理 SQLite、日志和临时文件；取消等待或发出终止命令不代表进程已经退出。真实 Windows 关闭测试通过 ConPTY 发送 Ctrl+C，诊断直接写入文件，终端输出持续有界排空，不改变产品关闭接口。入口、预算与维护约束见[隔离测试](development.md#隔离测试)。

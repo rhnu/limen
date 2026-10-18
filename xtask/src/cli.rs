@@ -1,6 +1,4 @@
-//! Explicit development experiments and internal process entry points.
-
-use std::path::PathBuf;
+//! Explicit opt-in to the nextest isolation profile.
 
 use clap::{Parser, Subcommand};
 
@@ -13,45 +11,22 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Run process-boundary tests in supervised child processes.
+    /// Run boundary tests with nextest's per-test process isolation.
     Test {
-        /// Explicitly opt in to isolated process tests.
         #[arg(long, required = true)]
         isolated: bool,
         #[command(flatten)]
         selection: Selection,
     },
-    #[command(name = "__worker", hide = true)]
-    Worker {
-        family: String,
-        case: String,
-        directory: PathBuf,
-        executable: Option<PathBuf>,
-    },
-    #[cfg(windows)]
-    #[command(name = "__gateway", hide = true)]
-    Gateway {
-        executable: PathBuf,
-        config: PathBuf,
-    },
-    #[cfg(windows)]
-    #[command(name = "__signal", hide = true)]
-    Signal { pid: u32 },
 }
 
 #[derive(clap::Args)]
 pub struct Selection {
-    /// Qualified test names (runtime/name or http/name); omit to run all.
+    /// Exact qualified names from --list; omit to run all isolated tests.
     pub cases: Vec<String>,
-    /// List selected tests without building or starting a worker.
+    /// Build and list available tests without executing them.
     #[arg(long)]
     pub list: bool,
-    /// External seconds per test (runtime: 1..60; HTTP: 5..60).
-    #[arg(long)]
-    pub timeout: Option<f64>,
-    /// Reuse an existing gateway instead of building limen for HTTP tests.
-    #[arg(long)]
-    pub executable: Option<PathBuf>,
 }
 
 #[cfg(test)]

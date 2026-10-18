@@ -24,6 +24,7 @@ pub const PENDING_CONFIG: &str = include_str!("../../fixtures/http/pending.js");
 
 #[derive(Default)]
 pub struct Options<'a> {
+    pub real_signal: bool,
     pub config: Option<&'a str>,
     pub limits: &'a str,
     pub observation_names: &'a [&'a str],
@@ -58,8 +59,14 @@ impl<'a> Laboratory<'a> {
         self.logs.push(log_path.clone());
         let mut fixture = Fixture::start(self.executable, &directory, &log_path, options).await?;
         let result = action(&mut fixture).await;
-        drop(fixture.process);
+        let process_cleanup = fixture.process.close().await;
         let cleanup = fixture.upstream.stop().await;
+        let cleanup = match (process_cleanup, cleanup) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(primary), Err(cleanup)) => {
+                Err(primary.context(format!("upstream cleanup also failed: {cleanup:#}")))
+            },
+        };
         match (result, cleanup) {
             (Ok(()), result) | (result, Ok(())) => result,
             (Err(primary), Err(cleanup)) => {
@@ -182,7 +189,11 @@ impl Fixture {
         let config_path = directory.join("server.yaml");
         fs::write(&config_path, yaml).context("write synthetic HTTP server configuration")?;
         let log = File::create(log_path).context("create HTTP fixture log")?;
-        let process = Gateway::spawn(executable, &config_path, &log)?;
+        let process = if options.real_signal {
+            Gateway::spawn_signalled(executable, &config_path, &log, log_path)?
+        } else {
+            Gateway::spawn(executable, &config_path, &log)?
+        };
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

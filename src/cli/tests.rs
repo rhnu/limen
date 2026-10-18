@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf};
 
-use clap::{Parser, error::ErrorKind};
+use clap::error::ErrorKind;
 
 use super::{Cli, Command, ConfigArgs, TestArgs};
 

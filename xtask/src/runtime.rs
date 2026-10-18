@@ -40,6 +40,8 @@ impl Fixture {
 }
 
 pub const CASES: &[&str] = &[
+    #[cfg(windows)]
+    "process-tree",
     "environment",
     "sync-loop",
     "microtask-loop",
@@ -53,6 +55,10 @@ pub const CASES: &[&str] = &[
 pub async fn run(case: &str, root: PathBuf) -> TestResult {
     let fixture = Fixture::new(root)?;
     match case {
+        #[cfg(windows)]
+        "process-tree" => crate::process::experiments::run(&fixture.root)
+            .await
+            .map_err(Into::into),
         "environment" => environment::run(&fixture).await,
         "sync-loop" | "microtask-loop" | "memory-limit" => retirement(&fixture, case).await,
         "startup-loop" => startup_loop(&fixture).await,

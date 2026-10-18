@@ -1,167 +1,116 @@
-//! Process-tree supervision and gateway ownership for isolated experiments.
+//! Gateway ownership for process-isolated experiments.
 
 use std::{
     fs::File,
     io,
     path::Path,
-    process::{Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
-use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 
+#[cfg(windows)]
+pub mod experiments;
 #[cfg(windows)]
 pub mod windows;
 
-pub enum Outcome {
-    Exited(ExitStatus),
-    TimedOut,
-}
+const POLL: Duration = Duration::from_millis(10);
+const CLEANUP: Duration = Duration::from_secs(3);
 
-/// Retain tree ownership across cancellation until explicit cleanup completes.
-struct Tree {
-    child: Box<dyn ChildWrapper>,
-    armed: bool,
-}
-
-impl Tree {
-    fn kill(&mut self) -> io::Result<()> {
-        match self.child.start_kill() {
-            // POSIX ESRCH: the process group already has no live members.
-            #[cfg(unix)]
-            Err(error) if error.raw_os_error() == Some(3) => Ok(()),
-            result => result,
-        }
-    }
-
-    async fn cleanup(&mut self) -> Result<()> {
-        self.kill().context("terminate child process tree")?;
-        tokio::time::timeout(Duration::from_secs(5), self.child.wait())
-            .await
-            .context("child process tree did not exit after termination")?
-            .context("reap child process tree")?;
-        self.armed = false;
-        Ok(())
-    }
-}
-
-impl Drop for Tree {
-    fn drop(&mut self) {
-        if self.armed
-            && let Err(error) = self.kill()
-        {
-            eprintln!("xtask: fallback process-tree termination failed: {error}");
-        }
-    }
-}
-
-/// Bound an entire experiment or Cargo build independently of its executor.
-pub async fn supervise(command: tokio::process::Command, timeout: Duration) -> Result<Outcome> {
-    let mut command = CommandWrap::from(command);
-    command.wrap(KillOnDrop);
-    #[cfg(unix)]
-    command.wrap(process_wrap::tokio::ProcessSession);
-    #[cfg(windows)]
-    command.wrap(process_wrap::tokio::JobObject);
-    let mut tree = Tree {
-        child: command.spawn().context("spawn supervised child")?,
-        armed: true,
-    };
-    let outcome = tokio::select! {
-        status = tree.child.wait() => status.context("wait for supervised child").map(Outcome::Exited),
-        () = tokio::time::sleep(timeout) => Ok(Outcome::TimedOut),
-        signal = termination() => {
-            match signal {
-                Ok(()) => Err(anyhow::anyhow!("task interrupted")),
-                Err(error) => Err(error).context("observe termination signal"),
-            }
-        },
-    };
-    let cleanup = tree.cleanup().await;
-    match (outcome, cleanup) {
-        (Ok(outcome), Ok(())) => Ok(outcome),
-        (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("cleanup also failed: {cleanup:#}")))
-        },
-    }
-}
-
-/// Stop tasks on either interactive interruption or a Unix termination signal.
-async fn termination() -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {
-            result = tokio::signal::ctrl_c() => result,
-            _ = terminate.recv() => Ok(()),
-        }
-    }
-    #[cfg(not(unix))]
-    tokio::signal::ctrl_c().await
-}
-
-/// A worker-owned gateway; the outer supervisor owns its containing process tree.
+/// Keep native process ownership separate from the private console needed by one signal test.
 pub struct Gateway {
-    child: Box<dyn process_wrap::std::ChildWrapper>,
+    child: GatewayChild,
+}
+
+enum GatewayChild {
+    Native(Child),
+    #[cfg(windows)]
+    Signalled(windows::Signalled),
 }
 
 impl Gateway {
     pub fn spawn(executable: &Path, config: &Path, log: &File) -> Result<Self> {
-        #[cfg(unix)]
-        let mut command = {
-            let mut command = Command::new(executable);
-            command.arg("serve").arg("--config").arg(config);
-            command
-        };
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = Command::new(std::env::current_exe()?);
-            command.arg("__gateway").arg(executable).arg(config);
-            command
-        };
+        let mut command = Command::new(executable);
         command
+            .arg("serve")
+            .arg("--config")
+            .arg(config)
             .stdin(Stdio::null())
             .stdout(log.try_clone().context("clone gateway stdout log")?)
             .stderr(log.try_clone().context("clone gateway stderr log")?);
-        let mut command = process_wrap::std::CommandWrap::from(command);
         #[cfg(windows)]
         {
-            // The helper allocates and hides its own console before launching limen.
-            let mut flags = process_wrap::std::CreationFlags(<_>::default());
-            flags.0.0 = 0x0800_0000; // CREATE_NO_WINDOW
-            command.wrap(flags);
-            command.wrap(process_wrap::std::JobObject);
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
         Ok(Self {
-            child: command.spawn().context("start gateway")?,
+            child: GatewayChild::Native(command.spawn().context("start gateway")?),
         })
     }
 
-    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        // Poll only the process below our Windows JobObject wrapper. Its own
-        // try_wait consumes completion messages that the final tree wait needs.
+    /// Use a private pseudoconsole only when exercising the real Windows Ctrl-C path.
+    pub fn spawn_signalled(
+        executable: &Path,
+        config: &Path,
+        log: &File,
+        log_path: &Path,
+    ) -> Result<Self> {
         #[cfg(windows)]
         {
-            self.child.inner_mut().try_wait()
+            let _ = log;
+            Ok(Self {
+                child: GatewayChild::Signalled(windows::Signalled::spawn(
+                    executable, config, log_path,
+                )?),
+            })
         }
         #[cfg(not(windows))]
         {
-            self.child.try_wait()
+            let _ = log_path;
+            Self::spawn(executable, config, log)
         }
     }
 
-    /// Kill the owned process tree for crash-recovery experiments, then reap it.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        match &mut self.child {
+            GatewayChild::Native(child) => child.try_wait(),
+            #[cfg(windows)]
+            GatewayChild::Signalled(child) => child.try_wait(),
+        }
+    }
+
+    fn start_kill(&mut self) -> io::Result<()> {
+        match &mut self.child {
+            GatewayChild::Native(child) => {
+                if child.try_wait()?.is_none() {
+                    child.kill()?;
+                }
+                Ok(())
+            },
+            #[cfg(windows)]
+            GatewayChild::Signalled(child) => child.start_kill(),
+        }
+    }
+
+    /// Crash recovery requires the process to exit before reopening SQLite or log files.
     pub fn terminate(&mut self) -> Result<()> {
-        self.child
-            .start_kill()
-            .context("force gateway interruption")?;
-        // Windows try_wait can consume the job's final completion message before
-        // wait caches its status. Reap once after termination; the external
-        // isolated supervisor bounds this synchronous process-boundary wait.
-        self.child.wait().context("reap interrupted gateway")?;
+        self.start_kill().context("force gateway interruption")?;
+        let deadline = std::time::Instant::now() + CLEANUP;
+        while self
+            .try_wait()
+            .context("reap interrupted gateway")?
+            .is_none()
+        {
+            if std::time::Instant::now() >= deadline {
+                bail!("interrupted gateway did not exit within {CLEANUP:?}");
+            }
+            std::thread::sleep(POLL);
+        }
+        #[cfg(windows)]
+        if let GatewayChild::Signalled(child) = &mut self.child {
+            child.close_blocking(CLEANUP)?;
+        }
         Ok(())
     }
 
@@ -175,38 +124,58 @@ impl Gateway {
             if tokio::time::Instant::now() >= deadline {
                 bail!("gateway did not exit within {timeout:?}");
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(POLL).await;
         }
     }
 
-    /// Exercise the application's graceful shutdown rather than killing it.
+    /// Explicit cleanup is awaited before fixture files are read or removed.
+    pub async fn close(&mut self) -> Result<()> {
+        self.start_kill().context("terminate fixture gateway")?;
+        self.wait_timeout(CLEANUP).await?;
+        #[cfg(windows)]
+        if let GatewayChild::Signalled(child) = &mut self.child {
+            child.begin_close();
+            let deadline = tokio::time::Instant::now() + CLEANUP;
+            while !child.poll_closed()? {
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("gateway pseudoconsole did not close within {CLEANUP:?}");
+                }
+                tokio::time::sleep(POLL).await;
+            }
+        }
+        Ok(())
+    }
+
     pub fn shutdown_signal(&mut self) -> Result<()> {
         #[cfg(unix)]
-        {
-            // SIGTERM is signal 15 on the project's supported Unix platforms.
-            self.child.signal(15).context("send SIGTERM to gateway")?;
+        match &self.child {
+            GatewayChild::Native(child) => {
+                nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(
+                        i32::try_from(child.id()).context("gateway PID exceeds platform range")?,
+                    ),
+                    nix::sys::signal::Signal::SIGTERM,
+                )
+                .context("send SIGTERM to gateway")?;
+            },
         }
         #[cfg(windows)]
-        windows::signal_helper(self.child.id())?;
+        match &mut self.child {
+            GatewayChild::Signalled(child) => child.signal().context("send gateway Ctrl-C")?,
+            GatewayChild::Native(_) => {
+                bail!("gateway was not started with a private signal console")
+            },
+        }
         Ok(())
     }
 }
 
 impl Drop for Gateway {
     fn drop(&mut self) {
-        match self.try_wait() {
-            #[cfg(unix)]
-            Ok(Some(_)) => return,
-            #[cfg(windows)]
-            Ok(Some(_)) => {},
-            Ok(None) => {},
-            Err(error) => eprintln!("xtask: poll gateway during cleanup failed: {error}"),
+        if let Err(error) = self.start_kill() {
+            eprintln!("isolated: fallback gateway termination failed: {error}");
         }
-        if let Err(error) = self.child.start_kill() {
-            eprintln!("xtask: terminate gateway during cleanup failed: {error}");
-        }
-        if let Err(error) = self.child.wait() {
-            eprintln!("xtask: reap gateway during cleanup failed: {error}");
-        }
+        // Signalled's Drop moves ClosePseudoConsole off this thread. The process scope
+        // owns the final fallback; destructors never wait indefinitely for a child or pipe.
     }
 }

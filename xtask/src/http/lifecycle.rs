@@ -118,6 +118,7 @@ pub async fn shutdown(laboratory: &mut Laboratory<'_>) -> Result<()> {
     laboratory
         .with_fixture(
             Options {
+                real_signal: true,
                 config: Some(config),
                 ..Options::default()
             },

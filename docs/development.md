@@ -23,9 +23,9 @@ cargo run --locked -- --help
 按编译、格式、lint、行为验证的顺序执行：
 
 ```sh
-cargo check --workspace --all-targets --locked
+cargo check --workspace --all-targets --features isolated-tests --locked
 cargo dev format --check --diff --locked
-cargo dev lint --locked --deny-warnings
+cargo dev lint --features isolated-tests --locked --deny-warnings
 cargo test --workspace --lib --bins --locked
 ```
 
@@ -39,7 +39,7 @@ cargo test --locked --package limen-chat --lib
 
 ## 隔离测试
 
-死循环、OOM、进程环境、真实 HTTP 和进程边界放在 `xtask` 的受监督子进程中。它们需要显式选择：
+死循环、OOM、进程环境、真实 HTTP 和进程边界由 nextest 逐用例隔离执行。先安装 `cargo-nextest 0.9.148`；可从[官方预编译安装入口](https://nexte.st/docs/installation/pre-built-binaries/)选择对应平台并固定该版本，CI 使用同一版本。它们需要显式选择：
 
 ```sh
 cargo xtask test --isolated --list
@@ -48,11 +48,19 @@ cargo xtask test --isolated
 cargo xtask test --isolated http/content-transform
 # 脚本 JSON 深度边界与原生线程栈预算
 cargo xtask test --isolated runtime/json-depth-startup runtime/json-depth-hook runtime/stack-limit
+# Windows 后代进程退出、独占文件句柄与取消后的清理
+cargo xtask test --isolated runtime/process-tree
 ```
 
-可在命令末尾传入 `--list` 返回的限定用例名；其他选项用 `cargo xtask test --help` 查询。监督进程负责外部超时、进程树终止和临时目录清理。不要将可能失控的 VM 用例直接放入常规测试进程。
+可在命令末尾传入 `--list` 返回的完整用例名；其他选项用 `cargo xtask test --help` 查询。`--list` 也会通过 nextest 构建并发现用例。根包的 `isolated` 测试目标以 `libtest-mimic` 提供 harness，需要 `isolated-tests` feature；`cargo test --workspace --lib --bins --locked` 不执行它，直接运行 harness 会拒绝缺少 nextest 环境的调用。真实 `limen` 路径由 Cargo 提供。
+
+超时与调度统一维护在 [`.config/nextest.toml`](../.config/nextest.toml) 的 `isolated` profile：串行、不重试，`runtime/*` 每例 12 秒，其他用例 18 秒，超时后立即终止；输出管道泄漏等待 500 毫秒后判失败，测试执行阶段最长 15 分钟。命令不接受单次覆盖预算或手动指定可执行文件。xtask 拥有整次运行的临时目录，进程退出等待有界，成功与失败后都显式清理临时目录；清理失败返回非零并报告保留路径。不要将可能失控的 VM 用例直接放入常规测试进程。
 
 隔离 HTTP 测试使用本地合成上游，并覆盖管理认证、持久化重启恢复和日志文件检视；`storage/*` 用例覆盖真实 SQLite 文件锁、恢复、保留容量、读写故障与取消。真实 provider 和 Docker 运行验收分别执行，不能用常规测试或离线用例替代。
+
+Windows 的 xtask、隔离测试与 helper 进程在派生后代前，通过 `win32job` 加入进程内静态持有的 `KILL_ON_JOB_CLOSE` Job。父进程正常退出或被终止时由系统终止后代，不依赖 Drop 被执行。fixture 仍显式等待真实进程句柄，再检查独占文件可重新打开并删除；Drop 中的终止只作兜底，不能代替完成屏障。`runtime/process-tree` 仅在 Windows 注册，覆盖根进程先退出及取消后的后代清理。
+
+真实 Windows 关闭用例使用 `portable-pty` 的 ConPTY 发送 Ctrl+C，其他进程用例使用普通子进程。JSON 诊断直接写入临时文件；PTY 只负责终端控制，以固定缓冲持续排空并丢弃展示字节，仅保留有界 PID 控制行，同时响应终端状态查询，避免缓冲区或终端握手阻塞被误判为关闭失败。关闭 ConPTY 前先等待真实进程退出并验证文件句柄释放，不为测试添加产品控制接口。
 
 ## 前端与 JavaScript
 

@@ -1,172 +1,205 @@
-//! Isolated case selection, parent-owned fixtures and supervised test results.
+//! Build and select nextest cases while retaining ownership of their temporary root.
 
-use std::{fs, path::Path, process::ExitCode, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fs::File,
+    io::Read,
+    path::Path,
+    process::{ExitCode, ExitStatus, Stdio},
+    time::Duration,
+};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use clap::error::ErrorKind;
+use serde_json::Value;
+use tokio::process::Command;
 
-use crate::{cargo, cli, http, process, runtime, storage};
+use crate::{cli, scope};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Case {
-    family: &'static str,
-    name: &'static str,
+fn command(list: bool) -> Command {
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command.args([
+        "nextest",
+        if list { "list" } else { "run" },
+        "--locked",
+        "--package",
+        "limen",
+        "--test",
+        "isolated",
+        "--features",
+        "isolated-tests",
+        "--profile",
+        "isolated",
+        "--color",
+        "never",
+    ]);
+    command.current_dir(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask belongs to the workspace"),
+    );
+    command.stdin(Stdio::null()).kill_on_drop(true);
+    scope::configure(&mut command);
+    command
 }
 
-impl Case {
-    fn qualified(self) -> String { format!("{}/{}", self.family, self.name) }
-
-    fn timeout(self, seconds: Option<f64>) -> Result<Duration> {
-        let (minimum, default) = if self.family == "runtime" {
-            (1.0, 12.0)
-        } else {
-            (5.0, 18.0)
-        };
-        let seconds = seconds.unwrap_or(default);
-        if !seconds.is_finite() || !(minimum..=60.0).contains(&seconds) {
-            return Err(clap::Error::raw(
-                ErrorKind::InvalidValue,
-                format!(
-                    "--timeout for {} must be between {minimum} and 60 seconds",
-                    self.qualified()
-                ),
-            )
-            .into());
-        }
-        Ok(Duration::from_secs_f64(seconds))
+/// Preserve exact-name semantics, including rejecting a missing member of a mixed selection.
+fn select(requested: &[String], available: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    if requested.is_empty() {
+        return Ok(available.clone());
     }
-}
-
-fn cases() -> Vec<Case> {
-    [
-        ("runtime", runtime::CASES),
-        ("http", http::CASES),
-        ("storage", storage::CASES),
-    ]
-    .into_iter()
-    .flat_map(|(family, names)| names.iter().map(move |name| Case { family, name }))
-    .collect()
-}
-
-/// Validate the complete selection and all budgets before building or starting a worker.
-fn select(args: &cli::Selection, available: &[Case]) -> Result<Vec<(Case, Duration)>> {
-    let selected = if args.cases.is_empty() {
-        available.to_vec()
-    } else {
-        args.cases
-            .iter()
-            .map(|name| {
-                available
-                    .iter()
-                    .copied()
-                    .find(|case| case.qualified() == *name)
-                    .ok_or_else(|| {
-                        clap::Error::raw(
-                            ErrorKind::InvalidValue,
-                            format!("unknown isolated test: {name}"),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    selected
-        .into_iter()
-        .map(|case| Ok((case, case.timeout(args.timeout)?)))
+    requested
+        .iter()
+        .map(|name| {
+            if !available.contains(name) {
+                return Err(clap::Error::raw(
+                    ErrorKind::InvalidValue,
+                    format!("unknown isolated test: {name}"),
+                )
+                .into());
+            }
+            Ok(name.clone())
+        })
         .collect()
 }
 
-pub async fn run(args: cli::Selection) -> Result<ExitCode> {
-    let selected = select(&args, &cases())?;
-    if args.list {
-        for (case, _) in selected {
-            println!("{}", case.qualified());
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    let needs_gateway = selected.iter().any(|(case, _)| case.family == "http");
-    let executable = if needs_gateway {
-        Some(match args.executable {
-            Some(path) => path.canonicalize().context("resolve gateway executable")?,
-            None => cargo::build_gateway().await?,
-        })
-    } else {
-        None
-    };
-    let mut passed = 0;
-    for (case, timeout) in &selected {
-        passed += usize::from(run_case(*case, executable.as_deref(), *timeout).await?);
-    }
-    println!("{passed}/{} isolated tests passed", selected.len());
-    Ok(if passed == selected.len() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
+fn catalogue(value: &Value) -> Result<BTreeSet<String>> {
+    let suites = value["rust-suites"]
+        .as_object()
+        .context("nextest did not report test suites")?;
+    let suite = suites
+        .get("limen::isolated")
+        .context("nextest did not report the isolated test target")?;
+    let cases = suite["testcases"]
+        .as_object()
+        .context("nextest did not report isolated cases")?;
+    ensure!(!cases.is_empty(), "isolated test target contains no cases");
+    Ok(cases.keys().cloned().collect())
 }
 
-/// Keep files and process-tree ownership in the process enforcing the deadline.
-async fn run_case(test: Case, executable: Option<&Path>, timeout: Duration) -> Result<bool> {
-    let Case { family, name: case } = test;
-    let qualified = test.qualified();
-    let started = std::time::Instant::now();
+/// Forward Unix signals; Windows children inherit our console and receive its event directly.
+async fn interruption() -> Result<i32> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => { signal?; Ok(2) },
+            _ = terminate.recv() => Ok(15),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok(2)
+    }
+}
+
+async fn finish(mut command: Command, budget: Duration) -> Result<ExitStatus> {
+    let mut child = command
+        .spawn()
+        .context("start nextest (install cargo-nextest 0.9.148 or newer)")?;
+    let failure = tokio::select! {
+        status = child.wait() => return status.context("wait for nextest"),
+        () = tokio::time::sleep(budget) => anyhow::anyhow!("nextest exceeded its outer {budget:?} budget"),
+        signal = interruption() => {
+            let signal = signal?;
+            #[cfg(unix)]
+            if let Some(id) = child.id() {
+                use nix::{sys::signal::{Signal, kill}, unistd::Pid};
+                let pid = i32::try_from(id).context("nextest PID exceeds platform range")?;
+                let signal = if signal == 15 { Signal::SIGTERM } else { Signal::SIGINT };
+                match kill(Pid::from_raw(pid), signal) {
+                    Ok(()) | Err(nix::errno::Errno::ESRCH) => {},
+                    Err(error) => return Err(error).context("forward interruption to nextest"),
+                }
+            }
+            #[cfg(windows)]
+            let _ = signal;
+            match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                Ok(Ok(_)) => bail!("isolated test run interrupted"),
+                Ok(Err(error)) => return Err(error).context("wait for interrupted nextest"),
+                Err(_) => anyhow::anyhow!("nextest did not stop after interruption"),
+            }
+        },
+    };
+    child
+        .start_kill()
+        .context("terminate nextest after its outer budget")?;
+    let cleanup = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+    match cleanup {
+        Ok(Ok(_)) => Err(failure),
+        Ok(Err(error)) => Err(failure.context(format!("nextest cleanup also failed: {error}"))),
+        Err(error) => Err(failure.context(format!("nextest cleanup also timed out: {error}"))),
+    }
+}
+
+pub async fn run(args: cli::Selection) -> Result<ExitCode> {
     let directory = tempfile::Builder::new()
-        .prefix("limen-test-")
+        .prefix("limen-isolated-")
         .tempdir()
-        .context("create isolated test directory")?;
-    let stdout = directory.path().join("worker.stdout");
-    let stderr = directory.path().join("worker.stderr");
-    let fixture = directory.path().join("fixture");
-    fs::create_dir(&fixture).context("create empty fixture root")?;
-    let mut command =
-        tokio::process::Command::new(std::env::current_exe().context("locate xtask executable")?);
-    command.args(["__worker", family, case]).arg(&fixture);
-    if family == "runtime" && case == "environment" {
-        runtime::environment::configure(&mut command);
-    }
-    if let Some(executable) = executable {
-        command.arg(executable);
-    }
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(fs::File::create(&stdout).context("create worker stdout log")?)
-        .stderr(fs::File::create(&stderr).context("create worker stderr log")?);
-    let outcome = process::supervise(command, timeout).await;
-    let success = matches!(&outcome, Ok(process::Outcome::Exited(status)) if status.success());
-    if !success {
-        print!(
-            "{}",
-            fs::read_to_string(&stdout).context("read worker stdout")?
+        .context("create isolated run root")?;
+    let root = directory.path().to_owned();
+    let result = async {
+        let output = root.join("catalogue.json");
+        let mut listing = command(true);
+        listing
+            .args(["--message-format", "json"])
+            .stdout(File::create(&output)?);
+        ensure!(
+            finish(listing, Duration::from_secs(240)).await?.success(),
+            "nextest could not build or list isolated tests"
         );
-        eprint!(
-            "{}",
-            fs::read_to_string(&stderr).context("read worker stderr")?
+        let mut bytes = Vec::new();
+        File::open(output)?
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= 1024 * 1024,
+            "nextest catalogue exceeded 1 MiB"
         );
+        let available =
+            catalogue(&serde_json::from_slice(&bytes).context("decode nextest catalogue")?)?;
+        let selected = select(&args.cases, &available)?;
+        if args.list {
+            for name in selected {
+                println!("{name}");
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        let mut execution = command(false);
+        execution
+            .env("LIMEN_ISOLATED_ROOT", &root)
+            .args(["--no-tests", "fail"]);
+        if selected != available {
+            let filter = selected
+                .iter()
+                .map(|name| format!("test(={name})"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            execution.args(["-E", &filter]);
+        }
+        let status = finish(execution, Duration::from_mins(16)).await?;
+        Ok(if status.success() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        })
     }
-    match &outcome {
-        Ok(process::Outcome::TimedOut) => println!(
-            "FAIL {qualified}: killed process tree after {:.2}s",
-            timeout.as_secs_f64()
-        ),
-        Ok(process::Outcome::Exited(status)) if !status.success() => {
-            println!("FAIL {qualified}: worker exit {status}");
-        },
-        Err(error) => eprintln!("FAIL {qualified}: {error:#}"),
-        _ => {},
-    }
-    let cleanup = directory.close().context("remove isolated test directory");
-    match (outcome, cleanup) {
-        (Ok(_), Ok(())) => {},
-        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+    .await;
+    let cleanup = directory.close().with_context(|| {
+        format!(
+            "remove isolated run root; retained on failure: {}",
+            root.display()
+        )
+    });
+    match (result, cleanup) {
+        (Ok(code), Ok(())) => Ok(code),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(cleanup)) => {
-            return Err(error.context(format!("fixture cleanup also failed: {cleanup:#}")));
+            Err(error.context(format!("cleanup also failed: {cleanup:#}")))
         },
     }
-    println!(
-        "{} {qualified} ({:.2}s)",
-        if success { "PASS" } else { "FAIL" },
-        started.elapsed().as_secs_f64()
-    );
-    Ok(success)
 }
 
 #[cfg(test)]

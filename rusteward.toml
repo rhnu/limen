@@ -8,7 +8,7 @@ jobs = 0
 
 [scan]
 # Arrays replace the previous config layer. Globs are relative to the workspace root.
-exclude = ["**/vendor/**", "**/dist/**"]
+exclude = ["**/dist/**"]
 
 [format]
 spacing = true

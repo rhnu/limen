@@ -12,20 +12,16 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-http.workspace = true
-http-body-util.workspace = true
-hyper.workspace = true
-hyper-util.workspace = true
-limen-script.workspace = true
-limen-storage.workspace = true
-process-wrap.workspace = true
-reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+win32job.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
 
 [lints]
 workspace = true

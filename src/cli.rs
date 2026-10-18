@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-/// The process command line; clap handles help, version and argument errors.
+/// The process command line; input values never appear in argument error diagnostics.
 #[derive(Debug, Parser)]
 #[command(
     name = "limen",
@@ -13,6 +13,24 @@ use clap::{Args, Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+}
+
+impl Cli {
+    pub fn parse() -> Self {
+        Self::try_parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit())
+    }
+
+    /// Select the safe formatter explicitly: Cargo features are additive, so a
+    /// test harness may enable clap's rich error context for the same build.
+    pub fn try_parse_from<I, T>(
+        args: I,
+    ) -> Result<Self, clap::error::Error<clap::error::KindFormatter>>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        <Self as Parser>::try_parse_from(args).map_err(clap::error::Error::apply)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]

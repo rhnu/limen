@@ -12,7 +12,6 @@ mod web;
 use std::process::ExitCode;
 
 use bootstrap::{Loaded, ServeResources};
-use clap::Parser;
 use cli::{Cli, Command};
 
 /// The application owns process exit; the VM library only reports retirement.
