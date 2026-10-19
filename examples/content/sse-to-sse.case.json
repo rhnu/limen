@@ -65,7 +65,7 @@
             {
               "index": 0,
               "delta": {
-                "content": "reader "
+                "content": "reader 😀"
               },
               "finish_reason": null
             }
@@ -93,7 +93,7 @@
             {
               "index": 0,
               "delta": {
-                "content": "😀\n"
+                "content": "\n"
               },
               "finish_reason": null
             }

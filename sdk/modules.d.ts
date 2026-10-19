@@ -367,10 +367,13 @@ declare module "limen:content" {
          * @defaultValue `"limen_emit_text"`
          */
         toolName?: string;
-        /** UTF-16 bound on undecided serialized events and metadata; at least the tool-name length. */
+        /**
+         * UTF-16 bound on all waiting serialized events and metadata, including blocked text;
+         * must cover the tool-name length.
+         */
         maxBufferedChars: number;
         /**
-         * Positive bound on events held while tool identity is undecided.
+         * Positive bound on the entire waiting window, including blocked ordinary text.
          * @defaultValue `64`
          */
         maxPendingEvents?: number;
@@ -388,7 +391,10 @@ declare module "limen:content" {
      * @remarks Accepts absent/auto `tool_choice` and function tools. Rejects legacy functions,
      * `response_format`, `n != 1`, parallel calls and tool-name collisions. Real tools pass through;
      * only synthetic-only `tool_calls` becomes `stop`. `length`/`content_filter` may close a valid
-     * incomplete prefix. Parser state is private to Rust; complete arguments are never buffered.
+     * incomplete prefix. Ordinary and decoded text retain source SSE event order; within a frame,
+     * content precedes tool calls. Undecided tool names and split escapes delay subsequent frames;
+     * completed characters retain their starting frame and SSE envelope. Only the bounded waiting
+     * window retains source payloads; parser state does not accumulate complete arguments.
      */
     export function syntheticTextTool(options: SyntheticTextToolOptions): BuiltinStep;
 }

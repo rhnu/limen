@@ -1,5 +1,7 @@
 use super::*;
 
+mod ordered;
+
 fn limits() -> NativeContentLimits {
     NativeContentLimits {
         max_output_events: 128,
@@ -298,7 +300,7 @@ fn synthetic_truncation_and_finish_reason_rules_are_explicit() {
         apply(&mut policy, tool("p", "limen_emit_text", 0));
         apply(&mut policy, delta("p", "{\"text\":\"partial\\u"));
         assert_eq!(
-            apply(&mut policy, end("p", reason))[0]["finishReason"],
+            apply(&mut policy, end("p", reason)).last().unwrap()["finishReason"],
             reason
         );
         assert_eq!(

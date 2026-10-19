@@ -23,7 +23,7 @@ use synthetic::Synthetic;
 
 type Key = (u64, String);
 
-/// Per-event output limits and the remaining shared state budget for this policy.
+/// Per-call output limits and the remaining shared state budget for this policy.
 pub struct NativeContentLimits {
     pub max_output_events: usize,
     pub max_output_bytes: usize,
@@ -37,8 +37,8 @@ pub enum NativeContentError {
     InvalidEvent(#[from] ContentError),
     #[error("invalid built-in content UTF-8 output")]
     Utf8(#[from] std::string::FromUtf8Error),
-    #[error("invalid built-in content character encoding")]
-    CharacterEncoding(#[from] std::num::TryFromIntError),
+    #[error("invalid built-in content integer conversion")]
+    IntegerConversion(#[from] std::num::TryFromIntError),
     #[error("invalid built-in content policy input")]
     InvalidInput,
     #[error("built-in content policy exceeds its resource limit")]
@@ -189,29 +189,54 @@ impl NativeContentPolicy {
         limits: &NativeContentLimits,
         check: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<Value>> {
-        validate_content_event(&event)?;
+        Ok(self
+            .apply_batch(vec![event], limits, check)?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    /// Applies one source frame and releases its completed FIFO source batches.
+    ///
+    /// A source batch may wait for later tool metadata or a partial escaped
+    /// character. Every released batch, including an empty one, corresponds to
+    /// exactly one input frame. The caller retains its source rendering context.
+    ///
+    /// # Errors
+    /// A failed call invalidates this candidate, just like [`Self::apply`].
+    pub fn apply_batch(
+        &mut self,
+        events: Vec<Value>,
+        limits: &NativeContentLimits,
+        check: &mut dyn FnMut() -> bool,
+    ) -> Result<Vec<Vec<Value>>> {
         let mut output = Output::new(limits, check);
         output.check()?;
         if self.retained_bytes() > limits.max_retained_bytes {
             return Err(NativeContentError::Limit);
         }
-        match &mut self.policy {
+        let batches = match &mut self.policy {
             Policy::Replace {
                 options,
                 fallback,
                 parts,
             } => {
-                replace(options, fallback, parts, event, &mut output)?;
+                for event in events {
+                    output.check()?;
+                    validate_content_event(&event)?;
+                    replace(options, fallback, parts, event, &mut output)?;
+                }
+                vec![std::mem::take(&mut output.events)]
             },
-            Policy::Synthetic(state) => state.apply(event, &mut output)?,
-        }
+            Policy::Synthetic(state) => state.apply_batch(events, &mut output)?,
+        };
         if self.retained_parts() > limits.max_retained_records
             || self.retained_bytes() > limits.max_retained_bytes
         {
             return Err(NativeContentError::Limit);
         }
         output.check()?;
-        Ok(output.events)
+        Ok(batches)
     }
 }
 
@@ -307,6 +332,7 @@ fn replace(
 
 struct Output<'a> {
     events: Vec<Value>,
+    count: usize,
     bytes: usize,
     limits: &'a NativeContentLimits,
     active: &'a mut dyn FnMut() -> bool,
@@ -316,6 +342,7 @@ impl<'a> Output<'a> {
     fn new(limits: &'a NativeContentLimits, active: &'a mut dyn FnMut() -> bool) -> Self {
         Self {
             events: Vec::new(),
+            count: 0,
             bytes: 0,
             limits,
             active,
@@ -352,13 +379,14 @@ impl<'a> Output<'a> {
 
     fn push(&mut self, event: Value) -> Result<()> {
         self.check()?;
-        let bytes = json_size(&event, false);
-        if self.events.len() >= self.limits.max_output_events
+        let bytes = checked_json_size(&event, false, self.active)?;
+        if self.count >= self.limits.max_output_events
             || bytes > self.limits.max_output_bytes.saturating_sub(self.bytes)
         {
             return Err(NativeContentError::Limit);
         }
         self.bytes += bytes;
+        self.count += 1;
         self.events.push(event);
         Ok(())
     }
@@ -383,6 +411,7 @@ impl Write for SizeWriter {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
+#[cfg(test)]
 fn json_size(event: &Value, utf16: bool) -> usize {
     let mut writer = SizeWriter { size: 0, utf16 };
     // Value serialization cannot fail when the writer accepts every byte.
@@ -390,6 +419,39 @@ fn json_size(event: &Value, utf16: bool) -> usize {
         return usize::MAX;
     }
     writer.size
+}
+
+fn checked_json_size(
+    event: &Value,
+    utf16: bool,
+    active: &mut dyn FnMut() -> bool,
+) -> Result<usize> {
+    struct CheckedSize<'a> {
+        size: SizeWriter,
+        active: &'a mut dyn FnMut() -> bool,
+    }
+    impl Write for CheckedSize<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            for _ in bytes.chunks(1024) {
+                if !(self.active)() {
+                    // `write_all` retries Interrupted; use a terminal I/O error.
+                    return Err(io::Error::other("content execution interrupted"));
+                }
+            }
+            self.size.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    let mut writer = CheckedSize {
+        size: SizeWriter { size: 0, utf16 },
+        active,
+    };
+    // Serializing Value cannot fail except when this writer's activity check
+    // rejects execution; its synthetic I/O error carries no additional cause.
+    serde_json::to_writer(&mut writer, event)
+        .map_err(|_interrupted| NativeContentError::Interrupted)?;
+    Ok(writer.size.size)
 }
 
 #[cfg(test)]

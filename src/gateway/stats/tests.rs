@@ -3,6 +3,30 @@ use limen_script::{HookOutput, ObservationBatch, ScriptError};
 use super::*;
 
 #[test]
+fn native_batch_counts_semantic_inputs_without_multiplying_wall_samples() {
+    let timings = Timings::default();
+    timings
+        .native_scoped("onContent", PhaseScope::Model)
+        .finish_batch(&Ok::<(), Failure>(()), 3);
+    timings
+        .native_scoped("onContent", PhaseScope::Model)
+        .finish_batch(&Ok::<(), Failure>(()), 0);
+    let (_, _, phases) = timings.owned();
+    let phase = phases
+        .iter()
+        .find(|phase| {
+            phase.phase == "onContent"
+                && phase.scope == PhaseScope::Model
+                && phase.executor == PhaseExecutor::Native
+        })
+        .unwrap();
+    assert_eq!(phase.calls, 3);
+    assert_eq!(phase.reported_calls, 3);
+    assert_eq!(phase.failed_calls, 0);
+    assert!(phase.wall_us.is_some());
+}
+
+#[test]
 fn native_timings_count_real_execution_without_js_bridge_samples() {
     let timings = Timings::default();
     timings

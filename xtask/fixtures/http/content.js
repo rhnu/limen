@@ -1,6 +1,6 @@
 import { defineGateway } from "limen:gateway";
 import { endpoint } from "./fixture-data.js";
-import { replaceText } from "limen:content";
+import { replaceText, syntheticTextTool } from "limen:content";
 
 export default defineGateway((gateway) => {
   const provider0 = gateway.provider("p", { endpoint });
@@ -22,4 +22,6 @@ export default defineGateway((gateway) => {
       }
     },
   });
+  const ordered = provider0.model("ordered", { upstream: "real-model" });
+  ordered.use(syntheticTextTool({ name: "ordered-text", maxBufferedChars: 4096 }));
 });

@@ -6,6 +6,8 @@ use serde_json::json;
 use super::{super::observations::Observations, *};
 use crate::{bootstrap::Loaded, gateway::FixtureResponse};
 
+mod ordered;
+
 async fn configured() -> (tempfile::TempDir, Loaded, Arc<Gateway>) {
     configured_with(include_str!(
         "../../../fixtures/gateway/content-unit/gateway.js"
@@ -101,7 +103,9 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(first["choices"][0]["delta"]["content"], "");
     let mut decoder = limen_chat::FrameDecoder::new(4096);
     let bytes = format!("id: {}\ndata: {}\n\n", "x".repeat(512), chunk("b"));
@@ -130,7 +134,9 @@ async fn failed_native_render_discards_candidate_and_preserves_previous_prefix()
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(retry["choices"][0]["delta"]["content"], "ZZ");
     assert_eq!(
         Value::Object(lifecycle.state),
@@ -168,7 +174,9 @@ async fn native_occurrences_have_independent_state_and_share_retained_capacity()
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(value["choices"][0]["delta"]["content"], "b");
     let ContentExecution::Native(native) = &first.stages[0].executor else {
         panic!("expected native");
@@ -214,7 +222,8 @@ fn retained_grammar_budget_is_shared_by_source_and_all_steps() {
                 scope: limen_storage::PhaseScope::Provider,
                 projector: ContentProjector::new(100),
                 name: "script".into(),
-                executor: ContentExecution::Script(0)
+                executor: ContentExecution::Script(0),
+                pending: VecDeque::new(),
             };
             2
         ],
@@ -273,7 +282,9 @@ async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separa
             )
             .await
             .unwrap()
-            .unwrap();
+            .pop()
+            .unwrap()
+            .value;
         assert_eq!(output["choices"][0]["delta"]["content"], expected);
     }
     let output = gateway
@@ -286,7 +297,9 @@ async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separa
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
     let output = gateway
         .content_payload(
@@ -298,7 +311,9 @@ async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separa
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(output["choices"][0]["delta"]["content"], "bx");
     let mut fresh = gateway.content_projector(&first_route).unwrap();
     let output = gateway
@@ -311,7 +326,9 @@ async fn same_named_provider_and_model_steps_keep_alias_and_request_state_separa
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
     loaded.shutdown().await.unwrap();
 }
@@ -355,7 +372,9 @@ async fn cancellation_drops_native_candidate_and_preserves_committed_prefix() {
         )
         .await
         .unwrap()
-        .unwrap();
+        .pop()
+        .unwrap()
+        .value;
     assert_eq!(output["choices"][0]["delta"]["content"], "ZZ");
     loaded.shutdown().await.unwrap();
 }

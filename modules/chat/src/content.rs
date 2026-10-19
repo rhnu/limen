@@ -13,6 +13,7 @@ use thiserror::Error;
 mod observation;
 mod project;
 mod render;
+mod retained;
 
 pub use observation::{GeneratedContent, observe_generated_content};
 use project::project_body;
@@ -123,6 +124,9 @@ pub struct ContentFrame {
 
 impl ContentFrame {
     pub fn events(&self) -> &[Value] { &self.events }
+
+    /// Conservative records and owned bytes held while a source frame waits.
+    pub fn retained_usage(&self) -> (usize, usize) { retained::frame(self) }
 }
 
 /// Projects source JSON/chunks and applies transformed events to source templates.
@@ -336,7 +340,6 @@ impl ContentProjector {
         let mut fragments = BTreeMap::new();
         let mut order = Vec::new();
         let mut finishes = BTreeMap::new();
-        let changed = frame.events != events;
         for event in events {
             validate_content_event(event)?;
             if event["type"] == "response_end" && !frame.terminal {
@@ -354,6 +357,15 @@ impl ContentProjector {
         if frame.terminal && !state.ended {
             return Err(ContentError::Lifecycle);
         }
+        // A continuation's event JSON can stay identical after an earlier step
+        // changed its part kind or tool index. Its wire binding still needs a rewrite.
+        let changed = frame.events != events
+            || frame.bindings.iter().any(|(key, binding)| {
+                state
+                    .parts
+                    .get(key)
+                    .is_some_and(|part| part.kind != binding.kind)
+            });
         let positional = positional_metadata(&frame.source);
         if (self.edited || changed) && positional || changed && self.positional {
             return Err(ContentError::PositionalMetadata);

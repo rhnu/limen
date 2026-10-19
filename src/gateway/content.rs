@@ -1,13 +1,12 @@
 //! One semantic transformation stage before either aggregation or delivery.
 
-use std::time::Instant;
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use limen_chat::{
     ContentFrame, ContentProjector, Frame, NativeContentError, NativeContentLimits,
     NativeContentPolicy, validate_content_event,
 };
 use limen_config::{ResourceLimits, validate_json};
-use limen_script::{EventInput, HookCandidate, HookInput};
 use serde_json::Value;
 
 use super::{
@@ -20,6 +19,27 @@ use super::{
     plan::{ContentExecutor, RoutePlan},
 };
 
+mod stage;
+
+/// A released payload keeps the source envelope and its shared expansion budget.
+#[derive(Debug)]
+pub(super) struct ContentOutput {
+    pub value: Value,
+    pub envelope: Option<Arc<Frame>>,
+    pub budget: EventBudget,
+}
+
+#[derive(Clone)]
+struct ContentBatch {
+    frame: Arc<ContentFrame>,
+    envelope: Option<Arc<Frame>>,
+    events: Vec<Value>,
+    budget: EventBudget,
+    complete: bool,
+    ending: bool,
+    retained: (usize, usize),
+}
+
 pub(super) struct ContentPipeline {
     source: ContentProjector,
     stages: Vec<ContentStage>,
@@ -31,6 +51,7 @@ struct ContentStage {
     name: String,
     projector: ContentProjector,
     executor: ContentExecution,
+    pending: VecDeque<ContentBatch>,
 }
 
 #[derive(Clone)]
@@ -53,6 +74,10 @@ impl ContentPipeline {
                 .map_or(projector, |(_, value)| value);
             parts = parts.saturating_add(projector.projector.retained_parts());
             bytes = bytes.saturating_add(projector.projector.retained_bytes());
+            for batch in &projector.pending {
+                parts = parts.saturating_add(batch.retained.0);
+                bytes = bytes.saturating_add(batch.retained.1);
+            }
             if let ContentExecution::Native(native) = &projector.executor {
                 parts = parts.saturating_add(native.retained_parts());
                 bytes = bytes.saturating_add(native.retained_bytes());
@@ -77,6 +102,7 @@ impl Gateway {
                 scope: step.scope,
                 name: step.name.clone(),
                 projector: ContentProjector::new(max_parts),
+                pending: VecDeque::new(),
                 executor: match &step.executor {
                     ContentExecutor::Script(hook) => ContentExecution::Script(*hook),
                     ContentExecutor::Native(template) => {
@@ -108,7 +134,7 @@ impl Gateway {
         let Some(mut pipeline) = self.content_projector(route) else {
             return Ok(body);
         };
-        let body = self
+        let mut output = self
             .content_payload(
                 &mut pipeline,
                 ContentInput::Json(body),
@@ -116,8 +142,14 @@ impl Gateway {
                 &mut EventBudget::new(),
                 lifecycle,
             )
-            .await?
-            .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "onContent"))?;
+            .await?;
+        if output.len() != 1 {
+            return Err(Failure::new(ErrorCode::HookFailed, "onContent"));
+        }
+        let body = output
+            .pop()
+            .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "onContent"))?
+            .value;
         self.content_end(&mut pipeline, lifecycle).await?;
         Ok(body)
     }
@@ -136,7 +168,12 @@ impl Gateway {
                 lifecycle,
             )
             .await?;
-        if tail.is_some() {
+        if !tail.is_empty()
+            || pipeline
+                .stages
+                .iter()
+                .any(|stage| !stage.pending.is_empty())
+        {
             return Err(Failure::new(ErrorCode::HookFailed, "onContent"));
         }
         Ok(())
@@ -149,7 +186,7 @@ impl Gateway {
         envelope: Option<&Frame>,
         budget: &mut EventBudget,
         lifecycle: &mut Lifecycle,
-    ) -> Result<Option<Value>, Failure> {
+    ) -> Result<Vec<ContentOutput>, Failure> {
         let complete = matches!(&input, ContentInput::Json(_));
         let ending = matches!(&input, ContentInput::End);
         let frame = match input {
@@ -159,75 +196,48 @@ impl Gateway {
         }
         .map_err(content_failure)?;
         projector.capacity(None, &self.limits)?;
-        let mut events = frame.events().to_vec();
-        let mut rendered = None;
-        for cursor in 0..projector.stages.len() {
-            // The complete source batch is one step transaction. Neither state nor
-            // observations escape if a later event or its rendered payload is invalid.
-            let mut effects = None;
-            let mut next = Vec::new();
-            let mut candidate = projector.stages[cursor].clone();
-            let step_name = candidate.name.clone();
-            lifecycle.scope = candidate.scope;
-            let native_deadline = self.hook_deadline(lifecycle);
-            for event in events {
-                let hook = match &mut candidate.executor {
-                    ContentExecution::Native(native) => {
-                        let produced = self.native_content_event(
-                            native,
-                            event,
-                            lifecycle,
-                            native_deadline,
-                            &step_name,
-                        )?;
-                        charge(&produced, budget, &self.limits, &step_name)?;
-                        next.extend(produced);
-                        continue;
-                    },
-                    ContentExecution::Script(hook) => *hook,
-                };
-                let (state, observations) = effects.get_or_insert_with(|| {
-                    (lifecycle.state.clone(), lifecycle.observations.clone())
+        let mut retained = frame.retained_usage();
+        if let Some(envelope) = envelope {
+            let bytes = std::iter::once(&envelope.event)
+                .chain(envelope.id.iter())
+                .chain(envelope.retry.iter())
+                .chain(envelope.data.iter())
+                .fold(envelope.raw().len().saturating_mul(2), |sum, value| {
+                    sum.saturating_add(value.capacity())
                 });
-                let context = lifecycle.context_with_state(
-                    HookInput::OnContent(EventInput {
-                        event,
-                        sse: super::events::sse_context(envelope),
-                    }),
-                    std::mem::take(state),
-                );
-                let output = self
-                    .hook(hook, Some(&step_name), context, lifecycle)
-                    .await?;
-                let HookCandidate::OnContent { events: produced } = output.candidate else {
-                    return Err(hook_invalid("onContent", &step_name));
-                };
-                charge(&produced, budget, &self.limits, &step_name)?;
-                *state = output.effects.state;
-                observations.commit(output.effects.observations, "onContent", Some(&step_name));
-                next.extend(produced);
-            }
-            // Every step validates against its own previous output. Later steps
-            // may remove or change a part without changing an earlier step's input.
-            let value = render(&mut candidate.projector, frame.clone(), &next, ending)?;
-            projector.capacity(Some((cursor, &candidate)), &self.limits)?;
-            if let Some(value) = &value {
-                self.validate_content_render(value, complete, envelope, &step_name)?;
-            }
-            if matches!(candidate.executor, ContentExecution::Native(_)) {
-                self.native_active(lifecycle, native_deadline)?;
-            } else {
-                self.request_active(lifecycle, &lifecycle.cancellation)?;
-            }
-            if let Some((state, observations)) = effects {
-                lifecycle.state = state;
-                lifecycle.observations = observations;
-            }
-            events = next;
-            rendered = value;
-            projector.stages[cursor] = candidate;
+            retained.1 = retained.1.saturating_add(bytes).saturating_add(2048);
         }
-        Ok(rendered)
+        let events = frame.events().to_vec();
+        let batch = ContentBatch {
+            frame: Arc::new(frame),
+            envelope: envelope.cloned().map(Arc::new),
+            events,
+            budget: budget.clone(),
+            complete,
+            ending,
+            retained,
+        };
+        let mut batches = vec![(batch, None)];
+        for cursor in 0..projector.stages.len() {
+            let mut next = Vec::new();
+            for (batch, _) in batches {
+                next.extend(
+                    self.content_stage(projector, cursor, batch, lifecycle)
+                        .await?,
+                );
+            }
+            batches = next;
+        }
+        Ok(batches
+            .into_iter()
+            .filter_map(|(batch, value)| {
+                value.map(|value| ContentOutput {
+                    value,
+                    envelope: batch.envelope,
+                    budget: batch.budget,
+                })
+            })
+            .collect())
     }
 
     /// Rendered JSON and preserved SSE fields must pass together before any effects commit.
@@ -262,14 +272,14 @@ impl Gateway {
         Ok(())
     }
 
-    fn native_content_event(
+    fn native_content_batch(
         &self,
         native: &mut NativeContentPolicy,
-        event: Value,
+        events: Vec<Value>,
         lifecycle: &mut Lifecycle,
         deadline: Instant,
         step: &str,
-    ) -> Result<Vec<Value>, Failure> {
+    ) -> Result<Vec<Vec<Value>>, Failure> {
         lifecycle.phase = "onContent";
         lifecycle.step = Some(step.to_owned());
         let measurement = lifecycle
@@ -282,8 +292,9 @@ impl Gateway {
             max_retained_bytes: self.limits.max_output_bytes,
             max_retained_records: self.limits.max_json_nodes,
         };
+        let calls = events.len();
         let result = native
-            .apply(event, &limits, &mut || {
+            .apply_batch(events, &limits, &mut || {
                 self.native_active(lifecycle, deadline).is_ok()
             })
             .map_err(|source| {
@@ -294,11 +305,11 @@ impl Gateway {
                 }
                 hook_invalid("onContent", step).with_source(source)
             });
-        measurement.finish(&result);
+        measurement.finish_batch(&result, calls);
         let produced = result?;
         // JS outputs already passed the VM bridge; native events need
         // their generic JSON boundary before shared semantic accounting.
-        for event in &produced {
+        for event in produced.iter().flatten() {
             validate_json(
                 event,
                 self.limits.max_json_depth,

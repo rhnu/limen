@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use limen_config::ResourceLimits;
 use limen_script::{EventInput, HookCandidate, HookInput, HookPhase, SseContext};
 use serde_json::Value;
@@ -90,8 +92,14 @@ fn stream_failure(source: limen_chat::Error) -> Failure {
     Failure::new(ErrorCode::HookFailed, "onStreamEvent").with_source(source)
 }
 
-/// One source event shares this work allowance through both streaming phases.
+/// One source event shares this allowance through all stages and delayed outputs.
+#[derive(Clone, Debug)]
 pub(super) struct EventBudget {
+    work: Arc<Mutex<EventWork>>,
+}
+
+#[derive(Debug)]
+struct EventWork {
     events: usize,
     bytes: usize,
     wire_bytes: usize,
@@ -100,17 +108,23 @@ pub(super) struct EventBudget {
 impl EventBudget {
     pub fn new() -> Self {
         Self {
-            events: 0,
-            bytes: 0,
-            wire_bytes: 0,
+            work: Arc::new(Mutex::new(EventWork {
+                events: 0,
+                bytes: 0,
+                wire_bytes: 0,
+            })),
         }
     }
 
     fn charge_wire(&mut self, bytes: usize, limits: &ResourceLimits) -> Result<(), Failure> {
-        if bytes > limits.max_output_bytes.saturating_sub(self.wire_bytes) {
+        let mut work = self
+            .work
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if bytes > limits.max_output_bytes.saturating_sub(work.wire_bytes) {
             return Err(Failure::new(ErrorCode::HookFailed, "onStreamEvent"));
         }
-        self.wire_bytes += bytes;
+        work.wire_bytes += bytes;
         Ok(())
     }
 
@@ -121,13 +135,17 @@ impl EventBudget {
         limits: &ResourceLimits,
         phase: &'static str,
     ) -> Result<(), Failure> {
-        if events > limits.max_output_events.saturating_sub(self.events)
-            || bytes > limits.max_output_bytes.saturating_sub(self.bytes)
+        let mut work = self
+            .work
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if events > limits.max_output_events.saturating_sub(work.events)
+            || bytes > limits.max_output_bytes.saturating_sub(work.bytes)
         {
             return Err(Failure::new(ErrorCode::HookFailed, phase));
         }
-        self.events += events;
-        self.bytes += bytes;
+        work.events += events;
+        work.bytes += bytes;
         Ok(())
     }
 }

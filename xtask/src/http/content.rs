@@ -9,6 +9,8 @@ use tokio::{io::AsyncReadExt, net::TcpStream, sync::Notify, time::timeout};
 
 use super::fixture::{Laboratory, Options, request};
 
+mod ordered;
+
 const CONFIG: &str = include_str!("../../fixtures/http/content.js");
 
 /// A test-owned gate keeps upstream finish/DONE unavailable until transformed text arrives.
@@ -111,7 +113,7 @@ pub async fn run(laboratory: &mut Laboratory<'_>) -> Result<()> {
         )
         .await?;
     }
-    Ok(())
+    ordered::run(laboratory).await
 }
 
 fn contains(bytes: &[u8], expected: &[u8]) -> bool {

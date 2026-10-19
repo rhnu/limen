@@ -4,12 +4,14 @@ use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, HeaderValue, Request},
 };
-use limen_chat::Aggregator;
+use limen_chat::{Aggregator, Frame, FrameDecoder};
 use limen_script::Cancellation;
 use serde_json::{Value, json};
 
 use super::{fs, group};
 use crate::{bootstrap::Loaded, gateway::FixtureResponse};
+
+mod ordered;
 
 struct Outcome {
     status: u16,
@@ -20,6 +22,8 @@ struct Outcome {
     stats: Value,
     outbound: Value,
     observations: Value,
+    events: Vec<Value>,
+    frames: Vec<Frame>,
 }
 
 async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) -> Outcome {
@@ -72,23 +76,26 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
         .await
         .unwrap();
     gateway.drain().await;
-    let (body, done) = if sse {
+    let (body, done, events, frames) = if sse {
         let (events, done) = super::super::stream(&bytes, &loaded.server.limits).unwrap();
         let body = if done {
-            let mut aggregate = Aggregator::new(
-                loaded.server.limits.max_aggregate_bytes,
-                loaded.server.limits.max_aggregate_events,
-            );
-            for event in events {
-                aggregate.push(event).unwrap();
-            }
-            aggregate.finish().unwrap()
+            aggregate_events(&events, &loaded.server.limits)
         } else {
             Value::Null
         };
-        (body, done)
+        let mut parser = FrameDecoder::new(loaded.server.limits.max_event_bytes.max(1024));
+        let frames = bytes
+            .iter()
+            .filter_map(|byte| parser.push(*byte).unwrap())
+            .collect();
+        (body, done, events, frames)
     } else {
-        (serde_json::from_slice(&bytes).unwrap(), false)
+        (
+            serde_json::from_slice(&bytes).unwrap(),
+            false,
+            Vec::new(),
+            Vec::new(),
+        )
     };
     let trace = trace.lock().await;
     let result = Outcome {
@@ -103,9 +110,23 @@ async fn run(config: &str, source: Value, chunks: Option<&str>, stream: bool) ->
             .as_ref()
             .map_or(Value::Null, |sent| sent.body.clone()),
         observations: trace.observations.clone(),
+        events,
+        frames,
     };
     assert!(loaded.shutdown().await.is_ok());
     result
+}
+
+fn aggregate_events(events: &[Value], limits: &limen_config::ResourceLimits) -> Value {
+    let mut aggregate = Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events);
+    for event in events {
+        aggregate
+            .push(event.clone())
+            .unwrap_or_else(|error| panic!("{error:?}: {event}"));
+    }
+    aggregate
+        .finish()
+        .unwrap_or_else(|error| panic!("{error:?}: {events:?}"))
 }
 
 fn config(imports: &str, provider: &str, model: &str, extra: &str) -> String {

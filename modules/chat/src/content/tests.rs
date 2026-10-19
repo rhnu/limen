@@ -1,5 +1,7 @@
 use super::*;
 
+mod continuation;
+
 fn text_delta(events: &mut [Value], replacement: &str) {
     let delta = events
         .iter_mut()

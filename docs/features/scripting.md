@@ -256,9 +256,11 @@ model.use(replaceText({
 
 - `replaceText({ name, search, replacement, maxBufferedChars, maxParts? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
 - `mapPartText({ name, kinds, maxBufferedChars, transform, maxParts?, stateKey? })` 缓冲所选 text/reasoning/refusal/tool part 的字符串，在 `part_end` 调用同步 `transform(text, info)`，返回替换字符串。`info` 只读，包含 choice、part、kind 和可选 finishReason。工具 ID/名称元数据仍及时传递，参数文字等待映射完成；全文正则或工具参数 JSON 编辑可以使用这一模式。每个 part 的保留文本受必填 UTF-16 长度上限约束，超限即失败；输出另受网关预算约束。该模式会延迟正文交付，流中断时不会调用映射函数或成功刷新缓冲。
-- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不缓存完整参数字符串；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
+- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不累积已确定工具的参数历史；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
 
-工厂的 `maxParts` 默认 64。原生策略按管线位置自动隔离状态，不接受 `stateKey`；只有 `mapPartText` 保留该选项，用于隔离其 `ctx.state` 槽位，不要让不同脚本策略共享同一键。`syntheticTextTool` 的 `maxPendingEvents` 默认 64；`maxBufferedChars` 限制尚未判定工具身份时暂存事件的 JSON 字符串长度与工具元数据，必须至少覆盖工具名长度，不限制完整回答长度。所有输出仍受网关事件、JSON 和字节预算约束，原生缓冲也受请求总字节预算约束。
+`syntheticTextTool` 保留上游直接返回的普通正文，并按源 SSE 数据事件顺序与合成工具文本拼接，不添加分隔符或去重。同一帧包含两者时，普通 `content` 在前，合成文本按 `tool_calls` 数组顺序在后；完整 JSON 也采用这一固定顺序，不承诺恢复模型的实际生成时序。工具名尚未识别完整，或转义与 Unicode 代理对尚未补齐时，后续正文会等待；字符补齐后归回转义开始的源帧，后续帧不能越过。解除等待后保留各源帧的注释、命名事件、ID 与 retry，后续 `onContent` 读取对应的原 `ctx.sse`，SSE → JSON 聚合采用相同的文本顺序。等待只覆盖未决窗口，不必等待整个工具调用结束。
+
+工厂的 `maxParts` 默认 64。原生策略按管线位置自动隔离状态，不接受 `stateKey`；只有 `mapPartText` 保留该选项，用于隔离其 `ctx.state` 槽位，不要让不同脚本策略共享同一键。`syntheticTextTool` 的 `maxPendingEvents` 默认 64，限制整个等待窗口中的语义事件，没有语义事件的源载荷也占用一个名额；`maxBufferedChars` 限制等待事件的 JSON 字符串 UTF-16 长度与工具元数据，包括被阻塞的普通正文及其他工具，必须至少覆盖工具名长度。这两个限额不限制完整回答长度，超限即失败；已确定片段及时释放，解析状态不累积工具参数历史。保留的源载荷与 SSE 信封另计入请求总 JSON 记录和字节预算，所有输出仍受原有展开、编码及聚合预算约束。
 
 `syntheticTextTool` 在请求使用 legacy `functions`/`function_call`、`response_format`、非 1 的 `n`、`parallel_tool_calls: true`、非缺省/`auto` 的 `tool_choice`、非 function 工具或工具名冲突时拒绝 422。工具内容语法错误会失败；`length` 或 `content_filter` 允许在合法但未完成的 JSON 前缀处关闭，保留已经收到的文本和原结束原因，不补造后续字符。工厂不会在上游不遵循工具要求时重试或故障转移。
 

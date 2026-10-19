@@ -209,6 +209,7 @@ impl Timings {
             scope,
             started: Instant::now(),
             result: None,
+            calls: 1,
         }
     }
 
@@ -481,9 +482,16 @@ pub(super) struct NativeGuard {
     scope: PhaseScope,
     started: Instant,
     result: Option<(bool, bool)>,
+    calls: u64,
 }
 
 impl NativeGuard {
+    /// One timed batch still accounts for each submitted semantic event.
+    pub fn finish_batch<T>(mut self, result: &Result<T, Failure>, calls: usize) {
+        self.calls = u64::try_from(calls).unwrap_or(u64::MAX);
+        self.finish(result);
+    }
+
     pub fn finish<T>(mut self, result: &Result<T, Failure>) {
         self.result = Some((
             result.is_err(),
@@ -504,14 +512,19 @@ impl Drop for NativeGuard {
             return;
         }
         let summary = data.native.entry((self.phase, self.scope)).or_default();
-        summary.calls = summary.calls.saturating_add(1);
+        summary.calls = summary.calls.saturating_add(self.calls);
         summary.wall = summary.wall.saturating_add(self.started.elapsed());
-        summary.reported = summary
-            .reported
-            .saturating_add(u64::from(self.result.is_some()));
+        summary.reported =
+            summary
+                .reported
+                .saturating_add(if self.result.is_some() { self.calls } else { 0 });
         let (failed, interrupted) = self.result.unwrap_or((true, true));
-        summary.failed = summary.failed.saturating_add(u64::from(failed));
-        summary.interrupted = summary.interrupted.saturating_add(u64::from(interrupted));
+        summary.failed = summary
+            .failed
+            .saturating_add(u64::from(failed).min(self.calls));
+        summary.interrupted = summary
+            .interrupted
+            .saturating_add(u64::from(interrupted).min(self.calls));
     }
 }
 

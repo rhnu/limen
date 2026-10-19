@@ -3,6 +3,28 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn delayed_outputs_keep_their_source_expansion_and_wire_allowance() {
+    let limits = ResourceLimits {
+        max_output_events: 3,
+        max_output_bytes: 10,
+        ..ResourceLimits::default()
+    };
+    let mut source = EventBudget::new();
+    source.charge(1, 2, &limits, "onUpstreamEvent").unwrap();
+    let mut delayed = source.clone();
+    source.charge(1, 3, &limits, "onContent").unwrap();
+    delayed.charge(1, 5, &limits, "onStreamEvent").unwrap();
+    assert!(source.charge(1, 0, &limits, "onContent").is_err());
+    assert!(delayed.charge(0, 1, &limits, "onContent").is_err());
+    source.charge_wire(6, &limits).unwrap();
+    delayed.charge_wire(4, &limits).unwrap();
+    assert!(source.charge_wire(1, &limits).is_err());
+    EventBudget::new()
+        .charge(1, 10, &limits, "onContent")
+        .unwrap();
+}
+
+#[test]
 fn expansion_budget_accumulates_across_all_steps_and_both_phases() {
     let limits = ResourceLimits {
         max_output_events: 3,

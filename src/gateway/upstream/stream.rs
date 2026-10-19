@@ -1,8 +1,8 @@
 //! Keep semantic transformation and output routing separate from upstream framing.
 
 use super::{
-    Aggregator, ChunkTracker, ContentInput, Delivery, ErrorCode, EventBudget, EventConsumer,
-    Failure, Frame, Gateway, Lifecycle, RoutePlan, Value, content, protocol,
+    Aggregator, ChunkTracker, ContentInput, Delivery, EventBudget, EventConsumer, Failure, Frame,
+    Gateway, Lifecycle, RoutePlan, Value, content, protocol,
 };
 
 pub(super) struct SseOutput {
@@ -32,7 +32,7 @@ impl Gateway {
             )
             .await?;
         for event in events {
-            let event = if let Some(pipeline) = &mut output.content {
+            let released = if let Some(pipeline) = &mut output.content {
                 self.content_payload(
                     pipeline,
                     ContentInput::Chunk(event),
@@ -41,26 +41,31 @@ impl Gateway {
                     lifecycle,
                 )
                 .await?
-                .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "onContent"))?
             } else {
-                event
+                vec![content::ContentOutput {
+                    value: event,
+                    envelope: Some(std::sync::Arc::new(frame.clone())),
+                    budget: budget.clone(),
+                }]
             };
-            if let Some(aggregate) = &mut output.aggregate {
-                aggregate
-                    .push(event)
-                    .map_err(|source| protocol(source, "sse_to_json"))?;
-            } else {
-                self.send_stream_event(
-                    route,
-                    event,
-                    true,
-                    Some(frame),
-                    &mut budget,
-                    &mut output.tracker,
-                    lifecycle,
-                    delivery,
-                )
-                .await?;
+            for mut released in released {
+                if let Some(aggregate) = &mut output.aggregate {
+                    aggregate
+                        .push(released.value)
+                        .map_err(|source| protocol(source, "sse_to_json"))?;
+                } else {
+                    self.send_stream_event(
+                        route,
+                        released.value,
+                        true,
+                        released.envelope.as_deref(),
+                        &mut released.budget,
+                        &mut output.tracker,
+                        lifecycle,
+                        delivery,
+                    )
+                    .await?;
+                }
             }
         }
         Ok(())
