@@ -177,23 +177,18 @@ impl Delivery {
                 lifecycle.response_headers.clone(),
             ));
         } else if self.sender.is_some() && !self.done_sent && failure.code != ErrorCode::Cancelled {
-            let native = failure.response.as_ref().and_then(|response| {
-                limen_config::parse_json_slice(&response.body, limen_config::MAX_JSON_DEPTH).ok()
-            });
-            let envelope = native.unwrap_or_else(|| failure.error_json(&lifecycle.request_id));
-            // Native structured errors were bounded at the protocol boundary.
-            // If their encoded framing cannot fit, still terminate without DONE.
-            let limit = failure
+            let bytes = failure
                 .response
                 .as_ref()
-                .map_or(CONTROL_EVENT_BYTES, |response| {
-                    response
-                        .body
-                        .len()
-                        .saturating_add(64)
-                        .max(CONTROL_EVENT_BYTES)
+                .and_then(|response| native_error_event(&response.body))
+                .or_else(|| {
+                    limen_chat::encode_error(
+                        &failure.error_json(&lifecycle.request_id),
+                        CONTROL_EVENT_BYTES,
+                    )
+                    .ok()
                 });
-            if let Ok(bytes) = limen_chat::encode_error(&envelope, limit) {
+            if let Some(bytes) = bytes {
                 let _sent = self.emit(bytes).await;
             }
         }
@@ -202,6 +197,21 @@ impl Delivery {
             let _drained = drained.await;
         }
     }
+}
+
+/// Native JSON is already bounded; add SSE framing without expanding numbers or escapes.
+fn native_error_event(body: &[u8]) -> Option<Vec<u8>> {
+    limen_config::parse_json_slice(body, limen_config::MAX_JSON_DEPTH).ok()?;
+    let mut bytes = b"event: error\n".to_vec();
+    // Every source byte adds at most seven output bytes, so framing remains bounded.
+    // JSON permits raw CR/LF only as whitespace; each line must get its own data field.
+    for line in body.split(|byte| matches!(byte, b'\r' | b'\n')) {
+        bytes.extend_from_slice(b"data: ");
+        bytes.extend_from_slice(line);
+        bytes.push(b'\n');
+    }
+    bytes.push(b'\n');
+    Some(bytes)
 }
 
 struct QueuedFrame {

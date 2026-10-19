@@ -154,7 +154,11 @@ const FIELDS: &[(&str, &str)] = &[
     ("column", "column"),
     ("outcome", "outcome"),
     ("error_kind", "errorKind"),
+    // Only callers rendering typed, sanitized diagnostics may use this field.
+    // Arbitrary `error` fields remain excluded from the shared encoder.
+    ("error_diagnostic", "errorDiagnostic"),
     ("upstream_status", "upstreamStatus"),
+    ("upstream_error_status", "upstreamErrorStatus"),
     ("upstream_media", "upstreamMedia"),
     ("client_stream", "clientStream"),
     ("input_bytes", "inputBytes"),

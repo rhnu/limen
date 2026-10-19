@@ -167,10 +167,35 @@ impl Lifecycle {
                     | ErrorCode::Busy
                     | ErrorCode::Cancelled
             ) {
-                tracing::warn!(phase, step, error = %failure, "request rejected or cancelled");
+                tracing::warn!(
+                    request_id = self.request_id,
+                    code = failure.code.as_str(),
+                    status = failure.http_status(),
+                    phase,
+                    step,
+                    upstream_status = self.upstream_status,
+                    upstream_error_status = failure.upstream_error_status,
+                    upstream_media = self.upstream_media,
+                    error_diagnostic = %failure,
+                    "request rejected or cancelled"
+                );
             } else {
-                tracing::error!(phase, step, error = %failure, "request failed");
+                tracing::error!(
+                    request_id = self.request_id,
+                    code = failure.code.as_str(),
+                    status = failure.http_status(),
+                    phase,
+                    step,
+                    upstream_status = self.upstream_status,
+                    upstream_error_status = failure.upstream_error_status,
+                    upstream_media = self.upstream_media,
+                    error_diagnostic = %failure,
+                    "request failed"
+                );
             }
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

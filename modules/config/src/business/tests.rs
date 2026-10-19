@@ -435,3 +435,12 @@ fn header_parser_errors_keep_name_and_value_sources_separate() {
     assert!(!rendered.contains("secret-token"));
     assert!(!rendered.contains("private-cookie"));
 }
+
+#[test]
+fn private_wire_json_preserves_large_numbers_without_loosening_resource_bounds() {
+    let value = json!({"metadata":[u64::MAX]});
+    assert!(validate_json_structure(&value, 2, 3).is_ok());
+    assert!(validate_json(&value, 2, 3).is_err());
+    assert!(validate_json_structure(&value, 1, 3).is_err());
+    assert!(validate_json_structure(&value, 2, 2).is_err());
+}

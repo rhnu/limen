@@ -103,7 +103,7 @@ impl Gateway {
                 },
                 Err(source) => {
                     self.transport.observation_failed().await;
-                    tracing::warn!(request_id = lifecycle.request_id, phase = phase_name, error_kind = ?source.kind(), error = %source.diagnostic(), "observation failed; terminal outcome retained");
+                    tracing::warn!(request_id = lifecycle.request_id, phase = phase_name, error_kind = ?source.kind(), error_diagnostic = %source.diagnostic(), "observation failed; terminal outcome retained");
                 },
             }
         }

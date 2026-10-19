@@ -2,7 +2,7 @@
 
 use http::{HeaderMap, HeaderValue, header};
 use limen_chat::{ChunkTracker, Event, Frame, FrameDecoder};
-use limen_config::{ResourceLimits, validate_json};
+use limen_config::{ResourceLimits, validate_json_structure};
 use serde_json::Value;
 
 use super::{
@@ -48,18 +48,37 @@ pub(super) fn interpret_frame(frame: &Frame, limits: &ResourceLimits) -> Result<
             && data.len() <= limits.max_output_bytes
         {
             let parsed = limen_config::parse_json_str(data, limen_config::MAX_JSON_DEPTH).ok();
-            if parsed.as_ref().is_some_and(|value| {
-                validate_json(value, limits.max_json_depth, limits.max_json_nodes).is_ok()
-            }) {
-                failure.response = Some(Box::new(FailureResponse {
-                    body: data.as_bytes().to_vec(),
-                    content_type: Some(HeaderValue::from_static("application/json")),
-                    content_encoding: Vec::new(),
-                }));
+            if let Some(value) = parsed
+                && validate_json_structure(&value, limits.max_json_depth, limits.max_json_nodes)
+                    .is_ok()
+            {
+                retain_native_error(&mut failure, data.as_bytes().to_vec(), &value);
             }
         }
         failure
     })
+}
+
+/// Keep native errors on the response path; only an HTTP-like numeric code is diagnostic.
+pub(super) fn native_error(body: Vec<u8>, value: &Value, phase: &'static str) -> Failure {
+    let mut failure = Failure::new(ErrorCode::UpstreamProtocol, phase)
+        .with_source(limen_chat::Error::UpstreamError);
+    retain_native_error(&mut failure, body, value);
+    failure
+}
+
+fn retain_native_error(failure: &mut Failure, body: Vec<u8>, value: &Value) {
+    failure.upstream_error_status = value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_u64)
+        .and_then(|code| u16::try_from(code).ok())
+        .filter(|code| (400..600).contains(code));
+    failure.response = Some(Box::new(FailureResponse {
+        body,
+        content_type: Some(HeaderValue::from_static("application/json")),
+        content_encoding: Vec::new(),
+    }));
 }
 
 /// Native control frames have no business rewrite stage to shrink their output.

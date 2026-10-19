@@ -24,6 +24,18 @@ impl io::Write for Capture {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
+pub(crate) fn capture_logs(action: impl FnOnce()) -> Vec<serde_json::Value> {
+    let capture = Capture::default();
+    let (layer, guards) = LogLayer::capture(capture.clone());
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), action);
+    drop(guards);
+    let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    output
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
 #[test]
 fn oversized_record_is_complete_correlated_summary() {
     let encoder = Encoder::new("test-run");

@@ -324,6 +324,14 @@ export type LogEntry = {
      */
     errorKind?: unknown;
     /**
+     * Safe typed error cause chain, excluding upstream payloads and arbitrary exception messages.
+     */
+    errorDiagnostic?: string;
+    /**
+     * HTTP-like numeric error.code from a native upstream error payload; distinct from the upstream HTTP status.
+     */
+    upstreamErrorStatus?: number;
+    /**
      * Optional allowlisted diagnostic metadata, retained as JSON.
      */
     upstreamStatus?: unknown;

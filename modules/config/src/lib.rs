@@ -12,7 +12,7 @@ pub use builtin::{
 };
 pub use business::{
     BusinessConfig, HookId, Model, PipelineStep, Provider, UpstreamAuth, validate_endpoint,
-    validate_json,
+    validate_json, validate_json_structure,
 };
 pub use error::{ConfigError, ConfigErrorKind};
 pub use json::{MAX_JSON_DEPTH, parse_json_slice, parse_json_str};

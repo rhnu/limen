@@ -218,6 +218,39 @@ async fn native_stream_errors_remain_response_data_after_heartbeat_commits_statu
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_error_stream_preserves_compact_numbers_and_multiline_data() {
+    let numbers = ["1e9"; 300].join(",");
+    let data = format!(
+        "{{\r\n\"error\": {{\"message\":\"private-native-error\",\"metadata\":[{numbers}]}}\r\n}}"
+    );
+    let lifecycle = Lifecycle::new("native".into(), Cancellation::new(), 1000);
+    let value: Value = serde_json::from_str(&data).unwrap();
+    let failure = super::super::protocol::native_error(data.into_bytes(), &value, "upstream_sse");
+    let (reply, mut receive) = oneshot::channel();
+    let mut delivery = Delivery::new(reply, Cancellation::new(), "native".into());
+    delivery.emit(b": alive\n\n".to_vec()).await.unwrap();
+    let response = receive.try_recv().unwrap();
+    let ((), bytes) = tokio::join!(
+        delivery.fail(&failure, &lifecycle),
+        axum::body::to_bytes(response.into_body(), 8192)
+    );
+    let bytes = bytes.unwrap();
+    let mut decoder = limen_chat::FrameDecoder::new(8192);
+    let frames: Vec<_> = bytes
+        .iter()
+        .filter_map(|byte| decoder.push(*byte).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[1].event, "error");
+    assert_eq!(
+        serde_json::from_str::<Value>(frames[1].data.as_ref().unwrap()).unwrap(),
+        value
+    );
+    assert!(frames[1].data.as_ref().unwrap().contains("1e9"));
+    assert!(!String::from_utf8_lossy(&bytes).contains("[DONE]"));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn success_preserves_native_terminator_metadata_after_validation() {
     let terminal = b": final-note\nid: end\nretry: 1000\ndata: [DONE]\n\n";
     let mut decoder = limen_chat::FrameDecoder::new(1024);

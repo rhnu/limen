@@ -103,4 +103,4 @@ pub fn install_panic_hook() {
 pub(crate) fn initialized() -> bool { INITIALIZED.load(Ordering::Acquire) }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

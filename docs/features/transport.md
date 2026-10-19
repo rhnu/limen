@@ -53,6 +53,10 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
 
 上游 `event: error` 或普通 data 中非 `null` 的顶层 `error` 均终止为失败。合法有界的结构化原始错误保留为私有响应数据：流开始前可经 `onErrorResponse` 适配，开始后作为错误帧发出；非法错误载荷使用网关固定 envelope。错误载荷不进入日志或观察上下文，也不能被后续 `[DONE]` 覆盖。
 
+上游 HTTP 2xx 的 JSON 对象包含非 `null` 的顶层 `error` 时同样按失败处理，在模型别名、正文 hook 和 JSON → SSE 转换之前保留原始错误正文，默认返回 HTTP 502，可经 `onErrorResponse` 适配。HTTP 200 本身不表示生成成功。
+
+私有错误 JSON 保留原始数字和扩展字段，只检查字节、深度和节点上限，不套用 JavaScript 值桥接的安全整数限制。已开始的 SSE 错误直接对原始 JSON 数据分帧，避免数字或转义重新编码后的长度膨胀导致错误丢失。
+
 下游成功时由 Rust 发送 `[DONE]`。失败发生在流启动前时，返回普通 JSON 错误；启动后 HTTP 状态已确定，尽可能发送 `event: error` 后结束，不发送成功 `[DONE]`。客户端断开时取消请求，错误帧不保证送达。
 
 ## 状态、响应头与错误
@@ -98,6 +102,8 @@ JSON → SSE 按字段生成增量事件，不恢复真实 token 时序。可拆
 
 请求总期限先到时，即使正在等待 hook，也使用请求超时文案。默认期限与配置范围见[配置与接入](configuration.md#配置文件)。SSE 已开始时沿用相同错误文案发送流内错误，不能改写已提交的 HTTP 状态；未开始的错误响应仍可由 `onErrorResponse` 显式适配。
 
-需要统一供应商错误格式或自定义网关错误时，配置 [`onErrorResponse`](scripting.md#错误响应适配)。它可修改尚未发出的错误响应，保留失败分类；已经开始的 SSE 仍按流内错误规则结束。日志和观察 hook 只提供 phase、step 与清理后的错误分类，不输出上游正文或任意脚本异常消息。排错见[部署与运维](deployment.md#排错)。
+需要统一供应商错误格式或自定义网关错误时，配置 [`onErrorResponse`](scripting.md#错误响应适配)。它可修改尚未发出的错误响应，保留失败分类；已经开始的 SSE 仍按流内错误规则结束。
+
+失败日志通过 `requestId` 关联请求，`errorDiagnostic` 保留类型化安全原因链，例如缺少 `[DONE]`、choice 未结束、SSE UTF-8 错误、事件超限，以及 JSON 错误类别和行列位置。上游结构化错误的 `error.code` 为 400–599 整数时另记 `upstreamErrorStatus`，它与实际 HTTP `upstreamStatus` 独立。任意上游 message、字符串 code、正文、认证信息及原始网络或脚本异常文本不进入日志；完整的合法有界上游错误仍沿客户端响应路径保留，不因日志脱敏而替换。观察 hook 继续只接收受控错误分类。排错见[部署与运维](deployment.md#排错)。
 
 协议权威实现：[`modules/chat/src/`](../../modules/chat/src/)、[`src/gateway/upstream.rs`](../../src/gateway/upstream.rs)、[`src/gateway/response.rs`](../../src/gateway/response.rs)。

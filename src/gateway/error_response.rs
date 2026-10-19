@@ -65,7 +65,7 @@ impl Gateway {
                 .error_response_hook(hook, step, failure, lifecycle, deadline)
                 .await
             {
-                tracing::warn!(phase = "onErrorResponse", step, error = %policy_error, "error response policy failed; last committed response retained");
+                tracing::warn!(request_id = lifecycle.request_id, phase = "onErrorResponse", step, error_diagnostic = %policy_error, "error response policy failed; last committed response retained");
                 break;
             }
         }

@@ -88,6 +88,8 @@ pub struct Failure {
     pub phase: &'static str,
     pub step: Option<String>,
     pub status: Option<u16>,
+    /// Numeric HTTP error code declared by an upstream structured error event.
+    pub upstream_error_status: Option<u16>,
     pub response: Option<Box<FailureResponse>>,
     deadline_kind: DeadlineKind,
     source: Option<Box<dyn Error + Send + Sync>>,
@@ -114,6 +116,7 @@ impl Failure {
             phase,
             step: None,
             status: None,
+            upstream_error_status: None,
             response: None,
             deadline_kind: DeadlineKind::Request,
             source: None,
@@ -271,9 +274,15 @@ fn safe_cause(error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt:
     } else if let Some(source) = error.downcast_ref::<reqwest::Error>() {
         write!(
             f,
-            "upstream_timeout={}, upstream_connect={}",
+            "upstream_timeout={}, upstream_connect={}, upstream_builder={}, upstream_request={}, upstream_body={}, upstream_decode={}, upstream_redirect={}, upstream_status={:?}",
             source.is_timeout(),
-            source.is_connect()
+            source.is_connect(),
+            source.is_builder(),
+            source.is_request(),
+            source.is_body(),
+            source.is_decode(),
+            source.is_redirect(),
+            source.status().map(|status| status.as_u16())
         )
     } else if let Some(source) = error.downcast_ref::<serde_json::Error>() {
         write!(

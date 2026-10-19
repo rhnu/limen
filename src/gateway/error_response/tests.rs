@@ -153,6 +153,59 @@ async fn non_json_empty_and_binary_errors_do_not_require_chat_schema() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn successful_http_status_with_json_error_preserves_native_error_for_both_clients() {
+    let body = br#"{ "error": {"code":429,"message":"synthetic-private-detail","metadata":{"raw":"private upstream response","id":18446744073709551615}}, "model":"real" }"#;
+    for stream in [false, true] {
+        let output = run(
+            "",
+            upstream(200, Some("application/json"), body),
+            stream,
+            4096,
+        )
+        .await;
+        assert_eq!(output.status, 502);
+        assert_eq!(output.body, body);
+        assert_eq!(output.headers["content-type"], "application/json");
+        assert_eq!(
+            output.trace.error,
+            Some(json!({"code":"upstream_protocol","status":502,"phase":"upstream_body"}))
+        );
+        assert_eq!(output.trace.stats["usage"]["upstreamCompleted"], false);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_json_errors_reach_error_policy_before_response_hooks() {
+    let policy = r#"
+        provider.use({name:"adapt", onResponse() { throw Error("must not run"); },
+            onErrorResponse(ctx) {
+                ctx.state.nativeMessage = JSON.parse(ctx.body).error.message;
+                ctx.status = 429;
+            }});
+    "#;
+    let output = run(
+        policy,
+        upstream(
+            200,
+            Some("application/json"),
+            br#"{"error":{"code":429,"message":"synthetic upstream reason"}}"#,
+        ),
+        true,
+        4096,
+    )
+    .await;
+    assert_eq!(output.status, 429);
+    assert_eq!(
+        output.trace.state["nativeMessage"],
+        "synthetic upstream reason"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.body).unwrap()["error"]["code"],
+        429
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn error_policy_commits_provider_model_global_in_order_before_readonly_observers() {
     let policy = include_str!("../../../fixtures/gateway/error-response-unit/ordered-policy.js");
     let output = run(

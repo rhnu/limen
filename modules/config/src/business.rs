@@ -310,6 +310,27 @@ fn validate_pipeline(pipeline: &[PipelineStep], field: &str) -> Result<(), Confi
 /// # Errors
 /// Returns a sanitized error when JSON depth, nodes or numbers exceed safe limits.
 pub fn validate_json(value: &Value, max_depth: usize, max_nodes: usize) -> Result<(), ConfigError> {
+    validate_json_inner(value, max_depth, max_nodes, true)
+}
+
+/// Bound private wire data that is never converted to JavaScript values.
+///
+/// # Errors
+/// Returns a sanitized error when JSON depth or nodes exceed the resource limits.
+pub fn validate_json_structure(
+    value: &Value,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<(), ConfigError> {
+    validate_json_inner(value, max_depth, max_nodes, false)
+}
+
+fn validate_json_inner(
+    value: &Value,
+    max_depth: usize,
+    max_nodes: usize,
+    javascript_numbers: bool,
+) -> Result<(), ConfigError> {
     let invalid = || {
         ConfigError::new(
             ConfigErrorKind::Json,
@@ -338,12 +359,13 @@ pub fn validate_json(value: &Value, max_depth: usize, max_nodes: usize) -> Resul
                 stack.extend(array.iter().map(|value| (value, depth + 1)));
             },
             Value::Number(number)
-                if number.as_i64().is_some_and(|n| {
-                    !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&n)
-                }) || number.as_u64().is_some_and(|n| n > 9_007_199_254_740_991)
-                    || number
-                        .as_f64()
-                        .is_some_and(|n| n.fract() == 0.0 && n.abs() > 9_007_199_254_740_991.0) =>
+                if javascript_numbers
+                    && (number.as_i64().is_some_and(|n| {
+                        !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&n)
+                    }) || number.as_u64().is_some_and(|n| n > 9_007_199_254_740_991)
+                        || number.as_f64().is_some_and(|n| {
+                            n.fract() == 0.0 && n.abs() > 9_007_199_254_740_991.0
+                        })) =>
             {
                 return Err(invalid());
             },

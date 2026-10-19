@@ -169,6 +169,19 @@ impl Gateway {
         let body = limen_config::parse_json_slice(&bytes, limen_config::MAX_JSON_DEPTH).map_err(
             |source| Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source),
         )?;
+        // Error bodies stay as raw response data, including native numeric metadata.
+        // They never cross the JS value bridge, but still obey depth and node caps.
+        if body.get("error").is_some_and(|error| !error.is_null()) {
+            limen_config::validate_json_structure(
+                &body,
+                self.limits.max_json_depth,
+                self.limits.max_json_nodes,
+            )
+            .map_err(|source| {
+                Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source)
+            })?;
+            return Err(protocol::native_error(bytes, &body, "upstream_body"));
+        }
         validate_json(
             &body,
             self.limits.max_json_depth,
@@ -178,7 +191,8 @@ impl Gateway {
             Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source)
         })?;
         if !body.is_object() {
-            return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
+            return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body")
+                .with_source(limen_chat::Error::InvalidChunk));
         }
         lifecycle.statistics.timings.finishes(
             limen_chat::FinishCounts::from_response(&body),

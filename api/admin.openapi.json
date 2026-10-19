@@ -1853,6 +1853,16 @@
           "errorKind": {
             "description": "Optional allowlisted diagnostic metadata, retained as JSON."
           },
+          "errorDiagnostic": {
+            "type": "string",
+            "description": "Safe typed error cause chain, excluding upstream payloads and arbitrary exception messages."
+          },
+          "upstreamErrorStatus": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599,
+            "description": "HTTP-like numeric error.code from a native upstream error payload; distinct from the upstream HTTP status."
+          },
           "upstreamStatus": {
             "description": "Optional allowlisted diagnostic metadata, retained as JSON."
           },
