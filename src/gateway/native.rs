@@ -176,7 +176,11 @@ fn synthetic_before_send(
     let messages = body["messages"]
         .as_array_mut()
         .ok_or_else(|| Failure::new(ErrorCode::HookFailed, "beforeSend"))?;
-    messages.push(json!({"role":"user","content":format!("Transport instruction: To answer with text, call {} with exactly {{\"text\":\"your answer\"}}. Other declared tools remain available.",options.tool_name)}));
+    let prompt = options.prompt.clone().unwrap_or_else(|| {
+        format!("Transport instruction: To answer with text, call {} with exactly {{\"text\":\"your answer\"}}. Other declared tools remain available.", options.tool_name)
+    });
+    let index = messages.len().saturating_sub(options.injection_depth);
+    messages.insert(index, json!({"role":"user","content":prompt}));
     if body.get("tools").is_none() {
         body["tools"] = json!([]);
     }

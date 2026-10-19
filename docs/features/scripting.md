@@ -256,7 +256,19 @@ model.use(replaceText({
 
 - `replaceText({ name, search, replacement, maxBufferedChars, maxParts? })` 只替换 text part，按字面量执行不重叠替换，支持匹配跨越多个 delta。`search` 非空；每个 part 最多保留 `search.length - 1` 个 UTF-16 单元，必填正整数 `maxBufferedChars` 必须覆盖该长度。尾部在 `part_end` 输出。
 - `mapPartText({ name, kinds, maxBufferedChars, transform, maxParts?, stateKey? })` 缓冲所选 text/reasoning/refusal/tool part 的字符串，在 `part_end` 调用同步 `transform(text, info)`，返回替换字符串。`info` 只读，包含 choice、part、kind 和可选 finishReason。工具 ID/名称元数据仍及时传递，参数文字等待映射完成；全文正则或工具参数 JSON 编辑可以使用这一模式。每个 part 的保留文本受必填 UTF-16 长度上限约束，超限即失败；输出另受网关预算约束。该模式会延迟正文交付，流中断时不会调用映射函数或成功刷新缓冲。
-- `syntheticTextTool({ name, toolName?, maxBufferedChars, maxPendingEvents?, maxParts? })` 追加文本输出 function 工具和一条传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不累积已确定工具的参数历史；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
+- `syntheticTextTool({ name, toolName?, prompt?, injectionDepth?, maxBufferedChars, maxPendingEvents?, maxParts? })` 添加文本输出 function 工具和一条 `user` 角色的传输指令消息，保留已有历史，将 `tool_choice` 设为 `required`、关闭并行工具调用。默认工具名为 `limen_emit_text`；该工具的参数必须是严格的 `{"text": string}` 对象，可有 JSON 空白，不能有额外或重复键。解析器增量解码合法 Unicode 文本，不累积已确定工具的参数历史；真实 function 工具调用继续传递，可与合成文本共存。移除合成工具后，保留的真实工具按 choice 重新连续编号，源 part 标识保持不变。只有出现合成文本且没有真实工具调用的 choice 才把 `tool_calls` 结束原因改为 `stop`。
+
+`prompt` 完整替换默认传输指令，按字符串原样注入，不进行占位符替换，也不检查是否提及工具名；自定义提示词中的工具名称由使用者负责。空字符串仍会插入一条空消息。省略时使用现有默认指令，并在指令中使用配置的 `toolName`。`injectionDepth` 为非负整数，默认 `0`，从执行该策略时的消息数组末尾按消息条数计算：`0` 表示末尾追加，`1` 表示插在最后一条消息之前，深度达到或超过消息数时插在开头；不按对话轮次或角色分组，也不调整原消息顺序。
+
+```js
+chat.use(syntheticTextTool({
+  name: "text-transport",
+  toolName: "emit_answer",
+  prompt: '请调用 emit_answer，以 {"text":"回答正文"} 返回回答。',
+  injectionDepth: 1,
+  maxBufferedChars: 1024,
+}));
+```
 
 `syntheticTextTool` 保留上游直接返回的普通正文，并按源 SSE 数据事件顺序与合成工具文本拼接，不添加分隔符或去重。同一帧包含两者时，普通 `content` 在前，合成文本按 `tool_calls` 数组顺序在后；完整 JSON 也采用这一固定顺序，不承诺恢复模型的实际生成时序。工具名尚未识别完整，或转义与 Unicode 代理对尚未补齐时，后续正文会等待；字符补齐后归回转义开始的源帧，后续帧不能越过。解除等待后保留各源帧的注释、命名事件、ID 与 retry，后续 `onContent` 读取对应的原 `ctx.sse`，SSE → JSON 聚合采用相同的文本顺序。等待只覆盖未决窗口，不必等待整个工具调用结束。
 

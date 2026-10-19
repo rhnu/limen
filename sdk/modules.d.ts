@@ -367,6 +367,14 @@ declare module "limen:content" {
          * @defaultValue `"limen_emit_text"`
          */
         toolName?: string;
+        /** Replaces the injected instruction verbatim; mention the tool name yourself. */
+        prompt?: string;
+        /**
+         * Nonnegative integer counting messages backwards from the end: 0 appends,
+         * 1 inserts before the last message. Depths beyond the history insert at the start.
+         * @defaultValue `0`
+         */
+        injectionDepth?: number;
         /**
          * UTF-16 bound on all waiting serialized events and metadata, including blocked text;
          * must cover the tool-name length.
@@ -384,8 +392,8 @@ declare module "limen:content" {
         maxParts?: number;
     }
     /**
-     * Appends a text function and user instruction, requires tools and disables parallel calls.
-     * @param options - Tool identity and bounded pending-event state; not a full-answer length limit.
+     * Adds a text function and user instruction, requires tools and disables parallel calls.
+     * @param options - Tool identity, instruction placement and bounded pending-event state.
      * @returns A native `beforeSend`/`onContent` step that decodes exactly `{"text": string}`.
      * @throws On malformed options; incompatible requests reject with 422, invalid tool JSON fails.
      * @remarks Accepts absent/auto `tool_choice` and function tools. Rejects legacy functions,

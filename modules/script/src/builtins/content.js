@@ -120,6 +120,8 @@ export function replaceText(options) {
 export function syntheticTextTool(options) {
   return descriptor(options, "syntheticTextTool", [
     "toolName",
+    "prompt",
+    "injectionDepth",
     "maxBufferedChars",
     "maxParts",
     "maxPendingEvents",

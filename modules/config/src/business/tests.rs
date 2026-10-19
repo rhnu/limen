@@ -29,8 +29,29 @@ fn builtin_descriptors_validate_options_and_keep_content_defaults() {
         panic!("expected tool policy");
     };
     assert_eq!(options.tool_name, "limen_emit_text");
+    assert_eq!(options.prompt, None);
+    assert_eq!(options.injection_depth, 0);
     assert_eq!(options.max_parts, 64);
     assert_eq!(options.max_pending_events, 64);
+}
+
+#[test]
+fn synthetic_tool_accepts_custom_prompt_and_injection_depth() {
+    for prompt in ["", "Use the configured tool.\n保留原文。"] {
+        let mut value = basic();
+        value["models"]["chat"]["pipeline"] = json!([{
+            "name":"tool",
+            "builtin":{"kind":"syntheticTextTool","maxBufferedChars":128,"prompt":prompt,"injectionDepth":2}
+        }]);
+        let parsed = parse(value).unwrap();
+        let Some(crate::BuiltinPolicy::SyntheticTextTool(options)) =
+            &parsed.models["chat"].pipeline[0].builtin
+        else {
+            panic!("expected tool policy");
+        };
+        assert_eq!(options.prompt.as_deref(), Some(prompt));
+        assert_eq!(options.injection_depth, 2);
+    }
 }
 
 #[test]
@@ -50,6 +71,12 @@ fn builtin_descriptors_reject_mixed_hooks_unknown_fields_and_unsafe_options() {
         json!({"kind":"replaceText","search":"a","replacement":"x","maxBufferedChars":2,"stateKey":"legacy"}),
         json!({"kind":"syntheticTextTool","maxBufferedChars":1}),
         json!({"kind":"syntheticTextTool","maxBufferedChars":128,"maxPendingEvents":0}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"prompt":null}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"prompt":42}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"injectionDepth":-1}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"injectionDepth":1.5}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"injectionDepth":null}),
+        json!({"kind":"syntheticTextTool","maxBufferedChars":128,"injectionDepth":"1"}),
     ] {
         let mut value = basic();
         value["models"]["chat"]["pipeline"] = json!([{"name":"policy","builtin":builtin}]);

@@ -17,7 +17,7 @@ async fn embedded_factories_snapshot_frozen_native_descriptors() -> TestResult {
                     {"name":"drop","builtin":{"kind":"dropRequestFields","fields":["store","metadata"],"onChange":"changed"}},
                     {"name":"header","builtin":{"kind":"forwardClientHeader","from":"X-Profile","to":"x-upstream"}},
                     {"name":"replace","builtin":{"kind":"replaceText","search":"abc","replacement":"x","maxBufferedChars":2}},
-                    {"name":"tool","builtin":{"kind":"syntheticTextTool","maxBufferedChars":512}}
+                    {"name":"tool","builtin":{"kind":"syntheticTextTool","prompt":"Return text through the declared tool.","injectionDepth":2,"maxBufferedChars":512}}
                 ], "frozen":true
             }),
         "embedded factories changed descriptors, captured mutable options or registered JS hooks",

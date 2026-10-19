@@ -58,6 +58,8 @@ HTTP 读取结束、协议终止、choice 完成和用量质量分别记录。Ch
 
 协议解释不以供应商名分支，差异按事件与字段的语义表达。范围内的行为测试覆盖分帧、字段合并、hook 提交、离线组合与受监督的合成 HTTP；真实供应商与 Docker 运行验收各自独立。
 
+`syntheticTextTool` 的请求指令以 `user` 消息注入。可选 `prompt` 原样替换默认提示词，工具名由使用者在自定义提示词中自行填写；可选 `injectionDepth` 从当前消息数组末尾按条数计算插入位置，默认 `0` 末尾追加，达到或超过消息数时插在开头，保留原消息顺序。具体用法见[正文策略](features/scripting.md#正文策略工厂)。
+
 ## JavaScript 所有权与提交
 
 每个服务生命周期只加载一次业务模块，保留其闭包和 hook。入口默认导出 `limen:gateway` 的 `defineGateway(setup)` 结果；宿主在启动时执行一次同步 setup，验证注册结果并编译阶段计划。provider scope 创建自己的 model，provider 与 model scope 按调用顺序注册工厂策略或自定义 step，不接收完整的旧式配置对象。公开使用契约见[显式组合与生命周期](features/scripting.md#显式组合与生命周期)。

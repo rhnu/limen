@@ -14,7 +14,12 @@ const steps = [
   drop,
   forwardClientHeader({ name: "header", from: "X-Profile", to: "x-upstream" }),
   replaceText({ name: "replace", search: "abc", replacement: "x", maxBufferedChars: 2 }),
-  syntheticTextTool({ name: "tool", maxBufferedChars: 512 }),
+  syntheticTextTool({
+    name: "tool",
+    prompt: "Return text through the declared tool.",
+    injectionDepth: 2,
+    maxBufferedChars: 512,
+  }),
 ];
 export default () => ({
   steps,

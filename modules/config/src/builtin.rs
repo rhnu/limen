@@ -82,6 +82,10 @@ pub struct ReplaceText {
 pub struct SyntheticTextTool {
     #[serde(default = "default_tool_name")]
     pub tool_name: String,
+    #[serde(default, deserialize_with = "present_option")]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub injection_depth: usize,
     pub max_buffered_chars: usize,
     #[serde(default = "default_parts")]
     pub max_pending_events: usize,

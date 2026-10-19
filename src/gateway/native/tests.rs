@@ -134,6 +134,13 @@ fn synthetic_tool_appends_instruction_and_preserves_original_history() {
         json!({"role":"user","content":"hello"})
     );
     assert_eq!(context.body["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(context.body["messages"][1]["role"], "user");
+    assert!(
+        context.body["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("limen_emit_text")
+    );
     assert_eq!(
         context.body["tools"][1]["function"]["name"],
         "limen_emit_text"
@@ -157,6 +164,56 @@ fn synthetic_tool_appends_instruction_and_preserves_original_history() {
         assert_eq!(context.body, body);
         assert_eq!(rejection, Some(RejectionStatus::UnprocessableEntity));
     }
+}
+
+#[test]
+fn synthetic_tool_inserts_verbatim_prompts_at_message_depth() {
+    let history = json!([
+        {"role":"system","content":"rules"},
+        {"role":"user","content":"first"},
+        {"role":"assistant","content":"answer"},
+        {"role":"user","content":"last"}
+    ]);
+    for (depth, index) in [(0, 4), (1, 3), (2, 2), (4, 0), (100, 0)] {
+        for prompt in ["Use {toolName} literally.\n原样保留提示。", ""] {
+            let (context, rejection, _) = apply(
+                json!({"kind":"syntheticTextTool","toolName":"custom_emit","prompt":prompt,"injectionDepth":depth,"maxBufferedChars":128}),
+                json!({"messages":history}),
+            );
+            assert_eq!(rejection, None);
+            let mut messages = context.body["messages"].as_array().unwrap().clone();
+            assert_eq!(
+                messages.remove(index),
+                json!({"role":"user","content":prompt})
+            );
+            assert_eq!(json!(messages), history);
+            assert_eq!(context.body["tools"][0]["function"]["name"], "custom_emit");
+        }
+    }
+    let (context, rejection, _) = apply(
+        json!({"kind":"syntheticTextTool","prompt":"instruction","injectionDepth":5,"maxBufferedChars":128}),
+        json!({"messages":[]}),
+    );
+    assert_eq!(rejection, None);
+    assert_eq!(
+        context.body["messages"],
+        json!([{"role":"user","content":"instruction"}])
+    );
+}
+
+#[test]
+fn synthetic_tool_default_prompt_uses_configured_tool_name() {
+    let (context, rejection, _) = apply(
+        json!({"kind":"syntheticTextTool","toolName":"custom_emit","maxBufferedChars":128}),
+        json!({"messages":[{"role":"user","content":"hello"}]}),
+    );
+    assert_eq!(rejection, None);
+    assert!(
+        context.body["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("custom_emit")
+    );
 }
 
 #[test]

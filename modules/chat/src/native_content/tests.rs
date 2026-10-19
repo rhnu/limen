@@ -31,6 +31,8 @@ fn synthetic_policy() -> NativeContentPolicy { synthetic_options(|_| {}) }
 fn synthetic_options(change: impl FnOnce(&mut SyntheticTextTool)) -> NativeContentPolicy {
     let mut options = SyntheticTextTool {
         tool_name: "limen_emit_text".into(),
+        prompt: None,
+        injection_depth: 0,
         max_buffered_chars: 4096,
         max_parts: 64,
         max_pending_events: 64,

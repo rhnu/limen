@@ -437,7 +437,7 @@ async fn runnable_content_examples_cover_all_four_transports() {
 async fn synthetic_tool_is_unwrapped_in_all_paths_and_keeps_actual_tools() {
     let settings = config(
         "import {syntheticTextTool} from 'limen:content';",
-        "{name:'source-view',onContent(ctx){ctx.state.observed=true;}},syntheticTextTool({name:'transport',maxBufferedChars:1024})",
+        "{name:'source-view',onContent(ctx){ctx.state.observed=true;}},syntheticTextTool({name:'transport',prompt:'Use limen_emit_text for the answer.',injectionDepth:1,maxBufferedChars:1024})",
         "",
         "",
     );
@@ -481,8 +481,11 @@ async fn synthetic_tool_is_unwrapped_in_all_paths_and_keeps_actual_tools() {
             }
             assert_eq!(result.stats["usage"]["totalTokens"], 10);
             assert_eq!(
-                result.outbound["messages"][0],
-                json!({"role":"user","content":"public prompt"})
+                result.outbound["messages"],
+                json!([
+                    {"role":"user","content":"Use limen_emit_text for the answer."},
+                    {"role":"user","content":"public prompt"}
+                ])
             );
             let mut events = vec![
                 chunk(

@@ -40,7 +40,13 @@ export const policies = [
     },
   }),
   replaceText({ name: "redact", search: "public", replacement: "visible", maxBufferedChars: 16 }),
-  syntheticTextTool({ name: "unwrap", toolName: "emit_text", maxBufferedChars: 512 }),
+  syntheticTextTool({
+    name: "unwrap",
+    toolName: "emit_text",
+    prompt: 'Call emit_text with {"text":"your answer"}.',
+    injectionDepth: 1,
+    maxBufferedChars: 512,
+  }),
 ];
 mapPartText({
   name: "bad",
@@ -59,6 +65,10 @@ replaceText({ name: "redact", search: "a", replacement: "b" });
 replaceText({ name: "redact", search: "a", replacement: () => "b", maxBufferedChars: 1 });
 // @ts-expect-error no host I/O or retry callbacks are part of this transport.
 syntheticTextTool({ name: "tool", maxBufferedChars: 512, retry() {} });
+// @ts-expect-error The instruction must be literal text.
+syntheticTextTool({ name: "tool", maxBufferedChars: 512, prompt: () => "instruction" });
+// @ts-expect-error The depth must be numeric.
+syntheticTextTool({ name: "tool", maxBufferedChars: 512, injectionDepth: "1" });
 /** @type {import("../limen").ContentEvent} */
 // @ts-expect-error a tool start requires typed metadata and a stable index.
 export const missingTool = { type: "part_start", choice: 0, part: "tool", kind: "tool" };
