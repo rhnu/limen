@@ -51,7 +51,9 @@ sudo chmod -R u=rwX,go= config data logs
 docker build --platform linux/amd64 --target runtime -t limen:local .
 ```
 
-构建依赖缓存、发布和镜像维护由 [`Dockerfile`](../../Dockerfile) 与 [CI](../../.github/workflows/ci.yml)维护；重构期间 CI 只构建、测试和发布镜像，webhook 部署触发已注释；恢复部署需另行明确授权。
+构建依赖缓存、发布和镜像维护由 [`Dockerfile`](../../Dockerfile) 与 [CI](../../.github/workflows/ci.yml)维护。main 推送通过检查并发布镜像后，会检查以下四个 GitHub Actions Secrets，并在全部配置时调用 OliveTin webhook 自动部署：`CF_ACCESS_CLIENT_ID`、`CF_ACCESS_CLIENT_SECRET`、`WEBHOOK_TOKEN`、`WEBHOOK_URL`。全部缺省时跳过部署，部分配置则使 CI 失败；PR 与手动运行只构建检查，不发布或触发部署。
+
+`WEBHOOK_URL` 必须使用 HTTPS 并指向 OliveTin `/webhooks` 端点。触发请求携带发布镜像、提交 SHA 与请求 ID；脚本只确认收到 HTTP 200 和 `OK` 回执，实际动作执行结果需在 OliveTin 与目标服务中确认。
 
 ## 资源限制
 
