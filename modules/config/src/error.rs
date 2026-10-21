@@ -251,6 +251,7 @@ fn schema_name(key: &str) -> &str {
         | "startup_ms"
         | "hook_ms"
         | "request_ms"
+        | "sse_keepalive_ms"
         | "execution_ms"
         | "vm_work_ms"
         | "cleanup_ms"

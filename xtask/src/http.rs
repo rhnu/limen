@@ -7,6 +7,7 @@ mod logging;
 mod management;
 mod performance;
 mod routing;
+mod sse_keepalive;
 mod statistics;
 mod transport;
 mod upstream;
@@ -24,6 +25,7 @@ pub const CASES: &[&str] = &[
     "retirement",
     "resources",
     "stream-boundary",
+    "sse-keepalive",
     "content-transform",
     "statistics",
     "performance",
@@ -43,6 +45,7 @@ pub async fn run(case: &str, executable: &Path, directory: &Path) -> Result<()> 
         "retirement" => lifecycle::retirement(&mut laboratory).await,
         "resources" => lifecycle::resources(&mut laboratory).await,
         "stream-boundary" => transport::run(&mut laboratory).await,
+        "sse-keepalive" => sse_keepalive::run(&mut laboratory).await,
         "content-transform" => content::run(&mut laboratory).await,
         "statistics" => statistics::run(&mut laboratory).await,
         "performance" => performance::run(&mut laboratory).await,

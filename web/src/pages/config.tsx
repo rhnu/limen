@@ -14,6 +14,7 @@ const limitLabels: Record<keyof ResourceLimits, string> = {
     startupMs: "启动期限 (ms)",
     hookMs: "Hook 期限 (ms)",
     requestMs: "请求期限 (ms)",
+    sseKeepaliveMs: "SSE 空闲心跳间隔 (ms，0 关闭)",
     executionMs: "同步执行预算 (ms)",
     vmWorkMs: "VM 工作预算 (ms)",
     cleanupMs: "清理预算 (ms)",

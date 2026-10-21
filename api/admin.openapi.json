@@ -2111,6 +2111,12 @@
             "type": "integer",
             "minimum": 0
           },
+          "sseKeepaliveMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600000,
+            "description": "Downstream SSE keepalive interval while waiting for upstream body bytes, in milliseconds; 0 disables keepalives."
+          },
           "executionMs": {
             "type": "integer",
             "minimum": 0
@@ -2204,6 +2210,7 @@
           "startupMs",
           "hookMs",
           "requestMs",
+          "sseKeepaliveMs",
           "executionMs",
           "vmWorkMs",
           "cleanupMs",

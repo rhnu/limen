@@ -1,4 +1,7 @@
-use std::time::Instant;
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 use axum::{http::header, response::Response};
 use limen_chat::{Aggregator, ChunkTracker, Event, Frame, FrameDecoder, JsonChunks};
@@ -62,7 +65,14 @@ impl Gateway {
             self.receive_sse(route, &mut response, lifecycle, delivery, client_stream)
                 .await?
         } else {
-            Some(self.receive_json(&mut response, lifecycle).await?)
+            Some(
+                self.receive_json(
+                    &mut response,
+                    lifecycle,
+                    client_stream.then_some(&mut *delivery),
+                )
+                .await?,
+            )
         };
         if let Some(body) = body {
             let mut body = self.response_body(route, body, lifecycle).await?;
@@ -151,7 +161,7 @@ impl Gateway {
                     .cloned()
                     .collect()
             };
-        let body = self.receive_bytes(response, lifecycle).await?;
+        let body = self.receive_bytes(response, lifecycle, None).await?;
         error.response = Some(Box::new(FailureResponse {
             body,
             content_type,
@@ -164,8 +174,9 @@ impl Gateway {
         &self,
         response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
+        delivery: Option<&mut Delivery>,
     ) -> Result<Value, Failure> {
-        let bytes = self.receive_bytes(response, lifecycle).await?;
+        let bytes = self.receive_bytes(response, lifecycle, delivery).await?;
         let body = limen_config::parse_json_slice(&bytes, limen_config::MAX_JSON_DEPTH).map_err(
             |source| Failure::new(ErrorCode::UpstreamProtocol, "upstream_body").with_source(source),
         )?;
@@ -209,9 +220,17 @@ impl Gateway {
         &self,
         response: &mut super::transport::Incoming,
         lifecycle: &mut Lifecycle,
+        mut delivery: Option<&mut Delivery>,
     ) -> Result<Vec<u8>, Failure> {
         let mut bytes = Vec::new();
-        while let Some((chunk, _observed_at)) = read_chunk(response, lifecycle).await? {
+        while let Some((chunk, _observed_at)) = read_chunk(
+            response.chunk(),
+            lifecycle,
+            delivery.as_deref_mut(),
+            &self.limits,
+        )
+        .await?
+        {
             if chunk.len() > self.limits.max_output_bytes.saturating_sub(bytes.len()) {
                 return Err(Failure::new(ErrorCode::UpstreamProtocol, "upstream_body"));
             }
@@ -246,7 +265,14 @@ impl Gateway {
                 .then(|| Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events)),
         };
         let mut completed_at = None;
-        'upstream: while let Some((chunk, observed_at)) = read_chunk(response, lifecycle).await? {
+        'upstream: while let Some((chunk, observed_at)) = read_chunk(
+            response.chunk(),
+            lifecycle,
+            client_stream.then_some(&mut *delivery),
+            limits,
+        )
+        .await?
+        {
             lifecycle.upstream_bytes = lifecycle.upstream_bytes.saturating_add(chunk.len());
             for byte in chunk {
                 let frame = decoder
@@ -269,32 +295,21 @@ impl Gateway {
                     },
                     Event::KeepAlive => {
                         if client_stream {
-                            let bytes = protocol::control_frame(&frame, limits)?;
+                            protocol::control_frame(&frame, limits)?;
+                            let bytes = delivery.control_bytes(&frame);
                             lifecycle.output_bytes =
                                 lifecycle.output_bytes.saturating_add(bytes.len());
                             delivery.emit(bytes.to_vec()).await?;
                         }
                     },
                     Event::Chunk(event) => {
-                        validate_json(&event, limits.max_json_depth, limits.max_json_nodes)
-                            .map_err(|source| {
-                                Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse")
-                                    .with_source(source)
-                            })?;
-                        upstream_tracker
-                            .push(&event)
-                            .map_err(|source| protocol(source, "upstream_sse"))?;
-                        lifecycle.statistics.timings.finishes(
-                            upstream_tracker.finish_counts(),
-                            upstream_tracker.choice_count(),
-                        );
-                        lifecycle.statistics.timings.first_chunk(observed_at);
-                        lifecycle.statistics.timings.upstream_content(
-                            limen_chat::observe_generated_content(&event),
-                            upstream_tracker.choice_count(),
+                        observe_upstream_chunk(
+                            &event,
+                            &mut upstream_tracker,
+                            lifecycle,
                             observed_at,
-                        );
-                        lifecycle.statistics.usage.observe(event.get("usage"));
+                            limits,
+                        )?;
                         self.content_stream_event(
                             route,
                             event,
@@ -428,14 +443,65 @@ impl Gateway {
     }
 }
 
-async fn read_chunk(
-    response: &mut super::transport::Incoming,
+fn observe_upstream_chunk(
+    event: &Value,
+    tracker: &mut ChunkTracker,
     lifecycle: &mut Lifecycle,
+    observed_at: Instant,
+    limits: &ResourceLimits,
+) -> Result<(), Failure> {
+    validate_json(event, limits.max_json_depth, limits.max_json_nodes).map_err(|source| {
+        Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse").with_source(source)
+    })?;
+    tracker
+        .push(event)
+        .map_err(|source| protocol(source, "upstream_sse"))?;
+    let timings = &lifecycle.statistics.timings;
+    timings.finishes(tracker.finish_counts(), tracker.choice_count());
+    timings.first_chunk(observed_at);
+    timings.upstream_content(
+        limen_chat::observe_generated_content(event),
+        tracker.choice_count(),
+        observed_at,
+    );
+    lifecycle.statistics.usage.observe(event.get("usage"));
+    Ok(())
+}
+
+async fn read_chunk(
+    read: impl Future<Output = Result<Option<axum::body::Bytes>, Failure>>,
+    lifecycle: &mut Lifecycle,
+    mut delivery: Option<&mut Delivery>,
+    limits: &ResourceLimits,
 ) -> Result<Option<(axum::body::Bytes, Instant)>, Failure> {
-    let measurement = lifecycle.statistics.timings.measure(WaitKind::Read);
-    let result = response.chunk().await;
+    // Keep the same read alive across heartbeats; cancelling its wait must not
+    // discard an upstream operation or change the request's fixed deadline.
+    tokio::pin!(read);
+    let result = loop {
+        let measurement = lifecycle.statistics.timings.measure(WaitKind::Read);
+        let Some(delivery) = delivery
+            .as_deref_mut()
+            .filter(|_| limits.sse_keepalive_ms != 0)
+        else {
+            break read.await;
+        };
+        tokio::select! {
+            biased;
+            result = &mut read => break result,
+            () = tokio::time::sleep(Duration::from_millis(limits.sse_keepalive_ms)) => {},
+        }
+        drop(measurement);
+        let heartbeat = b": keepalive\n\n";
+        if heartbeat.len() > limits.max_output_bytes {
+            return Err(Failure::new(
+                ErrorCode::UpstreamProtocol,
+                "downstream_keepalive",
+            ));
+        }
+        delivery.emit(heartbeat.to_vec()).await?;
+        lifecycle.output_bytes = lifecycle.output_bytes.saturating_add(heartbeat.len());
+    };
     let observed_at = Instant::now();
-    drop(measurement);
     if result
         .as_ref()
         .is_ok_and(|chunk| chunk.as_ref().is_some_and(|bytes| !bytes.is_empty()))

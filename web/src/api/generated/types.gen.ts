@@ -591,6 +591,10 @@ export type ResourceLimits = {
     startupMs: number;
     hookMs: number;
     requestMs: number;
+    /**
+     * Downstream SSE keepalive interval while waiting for upstream body bytes, in milliseconds; 0 disables keepalives.
+     */
+    sseKeepaliveMs: number;
     executionMs: number;
     vmWorkMs: number;
     cleanupMs: number;

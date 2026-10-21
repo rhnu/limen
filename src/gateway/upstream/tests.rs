@@ -4,6 +4,8 @@ use serde_json::json;
 
 use super::*;
 
+mod keepalive;
+
 fn choices(count: u64, limits: &ResourceLimits) -> Aggregator {
     let mut aggregate = Aggregator::new(limits.max_aggregate_bytes, limits.max_aggregate_events);
     for index in 0..count {

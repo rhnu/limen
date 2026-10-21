@@ -192,6 +192,34 @@ async fn success_waits_for_body_drain_and_appends_one_done() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn control_frames_keep_bom_only_before_downstream_has_started() {
+    for raw in [
+        b"\xef\xbb\xbf: upstream\n\n".as_slice(),
+        b"\xef\xbb\xbfid: end\ndata: [DONE]\n\n",
+    ] {
+        let mut decoder = limen_chat::FrameDecoder::new(256);
+        let frame = raw
+            .iter()
+            .find_map(|byte| decoder.push(*byte).unwrap())
+            .unwrap();
+        let (reply, receive) = oneshot::channel();
+        let mut delivery = Delivery::new(reply, Cancellation::new(), "bom".into());
+        assert_eq!(delivery.control_bytes(&frame), raw);
+        delivery.emit(b": keepalive\n\n".to_vec()).await.unwrap();
+        assert_eq!(delivery.control_bytes(&frame), &raw[3..]);
+        let response = receive.await.unwrap();
+        let (result, bytes) = tokio::join!(
+            delivery.finish(Some(&frame)),
+            axum::body::to_bytes(response.into_body(), 256)
+        );
+        result.unwrap();
+        let mut expected = b": keepalive\n\n".to_vec();
+        expected.extend_from_slice(&raw[3..]);
+        assert_eq!(bytes.unwrap(), expected);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_stream_errors_remain_response_data_after_heartbeat_commits_status() {
     let lifecycle = Lifecycle::new("native".into(), Cancellation::new(), 1000);
     let mut failure = Failure::new(ErrorCode::UpstreamProtocol, "upstream_sse");

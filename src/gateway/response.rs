@@ -69,6 +69,16 @@ impl Delivery {
 
     pub fn pending(&self) -> bool { self.reply.is_some() }
 
+    /// An upstream BOM can only remain at the beginning of the downstream stream.
+    pub fn control_bytes<'a>(&self, frame: &'a limen_chat::Frame) -> &'a [u8] {
+        let bytes = frame.raw();
+        if !self.pending() && frame.has_leading_bom() {
+            &bytes[3..]
+        } else {
+            bytes
+        }
+    }
+
     pub fn send_json(&mut self, response: Response) {
         if let Some(reply) = self.reply.take() {
             let _delivered = reply.send(response);
@@ -140,10 +150,11 @@ impl Delivery {
     }
 
     pub async fn finish(&mut self, terminator: Option<&limen_chat::Frame>) -> Result<(), Failure> {
-        self.emit(
-            terminator.map_or_else(|| limen_chat::DONE.to_vec(), |frame| frame.raw().to_vec()),
-        )
-        .await?;
+        let bytes = terminator.map_or_else(
+            || limen_chat::DONE.to_vec(),
+            |frame| self.control_bytes(frame).to_vec(),
+        );
+        self.emit(bytes).await?;
         self.done_sent = true;
         self.sender.take();
         if let Some(drained) = self.drained.take() {

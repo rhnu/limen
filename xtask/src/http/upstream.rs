@@ -40,6 +40,7 @@ pub struct Controls {
     pub status: u16,
     pub media: &'static str,
     pub raw: Option<Vec<u8>>,
+    pub body_gate: Option<Arc<Notify>>,
     pub split_at: Option<usize>,
     pub split_gate: Option<Arc<Notify>>,
     pub delay: bool,
@@ -56,6 +57,7 @@ impl Default for Controls {
             status: 200,
             media: "application/json",
             raw: None,
+            body_gate: None,
             split_at: None,
             split_gate: None,
             delay: false,
@@ -241,12 +243,19 @@ async fn respond(
             Box::pin(async move { gate.notified().await })
                 as Pin<Box<dyn Future<Output = ()> + Send>>
         });
+    let initial_gate = controls.body_gate.clone().map(|gate| {
+        Box::pin(async move { gate.notified().await }) as Pin<Box<dyn Future<Output = ()> + Send>>
+    });
+    if initial_gate.is_some() {
+        *delayed.lock().await = true;
+    }
     builder
         .body(ResponseBody {
             first: Some(first),
             tail,
             pause: None,
             gate,
+            initial_gate,
         })
         .context("construct synthetic upstream response")
 }
@@ -257,6 +266,7 @@ struct ResponseBody {
     tail: Option<Bytes>,
     pause: Option<Pin<Box<Sleep>>>,
     gate: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    initial_gate: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 impl Body for ResponseBody {
@@ -267,6 +277,10 @@ impl Body for ResponseBody {
         mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        if let Some(gate) = &mut self.initial_gate {
+            ready!(gate.as_mut().poll(cx));
+            self.initial_gate = None;
+        }
         if let Some(first) = self.first.take() {
             if self.tail.is_some() && self.gate.is_none() {
                 self.pause = Some(Box::pin(sleep(Duration::from_millis(50))));

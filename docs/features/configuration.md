@@ -35,6 +35,7 @@ api_key = "replace-with-a-random-api-key-at-least-32-bytes"
 [limits]
 request_ms = 600000 # 请求总期限：10 分钟
 hook_ms = 5000 # 单次 hook 等待：5 秒
+sse_keepalive_ms = 15000 # 下游 SSE 空闲心跳间隔：15 秒；0 关闭
 
 [storage]
 dir = "../data"
@@ -56,6 +57,8 @@ timeout_ms = 2000
 ```
 
 请求总期限从生成任务开始计时，覆盖正文读取、hook、上游调用及响应处理，SSE 的下游发送也计入期限；收到 token 或心跳不会续期。单次 hook 等待包含排队与 Promise 等待，实际截止时刻取 `hook_ms` 与请求剩余期限的较早者；请求总期限先到时按请求超时报告。两类超时的默认错误文案见[状态与错误](transport.md#状态响应头与错误)。`request_ms` 可设为 1–3600000 毫秒，`hook_ms` 可设为 1–300000 毫秒。
+
+`sse_keepalive_ms` 控制客户端请求流式响应时等待上游正文的空闲心跳，默认 15000 毫秒，设为 `0` 关闭，启用范围为 1–3600000 毫秒。成功上游响应头和 `afterReceive` 处理完成后，等待下一段上游 SSE 或 JSON 正文超过该间隔时，Limen 发送注释保持下游连接活跃；收到任何上游正文片段都会重置空闲计时。首个心跳会提交 HTTP 状态，之后的失败使用流内错误。心跳遵守输出字节上限，不计入生成内容或 TTFT，也不延长请求期限；详细语义见[响应与流协议](transport.md#sse-完成与失败)。
 
 相对目录以服务文件父目录为基准。配置、数据、日志目录不能相同或互相包含；已有路径的符号链接会解析后检查。`serve` 创建缺失的 data/logs，但不创建配置或修改权限。`check` 不打开数据库、不创建日志或运行目录，通过也不代表目录可写。`storage.operation_ms + limits.cleanup_ms` 必须小于 `limits.shutdown_ms`，并应为排空留余量；记录上限必须大于生成并发。完整范围见[设计契约](../design.md#服务配置与命令)。
 

@@ -5,6 +5,7 @@ api_key = "example-limen-api-key-change-this-32-bytes"
 
 [limits]
 shutdown_ms = 5000
+sse_keepalive_ms = 15000 # 下游 SSE 空闲心跳间隔；0 关闭，不延长请求期限
 
 [storage]
 dir = "/data"

@@ -125,6 +125,45 @@ fn resource_override_keeps_other_limits_bounded() {
 }
 
 #[test]
+fn sse_keepalive_defaults_and_accepts_only_bounded_integer_intervals() {
+    let auth = "auth = { api_key = 'test-api-key-01234567890123456789' }";
+    assert_eq!(
+        ServerConfig::parse(auth, ServerFormat::Toml)
+            .unwrap()
+            .limits
+            .sse_keepalive_ms,
+        15_000
+    );
+    for interval in [0, 1, 250, 3_600_000] {
+        let toml = format!("{auth}\n[limits]\nsse_keepalive_ms = {interval}");
+        let yaml = format!(
+            "auth: {{api_key: test-api-key-01234567890123456789}}\nlimits: {{sse_keepalive_ms: {interval}}}"
+        );
+        for (source, format) in [(&toml, ServerFormat::Toml), (&yaml, ServerFormat::Yaml)] {
+            assert_eq!(
+                ServerConfig::parse(source, format)
+                    .unwrap()
+                    .limits
+                    .sse_keepalive_ms,
+                interval
+            );
+        }
+    }
+    for value in ["3600001", "-1", "1.5", "true", "'secret-value'"] {
+        let toml = format!("{auth}\n[limits]\nsse_keepalive_ms = {value}");
+        let yaml = format!(
+            "auth: {{api_key: test-api-key-01234567890123456789}}\nlimits: {{sse_keepalive_ms: {value}}}"
+        );
+        for (source, format) in [(&toml, ServerFormat::Toml), (&yaml, ServerFormat::Yaml)] {
+            let error = ServerConfig::parse(source, format).err().unwrap();
+            assert_eq!(error.field, "limits.sse_keepalive_ms");
+            assert!(error.line.is_some());
+            assert!(!error.diagnostic().to_string().contains("secret-value"));
+        }
+    }
+}
+
+#[test]
 fn rejects_yaml_expansion_multiple_documents_and_ephemeral_ports() {
     for source in [
         "auth: &settings {api_key: test-api-key-01234567890123456789}",
