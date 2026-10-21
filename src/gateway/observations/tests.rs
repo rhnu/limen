@@ -45,7 +45,7 @@ fn exported_statistics_and_observations_do_not_include_arbitrary_upstream_fields
         "beforeSend",
         Some("policy"),
     );
-    tracing::subscriber::with_default(subscriber, || {
+    crate::telemetry::tests::with_test_subscriber(subscriber, || {
         super::super::stats::record("request-1", &statistics.snapshot());
         observations.record("request-1", &["policy_applied".into()]);
     });

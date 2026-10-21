@@ -1,6 +1,6 @@
 use std::{
     io,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Once},
 };
 
 use serde_json::json;
@@ -24,16 +24,69 @@ impl io::Write for Capture {
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
+pub(crate) fn with_test_subscriber<T>(
+    subscriber: impl tracing::Subscriber + Send + Sync + 'static,
+    action: impl FnOnce() -> T,
+) -> T {
+    static INITIALIZE: Once = Once::new();
+    INITIALIZE.call_once(|| {
+        // Keep a permanent dispatcher so callsite registration considers all scoped subscribers.
+        // The single-dispatch fast path can otherwise cache another thread's callsite as disabled.
+        tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default())
+            .unwrap();
+    });
+    tracing::subscriber::with_default(subscriber, action)
+}
+
 pub(crate) fn capture_logs(action: impl FnOnce()) -> Vec<serde_json::Value> {
     let capture = Capture::default();
     let (layer, guards) = LogLayer::capture(capture.clone());
-    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), action);
+    with_test_subscriber(tracing_subscriber::registry().with(layer), action);
     drop(guards);
     let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     output
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+#[test]
+fn capture_keeps_events_first_emitted_without_a_scoped_subscriber() {
+    fn emit() {
+        tracing::error!(request_id = "capture-request", "request failed");
+    }
+    let records = capture_logs(|| {
+        std::thread::spawn(emit).join().unwrap();
+        emit();
+    });
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["event"], "requestFailed");
+    assert_eq!(records[0]["requestId"], "capture-request");
+}
+
+#[test]
+fn concurrent_captures_keep_their_own_events() {
+    let ready = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        let captures: Vec<_> = ["capture-one", "capture-two"]
+            .into_iter()
+            .map(|request_id| {
+                let ready = &ready;
+                scope.spawn(move || {
+                    let records = capture_logs(|| {
+                        ready.wait();
+                        tracing::error!(request_id, "request failed");
+                    });
+                    assert_eq!(records.len(), 1);
+                    assert_eq!(records[0]["event"], "requestFailed");
+                    assert_eq!(records[0]["requestId"], request_id);
+                })
+            })
+            .collect();
+        for capture in captures {
+            capture.join().unwrap();
+        }
+    });
 }
 
 #[test]
@@ -59,7 +112,7 @@ fn whitelist_rejects_body_and_dynamic_messages_before_queueing() {
     let capture = Capture::default();
     let (layer, guards) = LogLayer::capture(capture.clone());
     let subscriber = tracing_subscriber::registry().with(layer);
-    tracing::subscriber::with_default(subscriber, || {
+    with_test_subscriber(subscriber, || {
         let span = tracing::info_span!(
             "request",
             request_id = "limen-r-test-1",
@@ -112,7 +165,7 @@ fn request_metadata_and_performance_survive_the_shared_encoder() {
     let capture = Capture::default();
     let (layer, guards) = LogLayer::capture(capture.clone());
     let subscriber = tracing_subscriber::registry().with(layer);
-    tracing::subscriber::with_default(subscriber, || {
+    with_test_subscriber(subscriber, || {
         tracing::info!(
             request_id = "limen-r-test-2",
             configured_model = "configured",
